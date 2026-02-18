@@ -1,0 +1,27 @@
+name: referee_mobile_app
+description: Mobile app for referees connected to website backend
+publish_to: "none"
+version: 0.1.0+1
+
+environment:
+  sdk: ">=3.2.0 <4.0.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+  cupertino_icons: ^1.0.8
+  http: ^1.2.0
+  provider: ^6.0.5
+  flutter_dotenv: ^5.1.0
+  intl: ^0.20.2
+  shared_preferences: ^2.2.2
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^3.0.1
+
+flutter:
+  uses-material-design: true
+  assets:
+    - assets/config/.env
