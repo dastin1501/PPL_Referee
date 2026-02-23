@@ -11,7 +11,17 @@ class CourtGamesScreen extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final app = context.watch<AppState>();
-    final courts = app.courts;
+    final courts = List<String>.from(app.courts)
+      ..sort((a, b) {
+        final ma = RegExp(r'(\d+)').firstMatch(a);
+        final mb = RegExp(r'(\d+)').firstMatch(b);
+        if (ma != null && mb != null) {
+          final na = int.tryParse(ma.group(1)!) ?? 0;
+          final nb = int.tryParse(mb.group(1)!) ?? 0;
+          return na.compareTo(nb);
+        }
+        return a.toLowerCase().compareTo(b.toLowerCase());
+      });
     final hasCourt = app.selectedCourt != null;
     final games = hasCourt ? app.matchesForSelectedCourt : [];
     final scheduledGames = games.where((g) => g.status != 'Completed').toList();
@@ -22,7 +32,13 @@ class CourtGamesScreen extends StatelessWidget {
       child: Scaffold(
         appBar: AppBar(
           title: Text(app.selectedTournament?.name ?? 'Tournament'),
+          backgroundColor: Colors.white,
+          foregroundColor: Colors.black87,
+          elevation: 0,
           bottom: const TabBar(
+            indicatorColor: Color(0xFF22C55E),
+            labelColor: Color(0xFF22C55E),
+            unselectedLabelColor: Colors.grey,
             tabs: [
               Tab(text: 'Scheduled'),
               Tab(text: 'Completed'),
@@ -52,10 +68,23 @@ class CourtGamesScreen extends StatelessWidget {
                       app.selectCourt(c);
                     }
                   },
-                  decoration: const InputDecoration(
+                  decoration: InputDecoration(
                     labelText: 'Select Court',
-                    border: OutlineInputBorder(),
-                    contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                    border: OutlineInputBorder(borderRadius: BorderRadius.circular(14)),
+                    enabledBorder: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(14),
+                      borderSide: BorderSide(color: Colors.grey.shade300),
+                    ),
+                    focusedBorder: const OutlineInputBorder(
+                      borderRadius: BorderRadius.only(
+                        topLeft: Radius.circular(14),
+                        topRight: Radius.circular(14),
+                        bottomLeft: Radius.circular(14),
+                        bottomRight: Radius.circular(14),
+                      ),
+                      borderSide: BorderSide(color: Color(0xFF22C55E), width: 1.5),
+                    ),
+                    contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
                   ),
                 ),
               const SizedBox(height: 12),
@@ -86,7 +115,16 @@ Widget _buildGamesList(
     return const Center(child: Text('Please select a court to view matches.'));
   }
   if (games.isEmpty) {
-    return Center(child: Text(emptyMessage));
+    return Center(
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          const Icon(Icons.event_busy, color: Colors.grey, size: 40),
+          const SizedBox(height: 8),
+          Text(emptyMessage, textAlign: TextAlign.center),
+        ],
+      ),
+    );
   }
   return ListView.builder(
     itemCount: games.length,
@@ -94,60 +132,67 @@ Widget _buildGamesList(
       final g = games[i];
       final category = app.selectedTournament?.categoryNames[g.categoryId] ?? '';
       final isCompleted = g.status == 'Completed';
-      return Card(
-        elevation: 2,
-        margin: const EdgeInsets.symmetric(vertical: 4),
-        child: ListTile(
-          leading: CircleAvatar(
-            backgroundColor: isCompleted ? Colors.green : Colors.orange,
-            child: Icon(
-              isCompleted ? Icons.check : Icons.schedule,
-              color: Colors.white,
-              size: 20,
-            ),
+      return InkWell(
+        onTap: () {
+          if (isCompleted) {
+            _showCompletedSummaryDialog(context, g);
+          } else {
+            app.openGame(g);
+            Navigator.of(context).pushNamed('/dashboard');
+          }
+        },
+        borderRadius: BorderRadius.circular(16),
+        child: Container(
+          margin: const EdgeInsets.symmetric(vertical: 6, horizontal: 4),
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(16),
+            border: Border.all(color: Colors.grey.shade300),
           ),
-          title: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
+          child: Row(
             children: [
-              if (category.isNotEmpty)
-                Text(category, style: const TextStyle(fontSize: 12, color: Colors.blueAccent, fontWeight: FontWeight.bold)),
-              if (g.matchLabel.isNotEmpty || g.seedLabel.isNotEmpty)
-                Padding(
-                  padding: const EdgeInsets.symmetric(vertical: 2.0),
-                  child: Text(
-                    '${g.matchLabel} ${g.seedLabel.isNotEmpty ? "- ${g.seedLabel}" : ""}',
-                    style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14),
-                  ),
+              CircleAvatar(
+                backgroundColor: isCompleted ? const Color(0xFF22C55E) : Colors.orange,
+                child: Icon(isCompleted ? Icons.check : Icons.schedule, color: Colors.white, size: 20),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    if (category.isNotEmpty)
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                        decoration: BoxDecoration(
+                          border: Border.all(color: const Color(0xFF22C55E)),
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                        child: Text(category, style: const TextStyle(fontSize: 12, color: Color(0xFF22C55E))),
+                      ),
+                    if (g.matchLabel.isNotEmpty || g.seedLabel.isNotEmpty)
+                      Padding(
+                        padding: const EdgeInsets.symmetric(vertical: 2.0),
+                        child: Text(
+                          '${g.matchLabel} ${g.seedLabel.isNotEmpty ? "- ${g.seedLabel}" : ""}',
+                          style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 14),
+                        ),
+                      ),
+                    Text('${g.player1} vs ${g.player2}', style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w500)),
+                    Text('Time: ${g.time}', style: const TextStyle(fontSize: 12, color: Colors.grey)),
+                  ],
                 ),
-              Text(
-                '${g.player1} vs ${g.player2}',
-                style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w500),
+              ),
+              Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                crossAxisAlignment: CrossAxisAlignment.end,
+                children: [
+                  Text('${g.score1} - ${g.score2}', style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
+                  if (g.status.isNotEmpty) Text(g.status, style: const TextStyle(fontSize: 10, color: Colors.grey)),
+                ],
               ),
             ],
           ),
-          subtitle: Text('Time: ${g.time}'),
-          trailing: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              Text(
-                '${g.score1} - ${g.score2}',
-                style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
-              ),
-              if (g.status.isNotEmpty)
-                Text(
-                  g.status,
-                  style: const TextStyle(fontSize: 10, color: Colors.grey),
-                ),
-            ],
-          ),
-          onTap: () {
-            if (isCompleted) {
-              _showCompletedSummaryDialog(context, g);
-            } else {
-              app.openGame(g);
-              Navigator.of(context).pushNamed('/dashboard');
-            }
-          },
         ),
       );
     },

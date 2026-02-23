@@ -23,11 +23,22 @@ class _RefereeDashboardScreenState extends State<RefereeDashboardScreen> {
   bool _gameStarted = false;
   int _score1 = 0;
   int _score2 = 0;
+  bool _serverTop = true;
   Duration _elapsed = Duration.zero;
   Timer? _timer;
   final List<_Snapshot> _history = [];
   int _timeouts1 = 0;
   int _timeouts2 = 0;
+  int _medTimeouts1 = 0;
+  int _medTimeouts2 = 0;
+  bool _inTimeout = false;
+  int _timeoutSecondsLeft = 0;
+
+  String _fmt(int s) {
+    final m = s ~/ 60;
+    final ss = s % 60;
+    return '${m.toString().padLeft(2, '0')}:${ss.toString().padLeft(2, '0')}';
+  }
 
   @override
   void initState() {
@@ -51,9 +62,13 @@ class _RefereeDashboardScreenState extends State<RefereeDashboardScreen> {
     if (g != null) {
       _score1 = g.score1;
       _score2 = g.score2;
-      if (g.status == 'Ongoing') {
+      if (g.status == 'Ongoing' && (g.score1 > 0 || g.score2 > 0)) {
         setState(() {
           _gameStarted = true;
+        });
+      } else {
+        setState(() {
+          _gameStarted = false;
         });
       }
     }
@@ -93,6 +108,50 @@ class _RefereeDashboardScreenState extends State<RefereeDashboardScreen> {
     } catch (_) {}
   }
 
+  void _resumeTimerIfNeeded() {
+    if (!_gameStarted) return;
+    _timer?.cancel();
+    _timer = Timer.periodic(const Duration(seconds: 1), (_) {
+      setState(() {
+        _elapsed += const Duration(seconds: 1);
+      });
+    });
+  }
+
+  Future<void> _runTimeoutCountdown(String title, int seconds) async {
+    _timer?.cancel();
+    setState(() {
+      _inTimeout = true;
+      _timeoutSecondsLeft = seconds;
+    });
+    await showDialog<void>(
+      context: context,
+      barrierDismissible: false,
+      builder: (_) {
+        return StatefulBuilder(
+          builder: (context, setLocal) {
+            return AlertDialog(
+              title: Text(title),
+              content: Text('${_fmt(_timeoutSecondsLeft)} remaining'),
+              actions: [
+                TextButton(
+                  onPressed: () {
+                    Navigator.of(context).pop();
+                  },
+                  child: const Text('Resume'),
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
+    setState(() {
+      _inTimeout = false;
+    });
+    _resumeTimerIfNeeded();
+  }
+
   @override
   void dispose() {
     _timer?.cancel();
@@ -110,44 +169,30 @@ class _RefereeDashboardScreenState extends State<RefereeDashboardScreen> {
           _servingPlayer = name;
         });
       } : null,
-      child: Container(
-        decoration: BoxDecoration(
-          color: color.withOpacity(0.92),
-          borderRadius: BorderRadius.circular(10),
-          boxShadow: [
-            BoxShadow(
-              color: Colors.black.withOpacity(0.25),
-              blurRadius: 8,
-              offset: const Offset(0, 3),
-            ),
-          ],
-        ),
-        padding: const EdgeInsets.all(12),
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          crossAxisAlignment: CrossAxisAlignment.start,
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
           children: [
-            Row(
-              children: [
-                Expanded(
-                  child: Text(
-                    name, 
-                    style: const TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold),
-                    overflow: TextOverflow.ellipsis,
-                  ),
+            ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 240),
+              child: Text(
+                name,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontSize: 16,
+                  fontWeight: FontWeight.bold,
+                  shadows: [Shadow(blurRadius: 4, color: Colors.black54, offset: Offset(0, 1))],
                 ),
-                if (isServing)
-                  const Padding(
-                    padding: EdgeInsets.only(left: 8.0),
-                    child: Icon(Icons.sports_tennis, color: Colors.yellowAccent, size: 24),
-                  ),
-              ],
+              ),
             ),
-            const SizedBox(height: 6),
-            Text(
-              isServing ? 'Serving' : '',
-              style: const TextStyle(color: Colors.white70),
-            ),
+            if (isServing)
+              const Padding(
+                padding: EdgeInsets.only(left: 6.0),
+                child: Icon(Icons.sports_tennis, color: Colors.yellowAccent, size: 18),
+              ),
           ],
         ),
       ),
@@ -170,34 +215,32 @@ class _RefereeDashboardScreenState extends State<RefereeDashboardScreen> {
     return Scaffold(
       appBar: AppBar(
         backgroundColor: const Color(0xFF0F766E),
-        title: Text('Court ${app.selectedCourt ?? ''}'),
-        bottom: PreferredSize(
-          preferredSize: const Size.fromHeight(48),
-          child: Container(
-            color: const Color(0xFF0F766E),
-            height: 48,
-            alignment: Alignment.center,
-            child: Container(
-              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
-              decoration: BoxDecoration(
-                color: const Color(0xFF0E7C6F),
-                borderRadius: BorderRadius.circular(10),
-                border: Border.all(color: Colors.white70, width: 2),
-              ),
-              child: Column(
+        title: !_gameStarted
+            ? Text('Court ${app.selectedCourt ?? ''}')
+            : Row(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  const Text('TIME', style: TextStyle(color: Colors.white70, fontWeight: FontWeight.w600)),
+                  const Icon(Icons.timer, size: 18, color: Colors.white),
+                  const SizedBox(width: 6),
                   Text(
                     timerText,
-                    style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 14),
+                    style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
                   ),
                 ],
               ),
-            ),
-          ),
-        ),
         actions: [
+          if (_gameStarted && g != null)
+            Padding(
+              padding: const EdgeInsets.only(right: 8.0),
+              child: TextButton.icon(
+                onPressed: () => _showSubmitDialog(g),
+                icon: const Icon(Icons.flag, color: Colors.white),
+                label: const Text('SUBMIT', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+                style: TextButton.styleFrom(
+                  foregroundColor: Colors.white,
+                ),
+              ),
+            ),
           IconButton(
             onPressed: _undoLast,
             icon: const Icon(Icons.replay),
@@ -227,197 +270,362 @@ class _RefereeDashboardScreenState extends State<RefereeDashboardScreen> {
           ? const Center(child: Text('No game selected'))
           : Column(
               children: [
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(12, 8, 12, 6),
+                  child: Row(
+                    children: [
+                      if (!_gameStarted)
+                        Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                          decoration: BoxDecoration(
+                            color: const Color(0xFF0E7C6F),
+                            borderRadius: BorderRadius.circular(10),
+                            border: Border.all(color: Colors.white70, width: 2),
+                          ),
+                          child: Column(
+                            mainAxisSize: MainAxisSize.min,
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              const Text('TIME', style: TextStyle(color: Colors.white70, fontWeight: FontWeight.w600)),
+                              Text(
+                                timerText,
+                                style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 16),
+                              ),
+                            ],
+                          ),
+                        ),
+                      if (!_gameStarted && _servingPlayer == null) ...[
+                        const SizedBox(width: 12),
+                        Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                          decoration: BoxDecoration(
+                            color: Colors.black.withOpacity(0.1),
+                            borderRadius: BorderRadius.circular(10),
+                          ),
+                          child: const Text(
+                            'Tap a player to choose server',
+                            style: TextStyle(color: Colors.black87, fontWeight: FontWeight.w600),
+                          ),
+                        ),
+                      ],
+                      const Spacer(),
+                    ],
+                  ),
+                ),
                 Expanded(
                   child: Padding(
-                    padding: const EdgeInsets.all(12),
+                    padding: const EdgeInsets.symmetric(horizontal: 12),
                     child: LayoutBuilder(builder: (_, c) {
                       final String leftTeamName = g.player1;
                       final String rightTeamName = g.player2;
                       final leftTeam = _splitTeam(leftTeamName);
                       final rightTeam = _splitTeam(rightTeamName);
                       final bool isDoubles = leftTeam.length > 1 || rightTeam.length > 1;
+                      final bool isSingles = !isDoubles;
                       final leftTop = leftTeam.isNotEmpty ? leftTeam[0] : leftTeamName;
                       final leftBottom = leftTeam.length > 1 ? leftTeam[1] : '';
                       final rightTop = rightTeam.length > 1 ? rightTeam[1] : rightTeam[0];
                       final rightBottom = rightTeam.length > 1 ? rightTeam[0] : '';
-                      final serverRight = _servingPlayer != null
-                          ? ((leftTeam.contains(_servingPlayer)) ? (_score1 % 2 == 0) : (_score2 % 2 == 0))
-                          : true;
-                      return Row(
-                        crossAxisAlignment: CrossAxisAlignment.stretch,
-                        children: [
-                          Expanded(
-                            child: LayoutBuilder(
-                              builder: (_, cons) {
-                                final sz = cons.biggest;
-                                return GestureDetector(
-                                  behavior: HitTestBehavior.opaque,
-                                  onTapDown: null,
-                                  child: Container(
-                                    decoration: BoxDecoration(
-                                      gradient: const LinearGradient(
-                                        colors: [Color(0xFF0F766E), Color(0xFF10B981)],
-                                        begin: Alignment.topLeft,
-                                        end: Alignment.bottomRight,
-                                      ),
-                                      borderRadius: BorderRadius.circular(12),
-                                    ),
-                                    padding: const EdgeInsets.all(12),
-                                    child: Stack(
-                                      children: [
-                                        Positioned.fill(
-                                          child: CustomPaint(
-                                            painter: _SinglesCourtPainter(highlightRight: serverRight),
-                                          ),
-                                        ),
-                                        Align(
-                                          alignment: Alignment.center,
-                                          child: Container(
-                                            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-                                            decoration: BoxDecoration(
-                                              color: Colors.black,
-                                              borderRadius: BorderRadius.circular(8),
-                                            ),
-                                            child: Text(
-                                              '$_score1 - $_score2',
-                                              overflow: TextOverflow.ellipsis,
-                                              style: const TextStyle(
-                                                color: Colors.white,
-                                                fontSize: 48,
-                                                fontWeight: FontWeight.w900,
-                                              ),
-                                            ),
-                                          ),
-                                        ),
-                                        Align(
-                                          alignment: Alignment.topLeft,
-                                          child: FractionallySizedBox(
-                                            widthFactor: 0.5,
-                                            heightFactor: 0.5,
-                                            child: Padding(
-                                              padding: const EdgeInsets.all(8.0),
-                                              child: _playerCell(
-                                                leftTop,
-                                                isServing: _servingPlayer == leftTop,
-                                              ),
-                                            ),
-                                          ),
-                                        ),
-                                        if (isDoubles && leftBottom.isNotEmpty)
-                                          Align(
-                                            alignment: Alignment.bottomLeft,
-                                            child: FractionallySizedBox(
-                                              widthFactor: 0.5,
-                                              heightFactor: 0.5,
-                                              child: Padding(
-                                                padding: const EdgeInsets.all(8.0),
-                                                child: _playerCell(
-                                                  leftBottom,
-                                                  isServing: _servingPlayer == leftBottom,
-                                                ),
-                                              ),
-                                            ),
-                                          ),
-                                        Align(
-                                          alignment: Alignment.topRight,
-                                          child: FractionallySizedBox(
-                                            widthFactor: 0.5,
-                                            heightFactor: 0.5,
-                                            child: Padding(
-                                              padding: const EdgeInsets.all(8.0),
-                                              child: _playerCell(
-                                                rightTop,
-                                                isServing: _servingPlayer == rightTop,
-                                              ),
-                                            ),
-                                          ),
-                                        ),
-                                        if (isDoubles && rightBottom.isNotEmpty)
-                                          Align(
-                                            alignment: Alignment.bottomRight,
-                                            child: FractionallySizedBox(
-                                              widthFactor: 0.5,
-                                              heightFactor: 0.5,
-                                              child: Padding(
-                                                padding: const EdgeInsets.all(8.0),
-                                                child: _playerCell(
-                                                  rightBottom,
-                                                  isServing: _servingPlayer == rightBottom,
-                                                ),
-                                              ),
-                                            ),
-                                          ),
-                                      ],
+                      final noServer = _servingPlayer == null;
+                      final serverOnLeft = _servingPlayer != null && leftTeam.contains(_servingPlayer);
+                      final serverOnRight = _servingPlayer != null && rightTeam.contains(_servingPlayer);
+                      final serverRight = serverOnRight;
+                      final serviceTop = _servingPlayer == null ? true : _serverTop;
+                      return GestureDetector(
+                        behavior: HitTestBehavior.opaque,
+                        onTapDown: (details) {
+                          if (_gameStarted) return;
+                          final outerPad = 12.0;
+                          final innerPad = 12.0;
+                          final totalW = c.biggest.width;
+                          final totalH = c.biggest.height;
+                          final courtLeft = outerPad + innerPad;
+                          final courtTop = outerPad + innerPad;
+                          final courtW = totalW - (outerPad + innerPad) * 2;
+                          final courtH = totalH - (outerPad + innerPad) * 2;
+                          double x = details.localPosition.dx;
+                          double y = details.localPosition.dy;
+                          x = x.clamp(courtLeft, courtLeft + courtW);
+                          y = y.clamp(courtTop, courtTop + courtH);
+                          final leftHalf = x < courtLeft + courtW / 2;
+                          final topHalf = y < courtTop + courtH / 2;
+                          if (leftHalf) {
+                            setState(() {
+                              _servingPlayer = isDoubles ? (topHalf ? leftTop : leftBottom) : leftTop;
+                            });
+                          } else {
+                            setState(() {
+                              _servingPlayer = isDoubles ? (topHalf ? rightTop : rightBottom) : rightTop;
+                            });
+                          }
+                        },
+                        child: Container(
+                        decoration: BoxDecoration(
+                          gradient: const LinearGradient(
+                            colors: [Color(0xFF0F766E), Color(0xFF10B981)],
+                            begin: Alignment.topLeft,
+                            end: Alignment.bottomRight,
+                          ),
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                        padding: const EdgeInsets.all(12),
+                        child: Stack(
+                          children: [
+                            Positioned.fill(
+                              child: CustomPaint(
+                                painter: _SinglesCourtPainter(
+                                  highlightRight: serverRight,
+                                  highlightTop: serviceTop,
+                                ),
+                              ),
+                            ),
+                            Align(
+                              alignment: Alignment.center,
+                              child: Container(
+                                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                                decoration: BoxDecoration(
+                                  color: Colors.black,
+                                  borderRadius: BorderRadius.circular(8),
+                                ),
+                                child: Text(
+                                  '$_score1 - $_score2',
+                                  overflow: TextOverflow.ellipsis,
+                                  style: const TextStyle(
+                                    color: Colors.white,
+                                    fontSize: 48,
+                                    fontWeight: FontWeight.w900,
+                                  ),
+                                ),
+                              ),
+                            ),
+                            Align(
+                              alignment: isSingles
+                                  ? (serverOnLeft
+                                      ? (serviceTop ? Alignment.topLeft : Alignment.bottomLeft)
+                                      : (serviceTop ? Alignment.bottomLeft : Alignment.topLeft))
+                                  : Alignment.topLeft,
+                              child: FractionallySizedBox(
+                                widthFactor: 0.5,
+                                heightFactor: 0.5,
+                                child: Padding(
+                                  padding: const EdgeInsets.all(8.0),
+                                  child: _playerCell(
+                                    leftTop,
+                                    isServing: _servingPlayer == leftTop,
+                                  ),
+                                ),
+                              ),
+                            ),
+                            if (isDoubles && leftBottom.isNotEmpty)
+                              Align(
+                                alignment: Alignment.bottomLeft,
+                                child: FractionallySizedBox(
+                                  widthFactor: 0.5,
+                                  heightFactor: 0.5,
+                                  child: Padding(
+                                    padding: const EdgeInsets.all(8.0),
+                                    child: _playerCell(
+                                      leftBottom,
+                                      isServing: _servingPlayer == leftBottom,
                                     ),
                                   ),
-                                );
-                              },
+                                ),
+                              ),
+                            Align(
+                              alignment: isSingles
+                                  ? (serverOnRight
+                                      ? (serviceTop ? Alignment.topRight : Alignment.bottomRight)
+                                      : (noServer ? Alignment.topRight : (serviceTop ? Alignment.bottomRight : Alignment.topRight)))
+                                  : Alignment.topRight,
+                              child: FractionallySizedBox(
+                                widthFactor: 0.5,
+                                heightFactor: 0.5,
+                                child: Align(
+                                  alignment: Alignment.centerRight,
+                                  child: Padding(
+                                    padding: const EdgeInsets.all(8.0),
+                                    child: _playerCell(
+                                      rightTop,
+                                      isServing: _servingPlayer == rightTop,
+                                    ),
+                                  ),
+                                ),
+                              ),
                             ),
-                          ),
-                        ],
+                            if (isDoubles && rightBottom.isNotEmpty)
+                              Align(
+                                alignment: Alignment.bottomRight,
+                                child: FractionallySizedBox(
+                                  widthFactor: 0.5,
+                                  heightFactor: 0.5,
+                                  child: Padding(
+                                    padding: const EdgeInsets.all(8.0),
+                                    child: _playerCell(
+                                      rightBottom,
+                                      isServing: _servingPlayer == rightBottom,
+                                    ),
+                                  ),
+                                ),
+                              ),
+                            if (!_gameStarted)
+                              Positioned.fill(
+                                child: Material(
+                                  color: Colors.transparent,
+                                  child: isDoubles
+                                      ? Row(
+                                          children: [
+                                            Expanded(
+                                              child: Column(
+                                                children: [
+                                                  Expanded(
+                                      child: InkWell(
+                                                      onTap: () => setState(() {
+                                                        _servingPlayer = leftTop;
+                                                        _serverTop = true;
+                                                      }),
+                                                      splashColor: Colors.white10,
+                                                    ),
+                                                  ),
+                                                  Expanded(
+                                                    child: InkWell(
+                                                      onTap: () => setState(() {
+                                                        _servingPlayer = leftBottom.isNotEmpty ? leftBottom : leftTop;
+                                                        _serverTop = false;
+                                                      }),
+                                                      splashColor: Colors.white10,
+                                                    ),
+                                                  ),
+                                                ],
+                                              ),
+                                            ),
+                                            Expanded(
+                                              child: Column(
+                                                children: [
+                                                  Expanded(
+                                                    child: InkWell(
+                                                      onTap: () => setState(() {
+                                                        _servingPlayer = rightTop;
+                                                        _serverTop = true;
+                                                      }),
+                                                      splashColor: Colors.white10,
+                                                    ),
+                                                  ),
+                                                  Expanded(
+                                                    child: InkWell(
+                                                      onTap: () => setState(() {
+                                                        _servingPlayer = rightBottom.isNotEmpty ? rightBottom : rightTop;
+                                                        _serverTop = false;
+                                                      }),
+                                                      splashColor: Colors.white10,
+                                                    ),
+                                                  ),
+                                                ],
+                                              ),
+                                            ),
+                                          ],
+                                        )
+                                      : Row(
+                                          children: [
+                                            Expanded(
+                                              child: InkWell(
+                                                onTap: () => setState(() {
+                                                  _servingPlayer = leftTop;
+                                                  _serverTop = false;
+                                                }),
+                                                splashColor: Colors.white10,
+                                              ),
+                                            ),
+                                            Expanded(
+                                              child: InkWell(
+                                                onTap: () => setState(() {
+                                                  _servingPlayer = rightTop;
+                                                  _serverTop = true;
+                                                }),
+                                                splashColor: Colors.white10,
+                                              ),
+                                            ),
+                                          ],
+                                        ),
+                                ),
+                              ),
+                          ],
+                        ),
+                        ),
                       );
                     }),
                   ),
                 ),
-                Container(
-                  color: Colors.white10,
-                  padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(12, 8, 12, 4),
                   child: Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceEvenly,
                     children: [
-                      SizedBox(
-                        width: 120,
-                        height: 56,
-                        child: ElevatedButton(
-                          onPressed: _gameStarted ? _decrementPoint : null,
-                          style: ElevatedButton.styleFrom(backgroundColor: Colors.grey.shade400, foregroundColor: Colors.white),
-                          child: const Text('-', style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold)),
-                        ),
-                      ),
-                      SizedBox(
-                        width: 160,
-                        height: 56,
-                        child: ElevatedButton(
-                          onPressed: _gameStarted ? _sideOut : null,
-                          style: ElevatedButton.styleFrom(backgroundColor: Colors.grey.shade400, foregroundColor: Colors.white),
-                          child: const Text('SIDE OUT', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
-                        ),
-                      ),
-                      SizedBox(
-                        width: 120,
-                        height: 56,
-                        child: ElevatedButton(
-                          onPressed: _gameStarted ? _incrementPoint : null,
-                          style: ElevatedButton.styleFrom(backgroundColor: Colors.grey.shade400, foregroundColor: Colors.white),
-                          child: const Text('+', style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold)),
-                        ),
-                      ),
+                      IconButton(onPressed: _onTimeout, icon: const Icon(Icons.timer)),
+                      IconButton(onPressed: _onMedicalTimeout, icon: const Icon(Icons.healing)),
+                      const Spacer(),
                     ],
                   ),
                 ),
-                Container(
-                  color: const Color(0xFF0F766E),
-                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                  child: Row(
-                    children: [
-                      Expanded(
-                        child: SizedBox(
-                          height: 56,
-                          child: ElevatedButton.icon(
-                            onPressed: !_gameStarted && _servingPlayer != null ? _startGame : (_gameStarted ? () => _showSubmitDialog(g) : null),
-                            style: ElevatedButton.styleFrom(
-                              backgroundColor: !_gameStarted ? const Color(0xFF10B981) : Colors.orange,
-                              disabledBackgroundColor: Colors.grey[700],
-                              foregroundColor: Colors.white,
+                if (!_gameStarted)
+                  Container(
+                    color: const Color(0xFF0F766E),
+                    padding: const EdgeInsets.all(12),
+                    child: Row(
+                      children: [
+                        Expanded(
+                          child: SizedBox(
+                            height: 56,
+                            child: ElevatedButton.icon(
+                              onPressed: _servingPlayer != null ? _startGame : null,
+                              style: ElevatedButton.styleFrom(
+                                backgroundColor: const Color(0xFF10B981),
+                                disabledBackgroundColor: Colors.grey[700],
+                                foregroundColor: Colors.white,
+                              ),
+                              icon: const Icon(Icons.play_arrow, size: 28),
+                              label: const Text('START GAME', style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
                             ),
-                            icon: Icon(!_gameStarted ? Icons.play_arrow : Icons.flag, size: 30),
-                            label: Text(!_gameStarted ? 'START GAME' : 'SUBMIT', style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
                           ),
                         ),
-                      ),
-                    ],
+                      ],
+                    ),
+                  )
+                else
+                  Container(
+                    color: Colors.white10,
+                    padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
+                    child: Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                      children: [
+                        SizedBox(
+                          width: 120,
+                          height: 56,
+                          child: ElevatedButton(
+                            onPressed: _decrementPoint,
+                            style: ElevatedButton.styleFrom(backgroundColor: Colors.grey.shade400, foregroundColor: Colors.white),
+                            child: const Text('-', style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold)),
+                          ),
+                        ),
+                        SizedBox(
+                          width: 160,
+                          height: 56,
+                          child: ElevatedButton(
+                            onPressed: _sideOut,
+                            style: ElevatedButton.styleFrom(backgroundColor: Colors.grey.shade400, foregroundColor: Colors.white),
+                            child: const Text('SIDE OUT', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+                          ),
+                        ),
+                        SizedBox(
+                          width: 120,
+                          height: 56,
+                          child: ElevatedButton(
+                            onPressed: _incrementPoint,
+                            style: ElevatedButton.styleFrom(backgroundColor: Colors.grey.shade400, foregroundColor: Colors.white),
+                            child: const Text('+', style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold)),
+                          ),
+                        ),
+                      ],
+                    ),
                   ),
-                ),
               ],
             ),
     );
@@ -599,12 +807,18 @@ class _Snapshot {
   final int s1;
   final int s2;
   final String? server;
-  _Snapshot(this.s1, this.s2, this.server);
+  final bool serverTop;
+  final int t1;
+  final int t2;
+  final int mt1;
+  final int mt2;
+  _Snapshot(this.s1, this.s2, this.server, this.serverTop, this.t1, this.t2, this.mt1, this.mt2);
 }
 
 class _SinglesCourtPainter extends CustomPainter {
   final bool highlightRight;
-  _SinglesCourtPainter({required this.highlightRight});
+  final bool highlightTop;
+  _SinglesCourtPainter({required this.highlightRight, required this.highlightTop});
   @override
   void paint(Canvas canvas, Size size) {
     final bg = Paint()..color = const Color(0xFF064E3B);
@@ -624,18 +838,27 @@ class _SinglesCourtPainter extends CustomPainter {
     final midY = rect.top + rect.height / 2;
     canvas.drawLine(Offset(midX, rect.top), Offset(midX, rect.bottom), line);
     canvas.drawLine(Offset(rect.left, midY), Offset(rect.right, midY), line);
-    final rightRect = Rect.fromLTWH(midX, rect.top, rect.width / 2, rect.height / 2);
-    final leftRect = Rect.fromLTWH(rect.left, rect.top, rect.width / 2, rect.height / 2);
+    final rightRectTop = Rect.fromLTWH(midX, rect.top, rect.width / 2, rect.height / 2);
+    final rightRectBottom = Rect.fromLTWH(midX, midY, rect.width / 2, rect.height / 2);
+    final leftRectTop = Rect.fromLTWH(rect.left, rect.top, rect.width / 2, rect.height / 2);
+    final leftRectBottom = Rect.fromLTWH(rect.left, midY, rect.width / 2, rect.height / 2);
     final hl = Paint()..color = Colors.yellow.withOpacity(0.15);
-    canvas.drawRect(highlightRight ? rightRect : leftRect, hl);
+    Rect toDraw;
+    if (highlightRight) {
+      toDraw = highlightTop ? rightRectTop : rightRectBottom;
+    } else {
+      toDraw = highlightTop ? leftRectTop : leftRectBottom;
+    }
+    canvas.drawRect(toDraw, hl);
   }
   @override
-  bool shouldRepaint(covariant _SinglesCourtPainter oldDelegate) => oldDelegate.highlightRight != highlightRight;
+  bool shouldRepaint(covariant _SinglesCourtPainter oldDelegate) =>
+      oldDelegate.highlightRight != highlightRight || oldDelegate.highlightTop != highlightTop;
 }
 
 extension on _RefereeDashboardScreenState {
   void _pushSnapshot() {
-    _history.add(_Snapshot(_score1, _score2, _servingPlayer));
+    _history.add(_Snapshot(_score1, _score2, _servingPlayer, _serverTop, _timeouts1, _timeouts2, _medTimeouts1, _medTimeouts2));
   }
 
   bool _serverOnTeam1(TournamentMatch g) {
@@ -665,6 +888,11 @@ extension on _RefereeDashboardScreenState {
       _score1 = last.s1;
       _score2 = last.s2;
       _servingPlayer = last.server;
+      _serverTop = last.serverTop;
+      _timeouts1 = last.t1;
+      _timeouts2 = last.t2;
+      _medTimeouts1 = last.mt1;
+      _medTimeouts2 = last.mt2;
     });
   }
 
@@ -679,6 +907,7 @@ extension on _RefereeDashboardScreenState {
       } else {
         _score2 += 1;
       }
+      _serverTop = !_serverTop;
     });
   }
 
@@ -693,6 +922,7 @@ extension on _RefereeDashboardScreenState {
       } else if (!_serverOnTeam1(g) && _score2 > 0) {
         _score2 -= 1;
       }
+      _serverTop = !_serverTop;
     });
   }
 
@@ -704,11 +934,13 @@ extension on _RefereeDashboardScreenState {
     setState(() {
       final leftTeam = _splitTeam(g.player1);
       final rightTeam = _splitTeam(g.player2);
-      final onLeft = leftTeam.contains(_servingPlayer);
-      if (onLeft) {
+      final wasOnLeft = leftTeam.contains(_servingPlayer);
+      if (wasOnLeft) {
         _servingPlayer = rightTeam.length > 1 ? rightTeam[1] : rightTeam[0];
+        _serverTop = (_score2 % 2 == 0);
       } else {
         _servingPlayer = leftTeam[0];
+        _serverTop = (_score1 % 2 != 0);
       }
     });
   }
@@ -752,14 +984,41 @@ extension on _RefereeDashboardScreenState {
     if (g == null) return;
     final who = await showDialog<String>(
       context: context,
-      builder: (_) => SimpleDialog(
-        title: const Text('Timeout'),
-        children: [
-          SimpleDialogOption(onPressed: () => Navigator.pop(context, 'p1'), child: Text(g.player1)),
-          SimpleDialogOption(onPressed: () => Navigator.pop(context, 'p2'), child: Text(g.player2)),
+      builder: (_) {
+        final p1Disabled = _timeouts1 >= 1;
+        final p2Disabled = _timeouts2 >= 1;
+        return SimpleDialog(
+          title: const Text('Timeout'),
+          children: [
+            ListTile(
+              title: Text(g.player1),
+              enabled: !p1Disabled,
+              onTap: p1Disabled ? null : () => Navigator.pop(context, 'p1'),
+            ),
+            ListTile(
+              title: Text(g.player2),
+              enabled: !p2Disabled,
+              onTap: p2Disabled ? null : () => Navigator.pop(context, 'p2'),
+            ),
+          ],
+        );
+      },
+    );
+    if (who == null) return;
+    final name = who == 'p1' ? g.player1 : g.player2;
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder: (_) => AlertDialog(
+        title: const Text('Confirm Timeout'),
+        content: Text('Are you sure you want to timeout $name?'),
+        actions: [
+          TextButton(onPressed: () => Navigator.of(context).pop(false), child: const Text('Cancel')),
+          ElevatedButton(onPressed: () => Navigator.of(context).pop(true), child: const Text('OK')),
         ],
       ),
     );
+    if (confirm != true) return;
+    _pushSnapshot();
     if (who == 'p1') {
       setState(() {
         _timeouts1 += 1;
@@ -769,20 +1028,136 @@ extension on _RefereeDashboardScreenState {
         _timeouts2 += 1;
       });
     }
+    int remaining = 60;
+    _timer?.cancel();
+    setState(() {
+      _inTimeout = true;
+      _timeoutSecondsLeft = remaining;
+    });
+    Timer? localTimer;
+    await showDialog<void>(
+      context: context,
+      barrierDismissible: false,
+      builder: (_) {
+        return StatefulBuilder(builder: (context, setLocal) {
+          localTimer ??= Timer.periodic(const Duration(seconds: 1), (t) {
+            if (!mounted) return;
+            if (remaining <= 1) {
+              t.cancel();
+              Navigator.of(context).pop();
+              return;
+            }
+            remaining -= 1;
+            setLocal(() {
+              _timeoutSecondsLeft = remaining;
+            });
+          });
+          return AlertDialog(
+            title: const Text('Timeout'),
+            content: Text('${_fmt(_timeoutSecondsLeft)} remaining'),
+            actions: [
+              TextButton(onPressed: () => Navigator.of(context).pop(), child: const Text('Resume')),
+            ],
+          );
+        });
+      },
+    );
+    localTimer?.cancel();
+    setState(() {
+      _inTimeout = false;
+    });
+    _resumeTimerIfNeeded();
   }
 
   void _onMedicalTimeout() async {
     final app = context.read<AppState>();
     final g = app.selectedGame;
     if (g == null) return;
-    await showDialog<void>(
+    final who = await showDialog<String>(
+      context: context,
+      builder: (_) {
+        final p1Disabled = _medTimeouts1 >= 1;
+        final p2Disabled = _medTimeouts2 >= 1;
+        return SimpleDialog(
+          title: const Text('Medical Timeout'),
+          children: [
+            ListTile(
+              title: Text(g.player1),
+              enabled: !p1Disabled,
+              onTap: p1Disabled ? null : () => Navigator.pop(context, 'p1'),
+            ),
+            ListTile(
+              title: Text(g.player2),
+              enabled: !p2Disabled,
+              onTap: p2Disabled ? null : () => Navigator.pop(context, 'p2'),
+            ),
+          ],
+        );
+      },
+    );
+    if (who == null) return;
+    final name = who == 'p1' ? g.player1 : g.player2;
+    final confirm = await showDialog<bool>(
       context: context,
       builder: (_) => AlertDialog(
-        title: const Text('Medical Timeout'),
-        content: const Text('Medical timeout noted.'),
-        actions: [TextButton(onPressed: () => Navigator.pop(context), child: const Text('OK'))],
+        title: const Text('Confirm Medical Timeout'),
+        content: Text('Are you sure you want to start a medical timeout for $name?'),
+        actions: [
+          TextButton(onPressed: () => Navigator.of(context).pop(false), child: const Text('Cancel')),
+          ElevatedButton(onPressed: () => Navigator.of(context).pop(true), child: const Text('OK')),
+        ],
       ),
     );
+    if (confirm != true) return;
+    _pushSnapshot();
+    if (who == 'p1') {
+      setState(() {
+        _medTimeouts1 += 1;
+      });
+    } else if (who == 'p2') {
+      setState(() {
+        _medTimeouts2 += 1;
+      });
+    }
+    int remaining = 300;
+    _timer?.cancel();
+    setState(() {
+      _inTimeout = true;
+      _timeoutSecondsLeft = remaining;
+    });
+    Timer? localTimer;
+    await showDialog<void>(
+      context: context,
+      barrierDismissible: false,
+      builder: (_) {
+        return StatefulBuilder(builder: (context, setLocal) {
+          localTimer ??= Timer.periodic(const Duration(seconds: 1), (t) {
+            if (!mounted) return;
+            if (remaining <= 1) {
+              t.cancel();
+              Navigator.of(context).pop();
+              return;
+            }
+            remaining -= 1;
+            setLocal(() {
+              _timeoutSecondsLeft = remaining;
+            });
+          });
+          return AlertDialog(
+            title: const Text('Medical Timeout'),
+            content: Text('${_fmt(_timeoutSecondsLeft)} remaining'),
+            actions: [
+              TextButton(onPressed: () => Navigator.of(context).pop(), child: const Text('Resume')),
+            ],
+          );
+        });
+      },
+    );
+    localTimer?.cancel();
+    setState(() {
+      _inTimeout = false;
+    });
+    _resumeTimerIfNeeded();
   }
 }
 

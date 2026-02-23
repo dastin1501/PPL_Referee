@@ -108,11 +108,15 @@ class _SignupScreenState extends State<SignupScreen> {
                   child: Container(
                     width: 80,
                     height: 80,
-                    decoration: BoxDecoration(
-                      color: Colors.teal.shade50,
+                    decoration: const BoxDecoration(
                       shape: BoxShape.circle,
+                      gradient: LinearGradient(
+                        colors: [Color(0xFF22C55E), Color(0xFF16A34A)],
+                        begin: Alignment.topLeft,
+                        end: Alignment.bottomRight,
+                      ),
                     ),
-                    child: const Icon(Icons.sports_tennis, size: 40, color: Colors.teal),
+                    child: const Icon(Icons.sports_tennis, size: 40, color: Colors.white),
                   ),
                 ),
                 const SizedBox(height: 24),
@@ -138,14 +142,25 @@ class _SignupScreenState extends State<SignupScreen> {
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          const Text('First Name', style: TextStyle(color: Colors.grey)),
-                          const SizedBox(height: 8),
                           TextFormField(
                             controller: _firstNameController,
-                            decoration: const InputDecoration(
-                              hintText: 'Enter first name',
-                              border: OutlineInputBorder(),
-                              contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+                            decoration: InputDecoration(
+                              labelText: 'First Name',
+                              border: OutlineInputBorder(borderRadius: BorderRadius.circular(14)),
+                              enabledBorder: OutlineInputBorder(
+                                borderRadius: BorderRadius.circular(14),
+                                borderSide: BorderSide(color: Colors.grey.shade300),
+                              ),
+                              focusedBorder: const OutlineInputBorder(
+                                borderRadius: BorderRadius.only(
+                                  topLeft: Radius.circular(14),
+                                  topRight: Radius.circular(14),
+                                  bottomLeft: Radius.circular(14),
+                                  bottomRight: Radius.circular(14),
+                                ),
+                                borderSide: BorderSide(color: Color(0xFF22C55E), width: 1.5),
+                              ),
+                              contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
                             ),
                             validator: (v) => v?.isEmpty ?? true ? 'Required' : null,
                           ),
@@ -157,14 +172,25 @@ class _SignupScreenState extends State<SignupScreen> {
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          const Text('Last Name', style: TextStyle(color: Colors.grey)),
-                          const SizedBox(height: 8),
                           TextFormField(
                             controller: _lastNameController,
-                            decoration: const InputDecoration(
-                              hintText: 'Enter last name',
-                              border: OutlineInputBorder(),
-                              contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+                            decoration: InputDecoration(
+                              labelText: 'Last Name',
+                              border: OutlineInputBorder(borderRadius: BorderRadius.circular(14)),
+                              enabledBorder: OutlineInputBorder(
+                                borderRadius: BorderRadius.circular(14),
+                                borderSide: BorderSide(color: Colors.grey.shade300),
+                              ),
+                              focusedBorder: const OutlineInputBorder(
+                                borderRadius: BorderRadius.only(
+                                  topLeft: Radius.circular(14),
+                                  topRight: Radius.circular(14),
+                                  bottomLeft: Radius.circular(14),
+                                  bottomRight: Radius.circular(14),
+                                ),
+                                borderSide: BorderSide(color: Color(0xFF22C55E), width: 1.5),
+                              ),
+                              contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
                             ),
                             validator: (v) => v?.isEmpty ?? true ? 'Required' : null,
                           ),
@@ -175,15 +201,26 @@ class _SignupScreenState extends State<SignupScreen> {
                 ),
                 const SizedBox(height: 16),
 
-                const Text('Phone Number', style: TextStyle(color: Colors.grey)),
-                const SizedBox(height: 8),
                 TextFormField(
                   controller: _phoneController,
                   keyboardType: TextInputType.phone,
-                  decoration: const InputDecoration(
-                    hintText: 'Enter your phone number',
-                    border: OutlineInputBorder(),
-                    contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+                  decoration: InputDecoration(
+                    labelText: 'Phone Number',
+                    border: OutlineInputBorder(borderRadius: BorderRadius.circular(14)),
+                    enabledBorder: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(14),
+                      borderSide: BorderSide(color: Colors.grey.shade300),
+                    ),
+                    focusedBorder: const OutlineInputBorder(
+                      borderRadius: BorderRadius.only(
+                        topLeft: Radius.circular(14),
+                        topRight: Radius.circular(14),
+                        bottomLeft: Radius.circular(14),
+                        bottomRight: Radius.circular(14),
+                      ),
+                      borderSide: BorderSide(color: Color(0xFF22C55E), width: 1.5),
+                    ),
+                    contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
                   ),
                   validator: (v) => v?.isEmpty ?? true ? 'Required' : null,
                 ),
@@ -196,16 +233,27 @@ class _SignupScreenState extends State<SignupScreen> {
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          const Text('Country', style: TextStyle(color: Colors.grey)),
-                          const SizedBox(height: 8),
                           DropdownButtonFormField<String>(
                             value: _selectedCountry,
                             items: _countries.map((c) => DropdownMenuItem(value: c, child: Text(c))).toList(),
                             onChanged: (v) => setState(() => _selectedCountry = v),
-                            decoration: const InputDecoration(
-                              hintText: 'Select country',
-                              border: OutlineInputBorder(),
-                              contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+                            decoration: InputDecoration(
+                              labelText: 'Country',
+                              border: OutlineInputBorder(borderRadius: BorderRadius.circular(14)),
+                              enabledBorder: OutlineInputBorder(
+                                borderRadius: BorderRadius.circular(14),
+                                borderSide: BorderSide(color: Colors.grey.shade300),
+                              ),
+                              focusedBorder: const OutlineInputBorder(
+                                borderRadius: BorderRadius.only(
+                                  topLeft: Radius.circular(14),
+                                  topRight: Radius.circular(14),
+                                  bottomLeft: Radius.circular(14),
+                                  bottomRight: Radius.circular(14),
+                                ),
+                                borderSide: BorderSide(color: Color(0xFF22C55E), width: 1.5),
+                              ),
+                              contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
                             ),
                             validator: (v) => v == null ? 'Required' : null,
                           ),
@@ -217,14 +265,25 @@ class _SignupScreenState extends State<SignupScreen> {
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          const Text('City', style: TextStyle(color: Colors.grey)),
-                          const SizedBox(height: 8),
                           TextFormField(
                             controller: _cityController,
-                            decoration: const InputDecoration(
-                              hintText: 'Select city first', // Assuming free text for now
-                              border: OutlineInputBorder(),
-                              contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+                            decoration: InputDecoration(
+                              labelText: 'City',
+                              border: OutlineInputBorder(borderRadius: BorderRadius.circular(14)),
+                              enabledBorder: OutlineInputBorder(
+                                borderRadius: BorderRadius.circular(14),
+                                borderSide: BorderSide(color: Colors.grey.shade300),
+                              ),
+                              focusedBorder: const OutlineInputBorder(
+                                borderRadius: BorderRadius.only(
+                                  topLeft: Radius.circular(14),
+                                  topRight: Radius.circular(14),
+                                  bottomLeft: Radius.circular(14),
+                                  bottomRight: Radius.circular(14),
+                                ),
+                                borderSide: BorderSide(color: Color(0xFF22C55E), width: 1.5),
+                              ),
+                              contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
                             ),
                             validator: (v) => v?.isEmpty ?? true ? 'Required' : null,
                           ),
@@ -235,17 +294,26 @@ class _SignupScreenState extends State<SignupScreen> {
                 ),
                 const SizedBox(height: 16),
 
-                const Text('Email', style: TextStyle(color: Colors.grey)),
-                const SizedBox(height: 8),
                 TextFormField(
                   controller: _emailController,
                   keyboardType: TextInputType.emailAddress,
-                  decoration: const InputDecoration(
-                    hintText: 'phpickleballleague@gmail.com',
-                    border: OutlineInputBorder(),
-                    filled: true,
-                    fillColor: Color(0xFFE3F2FD), // Light blue background like image
-                    contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+                  decoration: InputDecoration(
+                    labelText: 'Email',
+                    border: OutlineInputBorder(borderRadius: BorderRadius.circular(14)),
+                    enabledBorder: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(14),
+                      borderSide: BorderSide(color: Colors.grey.shade300),
+                    ),
+                    focusedBorder: const OutlineInputBorder(
+                      borderRadius: BorderRadius.only(
+                        topLeft: Radius.circular(14),
+                        topRight: Radius.circular(14),
+                        bottomLeft: Radius.circular(14),
+                        bottomRight: Radius.circular(14),
+                      ),
+                      borderSide: BorderSide(color: Color(0xFF22C55E), width: 1.5),
+                    ),
+                    contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
                   ),
                   validator: (v) => v?.isEmpty ?? true ? 'Required' : null,
                 ),
@@ -258,17 +326,28 @@ class _SignupScreenState extends State<SignupScreen> {
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          const Text('Birth Date', style: TextStyle(color: Colors.grey)),
-                          const SizedBox(height: 8),
                           TextFormField(
                             controller: _dobController,
                             readOnly: true,
                             onTap: () => _selectDate(context),
-                            decoration: const InputDecoration(
-                              hintText: 'dd/mm/yyyy',
-                              border: OutlineInputBorder(),
-                              suffixIcon: Icon(Icons.calendar_today, size: 20),
-                              contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+                            decoration: InputDecoration(
+                              labelText: 'Birth Date',
+                              border: OutlineInputBorder(borderRadius: BorderRadius.circular(14)),
+                              enabledBorder: OutlineInputBorder(
+                                borderRadius: BorderRadius.circular(14),
+                                borderSide: BorderSide(color: Colors.grey.shade300),
+                              ),
+                              focusedBorder: const OutlineInputBorder(
+                                borderRadius: BorderRadius.only(
+                                  topLeft: Radius.circular(14),
+                                  topRight: Radius.circular(14),
+                                  bottomLeft: Radius.circular(14),
+                                  bottomRight: Radius.circular(14),
+                                ),
+                                borderSide: BorderSide(color: Color(0xFF22C55E), width: 1.5),
+                              ),
+                              suffixIcon: const Icon(Icons.calendar_today, size: 20),
+                              contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
                             ),
                             validator: (v) => v?.isEmpty ?? true ? 'Required' : null,
                           ),
@@ -280,8 +359,6 @@ class _SignupScreenState extends State<SignupScreen> {
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          const Text('Gender', style: TextStyle(color: Colors.grey)),
-                          const SizedBox(height: 8),
                           DropdownButtonFormField<String>(
                             value: _selectedGender,
                             items: _genders
@@ -293,10 +370,23 @@ class _SignupScreenState extends State<SignupScreen> {
                                 )
                                 .toList(),
                             onChanged: (v) => setState(() => _selectedGender = v),
-                            decoration: const InputDecoration(
-                              hintText: 'Select gender',
-                              border: OutlineInputBorder(),
-                              contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+                            decoration: InputDecoration(
+                              labelText: 'Gender',
+                              border: OutlineInputBorder(borderRadius: BorderRadius.circular(14)),
+                              enabledBorder: OutlineInputBorder(
+                                borderRadius: BorderRadius.circular(14),
+                                borderSide: BorderSide(color: Colors.grey.shade300),
+                              ),
+                              focusedBorder: const OutlineInputBorder(
+                                borderRadius: BorderRadius.only(
+                                  topLeft: Radius.circular(14),
+                                  topRight: Radius.circular(14),
+                                  bottomLeft: Radius.circular(14),
+                                  bottomRight: Radius.circular(14),
+                                ),
+                                borderSide: BorderSide(color: Color(0xFF22C55E), width: 1.5),
+                              ),
+                              contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
                             ),
                             validator: (v) => v == null ? 'Required' : null,
                           ),
@@ -307,17 +397,26 @@ class _SignupScreenState extends State<SignupScreen> {
                 ),
                 const SizedBox(height: 16),
 
-                const Text('Password', style: TextStyle(color: Colors.grey)),
-                const SizedBox(height: 8),
                 TextFormField(
                   controller: _passwordController,
                   obscureText: _obscurePassword,
                   onChanged: (_) => setState(() {}),
                   decoration: InputDecoration(
-                    hintText: '••••••••••••',
-                    border: const OutlineInputBorder(),
-                    filled: true,
-                    fillColor: const Color(0xFFE3F2FD),
+                    labelText: 'Password',
+                    border: OutlineInputBorder(borderRadius: BorderRadius.circular(14)),
+                    enabledBorder: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(14),
+                      borderSide: BorderSide(color: Colors.grey.shade300),
+                    ),
+                    focusedBorder: const OutlineInputBorder(
+                      borderRadius: BorderRadius.only(
+                        topLeft: Radius.circular(14),
+                        topRight: Radius.circular(14),
+                        bottomLeft: Radius.circular(14),
+                        bottomRight: Radius.circular(14),
+                      ),
+                      borderSide: BorderSide(color: Color(0xFF22C55E), width: 1.5),
+                    ),
                     contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
                     suffixIcon: IconButton(
                       icon: Icon(_obscurePassword ? Icons.visibility_off : Icons.visibility),
@@ -340,14 +439,25 @@ class _SignupScreenState extends State<SignupScreen> {
                 _buildRequirement('One special character', _hasSpecialChar),
 
                 const SizedBox(height: 16),
-                const Text('Confirm Password', style: TextStyle(color: Colors.grey)),
-                const SizedBox(height: 8),
                 TextFormField(
                   controller: _confirmPasswordController,
                   obscureText: _obscureConfirmPassword,
                   decoration: InputDecoration(
-                    hintText: 'Confirm your password',
-                    border: const OutlineInputBorder(),
+                    labelText: 'Confirm Password',
+                    border: OutlineInputBorder(borderRadius: BorderRadius.circular(14)),
+                    enabledBorder: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(14),
+                      borderSide: BorderSide(color: Colors.grey.shade300),
+                    ),
+                    focusedBorder: const OutlineInputBorder(
+                      borderRadius: BorderRadius.only(
+                        topLeft: Radius.circular(14),
+                        topRight: Radius.circular(14),
+                        bottomLeft: Radius.circular(14),
+                        bottomRight: Radius.circular(14),
+                      ),
+                      borderSide: BorderSide(color: Color(0xFF22C55E), width: 1.5),
+                    ),
                     contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
                     suffixIcon: IconButton(
                       icon: Icon(_obscureConfirmPassword ? Icons.visibility_off : Icons.visibility),
@@ -392,7 +502,7 @@ class _SignupScreenState extends State<SignupScreen> {
                             }
                           },
                     style: ElevatedButton.styleFrom(
-                      backgroundColor: Colors.teal,
+                      backgroundColor: const Color(0xFF22C55E),
                       foregroundColor: Colors.white,
                       elevation: 0,
                       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
@@ -418,7 +528,7 @@ class _SignupScreenState extends State<SignupScreen> {
                       onTap: () => Navigator.pop(context),
                       child: const Text(
                         'Sign in',
-                        style: TextStyle(color: Colors.teal, fontWeight: FontWeight.bold),
+                        style: TextStyle(color: Color(0xFF22C55E), fontWeight: FontWeight.bold),
                       ),
                     ),
                   ],

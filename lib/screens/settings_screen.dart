@@ -20,31 +20,17 @@ class SettingsScreen extends StatelessWidget {
     return Scaffold(
       appBar: AppBar(
         title: const Text('Settings'),
-        backgroundColor: Colors.teal.shade800,
-        foregroundColor: Colors.white,
+        backgroundColor: Colors.white,
+        foregroundColor: Colors.black87,
+        elevation: 0,
+        centerTitle: true,
       ),
-      backgroundColor: Colors.grey.shade50,
+      backgroundColor: Colors.white,
       body: SingleChildScrollView(
         padding: const EdgeInsets.all(16.0),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            // Header
-            const Center(
-              child: Padding(
-                padding: EdgeInsets.only(bottom: 24.0),
-                child: Column(
-                  children: [
-                    Text(
-                      'Manage your profile information and account settings',
-                      textAlign: TextAlign.center,
-                      style: TextStyle(color: Colors.grey, fontSize: 14),
-                    ),
-                  ],
-                ),
-              ),
-            ),
-
             // Profile Information Section
             _buildSectionHeader('Profile Information', Icons.person),
             const SizedBox(height: 8),
@@ -56,10 +42,11 @@ class SettingsScreen extends StatelessWidget {
 
             // Avatar Upload Card
             Card(
-              elevation: 0,
+              elevation: 3,
+              color: Colors.white,
               shape: RoundedRectangleBorder(
                 borderRadius: BorderRadius.circular(12),
-                side: BorderSide(color: Colors.grey.shade200),
+                side: const BorderSide(color: Colors.transparent),
               ),
               child: Padding(
                 padding: const EdgeInsets.all(16.0),
@@ -73,53 +60,29 @@ class SettingsScreen extends StatelessWidget {
                           ? Text(user.initials ?? '?', style: const TextStyle(fontSize: 24, color: Colors.grey))
                           : null,
                     ),
-                    const SizedBox(width: 16),
+                    const SizedBox(width: 12),
                     Expanded(
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
                           const Text('AVATAR', style: TextStyle(fontSize: 10, fontWeight: FontWeight.bold, color: Colors.grey)),
                           const SizedBox(height: 8),
-                          Row(
-                            children: [
-                              OutlinedButton(
-                                onPressed: () {},
-                                style: OutlinedButton.styleFrom(
-                                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                                  side: BorderSide(color: Colors.grey.shade400),
-                                ),
-                                child: const Text('Choose File', style: TextStyle(color: Colors.black87, fontSize: 12)),
-                              ),
-                              const SizedBox(width: 8),
-                              const Text('No file chosen', style: TextStyle(fontSize: 12, color: Colors.grey)),
-                            ],
-                          ),
+                          const SizedBox(height: 4),
                         ],
                       ),
                     ),
-                    Column(
-                      children: [
-                        ElevatedButton(
-                          onPressed: () {},
-                          style: ElevatedButton.styleFrom(
-                            backgroundColor: Colors.grey.shade600,
-                            foregroundColor: Colors.white,
-                            minimumSize: const Size(80, 36),
-                          ),
-                          child: const Text('UPLOAD', style: TextStyle(fontSize: 10)),
+                    const SizedBox(width: 12),
+                    SizedBox(
+                      width: 140,
+                      child: ElevatedButton(
+                        onPressed: () {},
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: const Color(0xFF22C55E),
+                          foregroundColor: Colors.white,
+                          minimumSize: const Size(double.infinity, 40),
                         ),
-                        const SizedBox(height: 4),
-                        OutlinedButton(
-                          onPressed: () {},
-                          style: OutlinedButton.styleFrom(
-                            backgroundColor: Colors.grey.shade600,
-                            foregroundColor: Colors.white,
-                            side: BorderSide.none,
-                            minimumSize: const Size(80, 36),
-                          ),
-                          child: const Text('CANCEL', style: TextStyle(fontSize: 10)),
-                        ),
-                      ],
+                        child: const Text('UPLOAD PIC', style: TextStyle(fontSize: 12)),
+                      ),
                     ),
                   ],
                 ),
@@ -129,10 +92,11 @@ class SettingsScreen extends StatelessWidget {
 
             // Read-only Fields (First/Last Name)
             Card(
-              elevation: 0,
+              elevation: 3,
+              color: Colors.white,
               shape: RoundedRectangleBorder(
                 borderRadius: BorderRadius.circular(12),
-                side: BorderSide(color: Colors.grey.shade200),
+                side: const BorderSide(color: Colors.transparent),
               ),
               child: Padding(
                 padding: const EdgeInsets.all(16.0),
@@ -153,18 +117,30 @@ class SettingsScreen extends StatelessWidget {
 
             // Read-only Fields (Birthdate)
             Card(
-              elevation: 0,
+              elevation: 3,
+              color: Colors.white,
               shape: RoundedRectangleBorder(
                 borderRadius: BorderRadius.circular(12),
-                side: BorderSide(color: Colors.grey.shade200),
+                side: const BorderSide(color: Colors.transparent),
               ),
               child: Padding(
                 padding: const EdgeInsets.all(16.0),
-                child: _buildReadOnlyField(
-                  'BIRTHDATE AND AGE',
-                  user.birthDate != null
-                      ? '${user.birthDate!.toString().split(' ')[0]} (${_calculateAge(user.birthDate!)} years old)'
-                      : 'N/A',
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: _buildReadOnlyField(
+                        'BIRTHDATE',
+                        user.birthDate != null ? user.birthDate!.toString().split(' ')[0] : 'N/A',
+                      ),
+                    ),
+                    const SizedBox(width: 16),
+                    Expanded(
+                      child: _buildReadOnlyField(
+                        'AGE',
+                        user.birthDate != null ? '${_calculateAge(user.birthDate!)} years old' : 'N/A',
+                      ),
+                    ),
+                  ],
                 ),
               ),
             ),
@@ -173,7 +149,7 @@ class SettingsScreen extends StatelessWidget {
             // Editable Fields
             _buildEditableCard('EMAIL ADDRESS', user.email, 'EDIT'),
             const SizedBox(height: 16),
-            _buildEditableCard('PHONE NUMBER', '09687684383', 'EDIT'), // Hardcoded placeholder or user.phoneNumber
+            _buildEditableCard('PHONE NUMBER', '09687684383', 'EDIT'),
             const SizedBox(height: 16),
             _buildEditableCard('DUPR ID', user.duprId ?? 'N/A', 'EDIT',
                 note: 'We\'re currently working with DUPR to implement the DUPR API...'),
@@ -192,10 +168,11 @@ class SettingsScreen extends StatelessWidget {
             const SizedBox(height: 16),
 
             Card(
-              elevation: 0,
+              elevation: 3,
+              color: Colors.white,
               shape: RoundedRectangleBorder(
                 borderRadius: BorderRadius.circular(12),
-                side: BorderSide(color: Colors.grey.shade200),
+                side: const BorderSide(color: Colors.transparent),
               ),
               child: Padding(
                 padding: const EdgeInsets.all(16.0),
@@ -203,41 +180,54 @@ class SettingsScreen extends StatelessWidget {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     // OTP Section
-                    Row(
-                      crossAxisAlignment: CrossAxisAlignment.end,
+                    Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        Expanded(
-                          flex: 2,
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              const Text('ONE-TIME CODE (OTP)',
-                                  style: TextStyle(fontSize: 10, fontWeight: FontWeight.bold, color: Colors.grey)),
-                              const SizedBox(height: 4),
-                              const Text(
-                                'Click "Send OTP" to receive a code via email, then enter it below.',
-                                style: TextStyle(fontSize: 10, color: Colors.grey, fontStyle: FontStyle.italic),
+                        Row(
+                          children: [
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  const Text('ONE-TIME CODE (OTP)',
+                                      style: TextStyle(fontSize: 10, fontWeight: FontWeight.bold, color: Colors.grey)),
+                                  const SizedBox(height: 4),
+                                  const Text(
+                                    'Click "Send OTP" to receive a code via email, then enter it below.',
+                                    style: TextStyle(fontSize: 10, color: Colors.grey, fontStyle: FontStyle.italic),
+                                  ),
+                                ],
                               ),
-                            ],
-                          ),
+                            ),
+                            const SizedBox(width: 8),
+                            ElevatedButton(
+                              onPressed: () {},
+                              style: ElevatedButton.styleFrom(
+                                backgroundColor: const Color(0xFF22C55E),
+                                foregroundColor: Colors.white,
+                              ),
+                              child: const Text('SEND OTP'),
+                            ),
+                          ],
                         ),
-                        const SizedBox(width: 8),
-                        ElevatedButton(
-                          onPressed: () {},
-                          style: ElevatedButton.styleFrom(
-                            backgroundColor: Colors.teal,
-                            foregroundColor: Colors.white,
-                          ),
-                          child: const Text('SEND OTP'),
-                        ),
-                        const SizedBox(width: 8),
-                        Expanded(
-                          flex: 1,
-                          child: TextField(
-                            decoration: InputDecoration(
-                              hintText: 'Enter OTP',
-                              contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                              border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
+                        const SizedBox(height: 12),
+                        TextField(
+                          decoration: InputDecoration(
+                            labelText: 'Enter OTP',
+                            contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+                            border: OutlineInputBorder(borderRadius: BorderRadius.circular(14)),
+                            enabledBorder: OutlineInputBorder(
+                              borderRadius: BorderRadius.circular(14),
+                              borderSide: BorderSide(color: Colors.grey.shade300),
+                            ),
+                            focusedBorder: const OutlineInputBorder(
+                              borderRadius: BorderRadius.only(
+                                topLeft: Radius.circular(14),
+                                topRight: Radius.circular(14),
+                                bottomLeft: Radius.circular(14),
+                                bottomRight: Radius.circular(14),
+                              ),
+                              borderSide: BorderSide(color: Color(0xFF22C55E), width: 1.5),
                             ),
                           ),
                         ),
@@ -251,27 +241,33 @@ class SettingsScreen extends StatelessWidget {
                     TextField(
                       obscureText: true,
                       decoration: InputDecoration(
-                        hintText: 'Enter new password',
-                        border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
+                        labelText: 'New password',
+                        border: OutlineInputBorder(borderRadius: BorderRadius.circular(14)),
+                        enabledBorder: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(14),
+                          borderSide: BorderSide(color: Colors.grey.shade300),
+                        ),
+                        focusedBorder: const OutlineInputBorder(
+                          borderRadius: BorderRadius.only(
+                            topLeft: Radius.circular(14),
+                            topRight: Radius.circular(14),
+                            bottomLeft: Radius.circular(14),
+                            bottomRight: Radius.circular(14),
+                          ),
+                          borderSide: BorderSide(color: Color(0xFF22C55E), width: 1.5),
+                        ),
                       ),
                     ),
                     const SizedBox(height: 12),
-                    Container(
-                      padding: const EdgeInsets.all(12),
-                      decoration: BoxDecoration(
-                        color: Colors.blue.shade50,
-                        borderRadius: BorderRadius.circular(8),
-                      ),
-                      child: const Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text('• At least 8 characters', style: TextStyle(fontSize: 11, color: Colors.blueGrey)),
-                          Text('• One uppercase letter', style: TextStyle(fontSize: 11, color: Colors.blueGrey)),
-                          Text('• One lowercase letter', style: TextStyle(fontSize: 11, color: Colors.blueGrey)),
-                          Text('• One number', style: TextStyle(fontSize: 11, color: Colors.blueGrey)),
-                          Text('• One special character (!@#\$%^&*)', style: TextStyle(fontSize: 11, color: Colors.blueGrey)),
-                        ],
-                      ),
+                    const Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text('• At least 8 characters', style: TextStyle(fontSize: 11, color: Colors.blueGrey)),
+                        Text('• One uppercase letter', style: TextStyle(fontSize: 11, color: Colors.blueGrey)),
+                        Text('• One lowercase letter', style: TextStyle(fontSize: 11, color: Colors.blueGrey)),
+                        Text('• One number', style: TextStyle(fontSize: 11, color: Colors.blueGrey)),
+                        Text('• One special character (!@#\$%^&*)', style: TextStyle(fontSize: 11, color: Colors.blueGrey)),
+                      ],
                     ),
                     const SizedBox(height: 24),
 
@@ -281,8 +277,21 @@ class SettingsScreen extends StatelessWidget {
                     TextField(
                       obscureText: true,
                       decoration: InputDecoration(
-                        hintText: 'Confirm new password',
-                        border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
+                        labelText: 'Confirm new password',
+                        border: OutlineInputBorder(borderRadius: BorderRadius.circular(14)),
+                        enabledBorder: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(14),
+                          borderSide: BorderSide(color: Colors.grey.shade300),
+                        ),
+                        focusedBorder: const OutlineInputBorder(
+                          borderRadius: BorderRadius.only(
+                            topLeft: Radius.circular(14),
+                            topRight: Radius.circular(14),
+                            bottomLeft: Radius.circular(14),
+                            bottomRight: Radius.circular(14),
+                          ),
+                          borderSide: BorderSide(color: Color(0xFF22C55E), width: 1.5),
+                        ),
                       ),
                     ),
                     const SizedBox(height: 24),
@@ -292,17 +301,18 @@ class SettingsScreen extends StatelessWidget {
                         ElevatedButton(
                           onPressed: () {},
                           style: ElevatedButton.styleFrom(
-                            backgroundColor: Colors.grey.shade600,
+                            backgroundColor: const Color(0xFF22C55E),
                             foregroundColor: Colors.white,
                           ),
                           child: const Text('UPDATE PASSWORD'),
                         ),
                         const SizedBox(width: 12),
-                        ElevatedButton(
+                        OutlinedButton(
                           onPressed: () {},
-                          style: ElevatedButton.styleFrom(
-                            backgroundColor: Colors.grey.shade700,
-                            foregroundColor: Colors.white,
+                          style: OutlinedButton.styleFrom(
+                            foregroundColor: Colors.black87,
+                            side: BorderSide(color: Colors.grey.shade400),
+                            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
                           ),
                           child: const Text('CANCEL'),
                         ),
@@ -324,7 +334,7 @@ class SettingsScreen extends StatelessWidget {
                     style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Colors.red.shade700)),
               ],
             ),
-            const Divider(color: Colors.red, thickness: 2, endIndent: 250), // Red underline
+            const Divider(color: Color(0xFFFFDAD4), thickness: 1, endIndent: 250),
             const SizedBox(height: 8),
             const Text(
               'Archive your account. Your data is preserved but hidden from the site.',
@@ -352,7 +362,7 @@ class SettingsScreen extends StatelessWidget {
   Widget _buildSectionHeader(String title, IconData icon) {
     return Row(
       children: [
-        Icon(icon, color: Colors.purple.shade900, size: 24),
+        Icon(icon, color: const Color(0xFF22C55E), size: 24),
         const SizedBox(width: 8),
         Text(
           title,
@@ -377,10 +387,11 @@ class SettingsScreen extends StatelessWidget {
 
   Widget _buildEditableCard(String label, String value, String btnLabel, {String? note}) {
     return Card(
-      elevation: 0,
+      elevation: 3,
+      color: Colors.white,
       shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.circular(12),
-        side: BorderSide(color: Colors.grey.shade200),
+        side: const BorderSide(color: Colors.transparent),
       ),
       child: Padding(
         padding: const EdgeInsets.all(16.0),
@@ -401,7 +412,7 @@ class SettingsScreen extends StatelessWidget {
                 ElevatedButton(
                   onPressed: () {},
                   style: ElevatedButton.styleFrom(
-                    backgroundColor: Colors.teal,
+                    backgroundColor: const Color(0xFF22C55E),
                     foregroundColor: Colors.white,
                     minimumSize: const Size(60, 30),
                     padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),

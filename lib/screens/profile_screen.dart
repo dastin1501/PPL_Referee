@@ -19,6 +19,7 @@ class ProfileScreen extends StatelessWidget {
     }
 
     return Scaffold(
+      backgroundColor: Colors.white,
       body: CustomScrollView(
         slivers: [
           _buildSliverAppBar(user),
@@ -42,61 +43,16 @@ class ProfileScreen extends StatelessWidget {
 
   Widget _buildSliverAppBar(User user) {
     return SliverAppBar(
-      expandedHeight: 200.0,
+      toolbarHeight: 56.0,
       floating: false,
       pinned: true,
-      flexibleSpace: FlexibleSpaceBar(
-        background: Stack(
-          fit: StackFit.expand,
-          children: [
-            // Cover Photo Pattern
-            Container(
-              decoration: const BoxDecoration(
-                gradient: LinearGradient(
-                  begin: Alignment.topLeft,
-                  end: Alignment.bottomRight,
-                  colors: [Colors.blueAccent, Colors.tealAccent],
-                ),
-              ),
-              child: Opacity(
-                opacity: 0.1,
-                child: Image.network(
-                  'https://www.transparenttextures.com/patterns/cubes.png', // Subtle pattern
-                  repeat: ImageRepeat.repeat,
-                ),
-              ),
-            ),
-            // Profile Avatar (Overlapping)
-            Positioned(
-              bottom: 0,
-              left: 20,
-              child: Transform.translate(
-                offset: const Offset(0, 50),
-                child: CircleAvatar(
-                  radius: 54,
-                  backgroundColor: Colors.white,
-                  child: CircleAvatar(
-                    radius: 50,
-                    backgroundColor: Colors.teal,
-                    backgroundImage: user.avatarUrl != null ? NetworkImage(user.avatarUrl!) : null,
-                    child: user.avatarUrl == null
-                        ? Text(
-                            user.initials ?? (user.name.isNotEmpty ? user.name[0].toUpperCase() : '?'),
-                            style: const TextStyle(fontSize: 40, color: Colors.white),
-                          )
-                        : null,
-                  ),
-                ),
-              ),
-            ),
-          ],
-        ),
-      ),
+      backgroundColor: Colors.white,
+      foregroundColor: Colors.black87,
+      elevation: 0,
     );
   }
 
   Widget _buildProfileHeader(User user) {
-    // Calculate Age
     String age = 'N/A';
     if (user.birthDate != null) {
       final now = DateTime.now();
@@ -104,39 +60,71 @@ class ProfileScreen extends StatelessWidget {
       age = '${(difference.inDays / 365).floor()} Years';
     }
 
-    return Padding(
-      padding: const EdgeInsets.only(top: 40.0), // Space for overlapping avatar
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(
-            user.name,
-            style: const TextStyle(fontSize: 28, fontWeight: FontWeight.bold, color: Colors.black87),
-          ),
-          const SizedBox(height: 16),
-          
-          // Stats Row (PPL ID, DUPR ID, RATINGS)
-          SingleChildScrollView(
-            scrollDirection: Axis.horizontal,
-            child: Row(
-              crossAxisAlignment: CrossAxisAlignment.start,
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            Container(
+              width: 96,
+              height: 96,
+              decoration: const BoxDecoration(
+                shape: BoxShape.circle,
+                gradient: LinearGradient(
+                  colors: [Color(0xFF22C55E), Color(0xFF16A34A)],
+                  begin: Alignment.topLeft,
+                  end: Alignment.bottomRight,
+                ),
+              ),
+              child: ClipOval(
+                child: user.avatarUrl != null
+                    ? Image.network(user.avatarUrl!, fit: BoxFit.cover)
+                    : Center(
+                        child: Text(
+                          user.initials ?? (user.name.isNotEmpty ? user.name[0].toUpperCase() : '?'),
+                          style: const TextStyle(fontSize: 36, color: Colors.white, fontWeight: FontWeight.bold),
+                        ),
+                      ),
+              ),
+            ),
+            const SizedBox(width: 16),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(user.name, style: const TextStyle(fontSize: 24, fontWeight: FontWeight.bold)),
+                  const SizedBox(height: 4),
+                  Text(user.email ?? '', style: const TextStyle(color: Colors.grey)),
+                ],
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 20),
+        Column(
+          children: [
+            Row(
               children: [
-                _buildStatItem('PPL ID', user.pplId ?? 'N/A'),
-                const SizedBox(width: 24),
-                _buildStatItem('DUPR ID', user.duprId ?? 'N/A'),
-                const SizedBox(width: 24),
-                _buildStatItem('DUPR SINGLES', user.singlesRating?.toString() ?? 'NR'),
-                const SizedBox(width: 24),
-                _buildStatItem('DUPR DOUBLES', user.doublesRating?.toString() ?? 'NR'),
-                const SizedBox(width: 24),
-                _buildStatItem('AGE', age),
-                const SizedBox(width: 24),
-                _buildStatItem('GENDER', user.gender ?? 'N/A'),
+                Expanded(child: _buildStatItem('PPL ID', user.pplId ?? 'N/A')),
+                const SizedBox(width: 12),
+                Expanded(child: _buildStatItem('AGE', age)),
+                const SizedBox(width: 12),
+                Expanded(child: _buildStatItem('GENDER', user.gender ?? 'N/A')),
               ],
             ),
-          ),
-        ],
-      ),
+            const SizedBox(height: 12),
+            Row(
+              children: [
+                Expanded(child: _buildStatItem('DUPR ID', user.duprId ?? 'N/A')),
+                const SizedBox(width: 12),
+                Expanded(child: _buildStatItem('DUPR SINGLES', user.singlesRating?.toString() ?? 'NR')),
+                const SizedBox(width: 12),
+                Expanded(child: _buildStatItem('DUPR DOUBLES', user.doublesRating?.toString() ?? 'NR')),
+              ],
+            ),
+          ],
+        ),
+      ],
     );
   }
 
@@ -163,9 +151,9 @@ class ProfileScreen extends StatelessWidget {
       child: Column(
         children: [
           const TabBar(
-            labelColor: Colors.teal,
+            labelColor: Color(0xFF22C55E),
             unselectedLabelColor: Colors.grey,
-            indicatorColor: Colors.teal,
+            indicatorColor: Color(0xFF22C55E),
             tabs: [
               Tab(text: 'About'),
               Tab(text: 'My Club'),
@@ -174,17 +162,16 @@ class ProfileScreen extends StatelessWidget {
           ),
           const SizedBox(height: 24),
           SizedBox(
-            height: 400, // Fixed height for tab content
+            height: 400,
             child: TabBarView(
               children: [
-                // About Tab
                 SingleChildScrollView(
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       const Text(
                         'Bio',
-                        style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Colors.teal),
+                        style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Color(0xFF22C55E)),
                       ),
                       const SizedBox(height: 8),
                       Text(
@@ -194,20 +181,17 @@ class ProfileScreen extends StatelessWidget {
                       const SizedBox(height: 16),
                       OutlinedButton.icon(
                         onPressed: () {
-                          // Edit Bio Logic
                           ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Edit Bio coming soon')));
                         },
-                        icon: const Icon(Icons.edit, size: 16, color: Colors.teal),
-                        label: const Text('Edit', style: TextStyle(color: Colors.teal)),
+                        icon: const Icon(Icons.edit, size: 16, color: Color(0xFF22C55E)),
+                        label: const Text('Edit', style: TextStyle(color: Color(0xFF22C55E))),
                       ),
                     ],
                   ),
                 ),
                 
-                // My Club Tab (Placeholder)
                 const Center(child: Text('Club information not available')),
                 
-                // Tournaments Tab (Placeholder)
                 const Center(child: Text('No past tournaments found')),
               ],
             ),

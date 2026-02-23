@@ -4,14 +4,27 @@ import '../state/app_state.dart';
 import 'profile_screen.dart';
 import 'settings_screen.dart';
 
-class TournamentListScreen extends StatelessWidget {
+class TournamentListScreen extends StatefulWidget {
   const TournamentListScreen({super.key});
+
+  @override
+  State<TournamentListScreen> createState() => _TournamentListScreenState();
+}
+
+class _TournamentListScreenState extends State<TournamentListScreen> {
+  bool _navigating = false;
 
   @override
   Widget build(BuildContext context) {
     final app = context.watch<AppState>();
     return Scaffold(
-      appBar: AppBar(title: const Text('My Tournaments')),
+      appBar: AppBar(
+        title: const Text('My Tournaments'),
+        backgroundColor: Colors.white,
+        foregroundColor: Colors.black87,
+        elevation: 0,
+        centerTitle: true,
+      ),
       drawer: Drawer(
         child: ListView(
           padding: EdgeInsets.zero,
@@ -20,18 +33,22 @@ class TournamentListScreen extends StatelessWidget {
               accountName: Text(app.currentUser?.name ?? 'Referee'),
               accountEmail: Text(app.currentUser?.email ?? ''),
               currentAccountPicture: const CircleAvatar(
-                backgroundColor: Colors.white,
-                child: Icon(Icons.person, color: Colors.blueAccent),
+                backgroundColor: Color(0xFF22C55E),
+                child: Icon(Icons.person, color: Colors.white),
               ),
               decoration: const BoxDecoration(
-                color: Colors.blueAccent,
+                gradient: LinearGradient(
+                  colors: [Color(0xFF22C55E), Color(0xFF16A34A)],
+                  begin: Alignment.topLeft,
+                  end: Alignment.bottomRight,
+                ),
               ),
             ),
             ListTile(
               leading: const Icon(Icons.person_outline),
               title: const Text('Profile'),
               onTap: () {
-                Navigator.pop(context); // Close drawer
+                Navigator.pop(context);
                 Navigator.push(
                   context,
                   MaterialPageRoute(builder: (context) => const ProfileScreen()),
@@ -65,6 +82,7 @@ class TournamentListScreen extends StatelessWidget {
         ),
       ),
       body: RefreshIndicator(
+        color: const Color(0xFF22C55E),
         onRefresh: () => app.loadTournaments(),
         child: app.error != null
             ? Center(
@@ -83,6 +101,10 @@ class TournamentListScreen extends StatelessWidget {
                       const SizedBox(height: 16),
                       ElevatedButton(
                         onPressed: () => app.loadTournaments(),
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: const Color(0xFF22C55E),
+                          foregroundColor: Colors.white,
+                        ),
                         child: const Text('Retry'),
                       ),
                     ],
@@ -94,31 +116,62 @@ class TournamentListScreen extends StatelessWidget {
                     child: Column(
                       mainAxisAlignment: MainAxisAlignment.center,
                       children: [
+                        const Icon(Icons.calendar_today, color: Colors.grey, size: 40),
+                        const SizedBox(height: 12),
                         const Text('No tournaments found.'),
                         const SizedBox(height: 16),
                         ElevatedButton(
                           onPressed: () => app.loadTournaments(),
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: const Color(0xFF22C55E),
+                            foregroundColor: Colors.white,
+                          ),
                           child: const Text('Refresh'),
                         ),
                       ],
                     ),
                   )
-                : ListView.builder(
+                : ListView.separated(
+                    padding: const EdgeInsets.all(16),
                     itemCount: app.tournaments.length,
+                    separatorBuilder: (_, __) => const SizedBox(height: 12),
                     itemBuilder: (_, i) {
                       final t = app.tournaments[i];
-            return ListTile(
-              title: Text(t.name),
-              trailing: const Icon(Icons.chevron_right),
-              onTap: () async {
-                await app.selectTournament(t);
-                if (context.mounted) {
-                  Navigator.pushNamed(context, '/courtGames');
-                }
-              },
-            );
-          },
-        ),
+                      return InkWell(
+                        onTap: () async {
+                          if (_navigating) return;
+                          setState(() => _navigating = true);
+                          await app.selectTournament(t);
+                          if (!mounted) return;
+                          Navigator.pushNamed(context, '/courtGames').then((_) {
+                            if (mounted) setState(() => _navigating = false);
+                          });
+                        },
+                        borderRadius: BorderRadius.circular(16),
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+                          decoration: BoxDecoration(
+                            color: Colors.white,
+                            borderRadius: BorderRadius.circular(16),
+                            border: Border.all(color: Colors.grey.shade300),
+                          ),
+                          child: Row(
+                            children: [
+                              const Icon(Icons.emoji_events_outlined, color: Color(0xFF22C55E)),
+                              const SizedBox(width: 12),
+                              Expanded(
+                                child: Text(
+                                  t.name,
+                                  style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
+                                ),
+                              ),
+                              const Icon(Icons.chevron_right, color: Colors.grey),
+                            ],
+                          ),
+                        ),
+                      );
+                    },
+                  ),
       ),
     );
   }
