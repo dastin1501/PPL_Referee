@@ -22,10 +22,22 @@ class AppState extends ChangeNotifier {
   String? error;
   bool initialized = false;
 
+  // Offline outbox for match updates
+  static const _storageOutboxKey = 'referee_outbox_v1';
+  List<Map<String, dynamic>> _outbox = [];
+  int get pendingSyncCount => _outbox.length;
+  bool pendingForMatch(String categoryId, String groupId, String matchKey) {
+    return _outbox.any((e) =>
+        e['categoryId'] == categoryId &&
+        e['groupId'] == groupId &&
+        e['matchKey'] == matchKey);
+  }
+
   Future<void> init() async {
     final prefs = await SharedPreferences.getInstance();
     final token = prefs.getString(_storageTokenKey);
     final userJson = prefs.getString(_storageUserKey);
+    await _loadOutbox();
     if (token != null && userJson != null) {
       try {
         final data = jsonDecode(userJson) as Map<String, dynamic>;
@@ -111,6 +123,8 @@ class AppState extends ChangeNotifier {
     try {
       final allTournaments = await _api.getRefereeTournaments();
       tournaments = allTournaments.where((t) => t.referees.contains(currentUser!.id)).toList();
+      // Opportunistic sync when loading
+      await trySyncOutbox();
     } catch (e) {
       error = 'Failed to load tournaments: $e';
       tournaments = [];
@@ -192,6 +206,8 @@ class AppState extends ChangeNotifier {
       selectedTournament = fullTournament;
       courts = fullTournament.courts;
       games = fullTournament.matches;
+      // Try syncing queued updates after refresh
+      await trySyncOutbox();
     } catch (e) {
       error = 'Failed to refresh: $e';
     }
@@ -258,11 +274,82 @@ class AppState extends ChangeNotifier {
         selectedGame = updated;
         notifyListeners();
       } catch (e) {
-        error = 'Failed to update match: $e';
+        // Queue offline
+        await queueMatchUpdate(
+          tournamentId: t.id,
+          categoryId: g.categoryId,
+          groupId: g.groupId,
+          matchKey: g.matchKey,
+          fields: payload,
+        );
+        error = 'Saved offline; will sync when online.';
         notifyListeners();
-        rethrow;
       }
     }
+  }
+
+  Future<void> queueMatchUpdate({
+    required String tournamentId,
+    required String categoryId,
+    required String groupId,
+    required String matchKey,
+    required Map<String, dynamic> fields,
+  }) async {
+    final item = {
+      'tournamentId': tournamentId,
+      'categoryId': categoryId,
+      'groupId': groupId,
+      'matchKey': matchKey,
+      'fields': fields,
+      'ts': DateTime.now().toIso8601String(),
+    };
+    _outbox.add(item);
+    await _saveOutbox();
+  }
+
+  Future<void> trySyncOutbox() async {
+    if (_outbox.isEmpty) return;
+    final copy = List<Map<String, dynamic>>.from(_outbox);
+    final succeeded = <Map<String, dynamic>>[];
+    for (final item in copy) {
+      try {
+        await _api.updateGroupMatch(
+          tournamentId: item['tournamentId'],
+          categoryId: item['categoryId'],
+          groupId: item['groupId'],
+          matchKey: item['matchKey'],
+          fields: Map<String, dynamic>.from(item['fields'] as Map),
+        );
+        succeeded.add(item);
+      } catch (_) {
+        // keep in outbox
+      }
+    }
+    if (succeeded.isNotEmpty) {
+      _outbox.removeWhere((e) => succeeded.contains(e));
+      await _saveOutbox();
+      await refreshSelectedTournament();
+    }
+  }
+
+  Future<void> _loadOutbox() async {
+    final prefs = await SharedPreferences.getInstance();
+    final s = prefs.getString(_storageOutboxKey);
+    if (s != null && s.isNotEmpty) {
+      try {
+        final list = jsonDecode(s);
+        if (list is List) {
+          _outbox = list.map<Map<String, dynamic>>((e) => Map<String, dynamic>.from(e as Map)).toList();
+        }
+      } catch (_) {
+        _outbox = [];
+      }
+    }
+  }
+
+  Future<void> _saveOutbox() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(_storageOutboxKey, jsonEncode(_outbox));
   }
 
   Future<void> logout() async {
@@ -276,6 +363,7 @@ class AppState extends ChangeNotifier {
     final prefs = await SharedPreferences.getInstance();
     await prefs.remove(_storageTokenKey);
     await prefs.remove(_storageUserKey);
+    await prefs.remove(_storageOutboxKey);
     notifyListeners();
   }
 }

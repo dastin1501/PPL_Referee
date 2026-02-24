@@ -394,31 +394,6 @@ class _RefereeDashboardScreenState extends State<RefereeDashboardScreen> {
                 ],
               ),
         actions: [
-          Padding(
-            padding: const EdgeInsets.only(right: 8.0),
-            child: ToggleButtons(
-              isSelected: [
-                _currentGame == 1,
-                _currentGame == 2,
-                _currentGame == 3,
-              ],
-              borderRadius: BorderRadius.circular(8),
-              constraints: const BoxConstraints(minHeight: 28, minWidth: 36),
-              selectedColor: Colors.white,
-              color: Colors.white70,
-              fillColor: const Color(0xFF10B981),
-              onPressed: (i) {
-                setState(() {
-                  _currentGame = i + 1;
-                });
-              },
-              children: const [
-                Text('G1', style: TextStyle(fontSize: 12)),
-                Text('G2', style: TextStyle(fontSize: 12)),
-                Text('G3', style: TextStyle(fontSize: 12)),
-              ],
-            ),
-          ),
           if (_gameStarted && g != null)
             Padding(
               padding: const EdgeInsets.only(right: 8.0),
@@ -987,37 +962,6 @@ class _RefereeDashboardScreenState extends State<RefereeDashboardScreen> {
                             const SizedBox(width: 8),
                             ElevatedButton(
                               onPressed: () async {
-                                final chosen = await showDialog<int>(
-                                  context: context,
-                                  builder: (_) => SimpleDialog(
-                                    title: const Text('Which game is this?'),
-                                    children: [
-                                      RadioListTile<int>(
-                                        value: 1,
-                                        groupValue: _currentGame,
-                                        onChanged: (v) => Navigator.of(context).pop(v),
-                                        title: const Text('Game 1'),
-                                      ),
-                                      RadioListTile<int>(
-                                        value: 2,
-                                        groupValue: _currentGame,
-                                        onChanged: (v) => Navigator.of(context).pop(v),
-                                        title: const Text('Game 2'),
-                                      ),
-                                      RadioListTile<int>(
-                                        value: 3,
-                                        groupValue: _currentGame,
-                                        onChanged: (v) => Navigator.of(context).pop(v),
-                                        title: const Text('Game 3'),
-                                      ),
-                                    ],
-                                  ),
-                                );
-                                if (chosen != null) {
-                                  setState(() {
-                                    _currentGame = chosen;
-                                  });
-                                }
                                 bool includeNote = true;
                                 if (_refereeNote.trim().isNotEmpty) {
                                   final decision = await showDialog<bool>(

@@ -35,6 +35,14 @@ class CourtGamesScreen extends StatelessWidget {
           backgroundColor: Colors.white,
           foregroundColor: Colors.black87,
           elevation: 0,
+          actions: [
+            if (app.pendingSyncCount > 0)
+              TextButton.icon(
+                onPressed: () => app.trySyncOutbox(),
+                icon: const Icon(Icons.sync, color: Color(0xFF22C55E)),
+                label: Text('Sync ${app.pendingSyncCount}', style: const TextStyle(color: Color(0xFF22C55E))),
+              ),
+          ],
           bottom: const TabBar(
             indicatorColor: Color(0xFF22C55E),
             labelColor: Color(0xFF22C55E),
@@ -256,8 +264,10 @@ Widget _buildGamesList(
                   mainAxisAlignment: MainAxisAlignment.center,
                   crossAxisAlignment: CrossAxisAlignment.end,
                   children: [
-              Text('${g.score1} - ${g.score2}', style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
-              Text(displayStatus, style: const TextStyle(fontSize: 10, color: Colors.grey)),
+                    Text('${g.score1} - ${g.score2}', style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
+                    Text(displayStatus, style: const TextStyle(fontSize: 10, color: Colors.grey)),
+                    if (app.pendingForMatch(g.categoryId, g.groupId, g.matchKey))
+                      const Text('Pending Sync', style: TextStyle(fontSize: 10, color: Colors.orange)),
                   ],
                 ),
               ],
