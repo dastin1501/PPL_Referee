@@ -17,6 +17,8 @@ class ApiService {
 
   Map<String, String> get _headers => {
         'Content-Type': 'application/json',
+        'Cache-Control': 'no-cache',
+        'Pragma': 'no-cache',
         if (_token != null) 'Authorization': 'Bearer $_token',
       };
 
@@ -84,7 +86,8 @@ class ApiService {
 
   Future<List<Tournament>> getRefereeTournaments() async {
     try {
-      final url = '$baseUrl/api/tournaments';
+      final ts = DateTime.now().millisecondsSinceEpoch;
+      final url = '$baseUrl/api/tournaments?_ts=$ts';
       print('GET $url');
       final res = await http.get(
         Uri.parse(url),
@@ -105,7 +108,8 @@ class ApiService {
 
   Future<Tournament> getTournamentDetails(String id) async {
     try {
-      final url = '$baseUrl/api/tournaments/$id';
+      final ts = DateTime.now().millisecondsSinceEpoch;
+      final url = '$baseUrl/api/tournaments/$id?_ts=$ts';
       print('GET $url');
       final res = await http.get(
         Uri.parse(url),

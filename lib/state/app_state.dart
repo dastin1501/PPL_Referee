@@ -142,19 +142,20 @@ class AppState extends ChangeNotifier {
 
   Future<void> selectCourt(String c) async {
     selectedCourt = c;
-    loading = true;
     notifyListeners();
-    // In a real app, we might filter here. 
-    // For now, the UI can filter `games` based on `selectedCourt`.
-    // Or we can update `games` to only be the filtered ones?
-    // Let's keep `games` as all matches and filter in the getter or UI.
-    loading = false;
-    notifyListeners();
+    await refreshSelectedTournament();
   }
   
   List<TournamentMatch> get matchesForSelectedCourt {
     if (selectedCourt == null) return [];
-    final filtered = games.where((g) => g.court == selectedCourt).toList();
+    String norm(String? s) {
+      if (s == null) return '';
+      final m = RegExp(r'^\s*(?:Court\s*)?(\d+)\s*$').firstMatch(s);
+      if (m != null) return 'Court ${m.group(1)}';
+      return s;
+    }
+    final target = norm(selectedCourt);
+    final filtered = games.where((g) => norm(g.court) == target).toList();
     final seen = <String>{};
     final unique = <TournamentMatch>[];
     for (final m in filtered) {
@@ -171,6 +172,13 @@ class AppState extends ChangeNotifier {
 
   void openGame(TournamentMatch g) {
     selectedGame = g;
+    notifyListeners();
+  }
+
+  int selectedGameNumber = 1;
+  void openGameWithNumber(TournamentMatch g, int gameNo) {
+    selectedGame = g;
+    selectedGameNumber = gameNo;
     notifyListeners();
   }
 
@@ -227,6 +235,11 @@ class AppState extends ChangeNotifier {
           court: g.court,
           date: g.date,
           time: g.time,
+          venue: g.venue,
+          mdTime2: g.mdTime2,
+          mdEnd2: g.mdEnd2,
+          mdTime3: g.mdTime3,
+          mdEnd3: g.mdEnd3,
           status: payload['status']?.toString() ?? g.status,
           categoryId: g.categoryId,
           matchKey: g.matchKey,
@@ -239,6 +252,7 @@ class AppState extends ChangeNotifier {
           gameSignatures: (payload['gameSignatures'] is List)
               ? (payload['gameSignatures'] as List).map((e) => e?.toString()).toList()
               : g.gameSignatures,
+          refereeNote: payload['refereeNote']?.toString() ?? g.refereeNote,
         );
         games = games.map((m) => m.id == g.id ? updated : m).toList();
         selectedGame = updated;

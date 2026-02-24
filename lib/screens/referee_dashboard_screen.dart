@@ -33,6 +33,19 @@ class _RefereeDashboardScreenState extends State<RefereeDashboardScreen> {
   int _medTimeouts2 = 0;
   bool _inTimeout = false;
   int _timeoutSecondsLeft = 0;
+  final List<String> _refereeNotes = [];
+  String _refereeNote = '';
+  String _leftTopOverride = '';
+  String _leftBottomOverride = '';
+  String _rightTopOverride = '';
+  String _rightBottomOverride = '';
+  String _leftBase = '';
+  String _leftSecond = '';
+  String _rightBase = '';
+  String _rightSecond = '';
+  int _leftServeStage = 0;
+  int _rightServeStage = 0;
+  int _currentGame = 1;
 
   String _fmt(int s) {
     final m = s ~/ 60;
@@ -60,8 +73,22 @@ class _RefereeDashboardScreenState extends State<RefereeDashboardScreen> {
       _showCoinTossDialog(g);
     }
     if (g != null) {
+      final assignedFromList = context.read<AppState>().selectedGameNumber;
+      if (assignedFromList >= 1 && assignedFromList <= 3) {
+        _currentGame = assignedFromList;
+      } else {
+        final label = '${g.matchLabel} ${g.seedLabel}';
+        final m = RegExp(r'Game\s*(\d)', caseSensitive: false).firstMatch(label);
+        if (m != null) {
+          final n = int.tryParse(m.group(1) ?? '');
+          if (n != null && n >= 1 && n <= 3) {
+            _currentGame = n;
+          }
+        }
+      }
       _score1 = g.score1;
       _score2 = g.score2;
+      _refereeNote = g.refereeNote?.toString() ?? _refereeNote;
       if (g.status == 'Ongoing' && (g.score1 > 0 || g.score2 > 0)) {
         setState(() {
           _gameStarted = true;
@@ -92,9 +119,28 @@ class _RefereeDashboardScreenState extends State<RefereeDashboardScreen> {
       );
       return;
     }
+    final app = context.read<AppState>();
+    final g = app.selectedGame;
+    if (g != null) {
+      _applyDoublesInitialServerLayout(g);
+    }
     setState(() {
       _gameStarted = true;
       _elapsed = Duration.zero;
+      if (g != null) {
+        final leftTeam = _splitTeam(g.player1);
+        final rightTeam = _splitTeam(g.player2);
+        if (_servingPlayer != null && leftTeam.contains(_servingPlayer)) {
+          _leftServeStage = 2;
+          _rightServeStage = 0;
+        } else if (_servingPlayer != null && rightTeam.contains(_servingPlayer)) {
+          _rightServeStage = 2;
+          _leftServeStage = 0;
+        } else {
+          _leftServeStage = 0;
+          _rightServeStage = 0;
+        }
+      }
     });
     _timer?.cancel();
     _timer = Timer.periodic(const Duration(seconds: 1), (_) {
@@ -102,7 +148,6 @@ class _RefereeDashboardScreenState extends State<RefereeDashboardScreen> {
         _elapsed += const Duration(seconds: 1);
       });
     });
-    final app = context.read<AppState>();
     try {
       await app.updateSelectedMatchFields({'status': 'Ongoing'});
     } catch (_) {}
@@ -152,6 +197,122 @@ class _RefereeDashboardScreenState extends State<RefereeDashboardScreen> {
     _resumeTimerIfNeeded();
   }
 
+  void _applyDoublesInitialServerLayout(TournamentMatch g) {
+    final leftTeam = _splitTeam(g.player1);
+    final rightTeam = _splitTeam(g.player2);
+    if (_servingPlayer == null) return;
+    if (leftTeam.length > 1 || rightTeam.length > 1) {
+      if (leftTeam.contains(_servingPlayer)) {
+        final partner = leftTeam.firstWhere((p) => p != _servingPlayer, orElse: () => leftTeam.first);
+        _leftTopOverride = partner;
+        _leftBottomOverride = _servingPlayer!;
+        _serverTop = false;
+        _leftBase = _servingPlayer!;
+        _leftSecond = partner;
+        // Determine right base (top-right) and second (bottom-right)
+        final rTop = _rightTopOverride.isNotEmpty ? _rightTopOverride : (rightTeam.length > 1 ? rightTeam[1] : rightTeam[0]);
+        final rBottom = _rightBottomOverride.isNotEmpty ? _rightBottomOverride : (rightTeam.length > 1 ? rightTeam[0] : '');
+        _rightBase = rTop;
+        _rightSecond = rBottom.isNotEmpty ? rBottom : rTop;
+      } else if (rightTeam.contains(_servingPlayer)) {
+        final partner = rightTeam.firstWhere((p) => p != _servingPlayer, orElse: () => rightTeam.first);
+        _rightTopOverride = _servingPlayer!;
+        _rightBottomOverride = partner;
+        _serverTop = true;
+        _rightBase = _servingPlayer!;
+        _rightSecond = partner;
+        // Determine left base (bottom-left) and second (top-left)
+        final lBottom = _leftBottomOverride.isNotEmpty ? _leftBottomOverride : (leftTeam.length > 1 ? leftTeam[1] : '');
+        final lTop = _leftTopOverride.isNotEmpty ? _leftTopOverride : (leftTeam.isNotEmpty ? leftTeam[0] : g.player1);
+        _leftBase = lBottom.isNotEmpty ? lBottom : lTop;
+        _leftSecond = lTop;
+      }
+    }
+  }
+
+  void _toggleReceiverSide(TournamentMatch g) {
+    final leftTeam = _splitTeam(g.player1);
+    final rightTeam = _splitTeam(g.player2);
+    if (_servingPlayer == null) return;
+    if (!(leftTeam.length > 1 || rightTeam.length > 1)) return;
+    if (leftTeam.contains(_servingPlayer)) {
+      if (_rightTopOverride.isEmpty && _rightBottomOverride.isEmpty) {
+        _rightTopOverride = rightTeam.length > 1 ? rightTeam[1] : rightTeam[0];
+        _rightBottomOverride = rightTeam.length > 1 ? rightTeam[0] : '';
+      }
+      final t = _rightTopOverride;
+      _rightTopOverride = _rightBottomOverride;
+      _rightBottomOverride = t;
+    } else if (rightTeam.contains(_servingPlayer)) {
+      if (_leftTopOverride.isEmpty && _leftBottomOverride.isEmpty) {
+        _leftTopOverride = leftTeam.isNotEmpty ? leftTeam[0] : g.player1;
+        _leftBottomOverride = leftTeam.length > 1 ? leftTeam[1] : '';
+      }
+      final t = _leftTopOverride;
+      _leftTopOverride = _leftBottomOverride;
+      _leftBottomOverride = t;
+    }
+    setState(() {});
+  }
+
+  void _toggleLeftReceiver(TournamentMatch g) {
+    final leftTeam = _splitTeam(g.player1);
+    if (leftTeam.length < 2) return;
+    if (_servingPlayer != null && leftTeam.contains(_servingPlayer)) return;
+    if (_leftTopOverride.isEmpty && _leftBottomOverride.isEmpty) {
+      _leftTopOverride = leftTeam[0];
+      _leftBottomOverride = leftTeam[1];
+    }
+    final t = _leftTopOverride;
+    _leftTopOverride = _leftBottomOverride;
+    _leftBottomOverride = t;
+    setState(() {});
+  }
+
+  void _toggleRightReceiver(TournamentMatch g) {
+    final rightTeam = _splitTeam(g.player2);
+    if (rightTeam.length < 2) return;
+    if (_servingPlayer != null && rightTeam.contains(_servingPlayer)) return;
+    if (_rightTopOverride.isEmpty && _rightBottomOverride.isEmpty) {
+      _rightTopOverride = rightTeam.length > 1 ? rightTeam[1] : rightTeam[0];
+      _rightBottomOverride = rightTeam.length > 1 ? rightTeam[0] : '';
+    }
+    final t = _rightTopOverride;
+    _rightTopOverride = _rightBottomOverride;
+    _rightBottomOverride = t;
+    setState(() {});
+  }
+
+  Future<void> _addRefereeNote(TournamentMatch g) async {
+    final ctrl = TextEditingController(text: _refereeNote);
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (_) => AlertDialog(
+        title: const Text('Referee Note'),
+        content: TextField(
+          controller: ctrl,
+          maxLines: 5,
+          decoration: const InputDecoration(hintText: 'Describe the dispute or note here'),
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.of(context).pop(false), child: const Text('Cancel')),
+          ElevatedButton(onPressed: () => Navigator.of(context).pop(true), child: const Text('Save')),
+        ],
+      ),
+    );
+    if (ok == true) {
+      final note = ctrl.text.trim();
+      if (note.isEmpty) return;
+      setState(() {
+        _refereeNote = note;
+      });
+      final app = context.read<AppState>();
+      try {
+        await app.updateSelectedMatchFields({'refereeNote': _refereeNote});
+      } catch (_) {}
+    }
+  }
+
   @override
   void dispose() {
     _timer?.cancel();
@@ -162,7 +323,7 @@ class _RefereeDashboardScreenState extends State<RefereeDashboardScreen> {
     super.dispose();
   }
 
-  Widget _playerCell(String name, {Color color = const Color(0xFF0D9488), bool isServing = false}) {
+  Widget _playerCell(String name, {Color color = const Color(0xFF0D9488), bool isServing = false, bool isBase = false}) {
     return InkWell(
       onTap: !_gameStarted ? () {
         setState(() {
@@ -174,6 +335,10 @@ class _RefereeDashboardScreenState extends State<RefereeDashboardScreen> {
         child: Row(
           mainAxisSize: MainAxisSize.min,
           children: [
+            if (isBase) ...[
+              const _PickleballIcon(size: 14),
+              const SizedBox(width: 4),
+            ],
             ConstrainedBox(
               constraints: const BoxConstraints(maxWidth: 240),
               child: Text(
@@ -229,6 +394,31 @@ class _RefereeDashboardScreenState extends State<RefereeDashboardScreen> {
                 ],
               ),
         actions: [
+          Padding(
+            padding: const EdgeInsets.only(right: 8.0),
+            child: ToggleButtons(
+              isSelected: [
+                _currentGame == 1,
+                _currentGame == 2,
+                _currentGame == 3,
+              ],
+              borderRadius: BorderRadius.circular(8),
+              constraints: const BoxConstraints(minHeight: 28, minWidth: 36),
+              selectedColor: Colors.white,
+              color: Colors.white70,
+              fillColor: const Color(0xFF10B981),
+              onPressed: (i) {
+                setState(() {
+                  _currentGame = i + 1;
+                });
+              },
+              children: const [
+                Text('G1', style: TextStyle(fontSize: 12)),
+                Text('G2', style: TextStyle(fontSize: 12)),
+                Text('G3', style: TextStyle(fontSize: 12)),
+              ],
+            ),
+          ),
           if (_gameStarted && g != null)
             Padding(
               padding: const EdgeInsets.only(right: 8.0),
@@ -249,18 +439,15 @@ class _RefereeDashboardScreenState extends State<RefereeDashboardScreen> {
           PopupMenuButton<String>(
             onSelected: (v) async {
               if (g == null) return;
-              if (v == 'noshow_p1') {
-                await _noShow(g, g.player1, g.player2);
-              } else if (v == 'noshow_p2') {
-                await _noShow(g, g.player2, g.player1);
-              } else if (v == 'coin') {
+              if (v == 'coin') {
                 _showCoinTossDialog(g);
+              } else if (v == 'note') {
+                await _addRefereeNote(g);
               }
             },
             itemBuilder: (_) => [
               const PopupMenuItem(value: 'coin', child: Text('Coin Toss')),
-              if (g != null) PopupMenuItem(value: 'noshow_p1', child: Text('No Show: ${g.player1}')),
-              if (g != null) PopupMenuItem(value: 'noshow_p2', child: Text('No Show: ${g.player2}')),
+              const PopupMenuItem(value: 'note', child: Text('Referee Note')),
             ],
             icon: const Icon(Icons.settings),
           ),
@@ -322,43 +509,39 @@ class _RefereeDashboardScreenState extends State<RefereeDashboardScreen> {
                       final rightTeam = _splitTeam(rightTeamName);
                       final bool isDoubles = leftTeam.length > 1 || rightTeam.length > 1;
                       final bool isSingles = !isDoubles;
-                      final leftTop = leftTeam.isNotEmpty ? leftTeam[0] : leftTeamName;
-                      final leftBottom = leftTeam.length > 1 ? leftTeam[1] : '';
-                      final rightTop = rightTeam.length > 1 ? rightTeam[1] : rightTeam[0];
-                      final rightBottom = rightTeam.length > 1 ? rightTeam[0] : '';
+                      var leftTop = _leftTopOverride.isNotEmpty
+                          ? _leftTopOverride
+                          : (leftTeam.isNotEmpty ? leftTeam[0] : leftTeamName);
+                      var leftBottom = _leftBottomOverride.isNotEmpty
+                          ? _leftBottomOverride
+                          : (leftTeam.length > 1 ? leftTeam[1] : '');
+                      var rightTop = _rightTopOverride.isNotEmpty
+                          ? _rightTopOverride
+                          : (rightTeam.length > 1 ? rightTeam[1] : rightTeam[0]);
+                      var rightBottom = _rightBottomOverride.isNotEmpty
+                          ? _rightBottomOverride
+                          : (rightTeam.length > 1 ? rightTeam[0] : '');
                       final noServer = _servingPlayer == null;
                       final serverOnLeft = _servingPlayer != null && leftTeam.contains(_servingPlayer);
                       final serverOnRight = _servingPlayer != null && rightTeam.contains(_servingPlayer);
                       final serverRight = serverOnRight;
                       final serviceTop = _servingPlayer == null ? true : _serverTop;
-                      return GestureDetector(
-                        behavior: HitTestBehavior.opaque,
-                        onTapDown: (details) {
-                          if (_gameStarted) return;
-                          final outerPad = 12.0;
-                          final innerPad = 12.0;
-                          final totalW = c.biggest.width;
-                          final totalH = c.biggest.height;
-                          final courtLeft = outerPad + innerPad;
-                          final courtTop = outerPad + innerPad;
-                          final courtW = totalW - (outerPad + innerPad) * 2;
-                          final courtH = totalH - (outerPad + innerPad) * 2;
-                          double x = details.localPosition.dx;
-                          double y = details.localPosition.dy;
-                          x = x.clamp(courtLeft, courtLeft + courtW);
-                          y = y.clamp(courtTop, courtTop + courtH);
-                          final leftHalf = x < courtLeft + courtW / 2;
-                          final topHalf = y < courtTop + courtH / 2;
-                          if (leftHalf) {
-                            setState(() {
-                              _servingPlayer = isDoubles ? (topHalf ? leftTop : leftBottom) : leftTop;
-                            });
-                          } else {
-                            setState(() {
-                              _servingPlayer = isDoubles ? (topHalf ? rightTop : rightBottom) : rightTop;
-                            });
+                      String centerScore;
+                      if (isDoubles) {
+                        int sNum = 0;
+                        if (_servingPlayer != null) {
+                          if (serverOnLeft) {
+                            sNum = _leftServeStage <= 1 ? 1 : 2;
+                          } else if (serverOnRight) {
+                            sNum = _rightServeStage <= 1 ? 1 : 2;
                           }
-                        },
+                        }
+                        centerScore = '$_score1 - $_score2 - $sNum';
+                      } else {
+                        centerScore = '$_score1 - $_score2';
+                      }
+                      return GestureDetector(
+                        behavior: HitTestBehavior.deferToChild,
                         child: Container(
                         decoration: BoxDecoration(
                           gradient: const LinearGradient(
@@ -388,7 +571,7 @@ class _RefereeDashboardScreenState extends State<RefereeDashboardScreen> {
                                   borderRadius: BorderRadius.circular(8),
                                 ),
                                 child: Text(
-                                  '$_score1 - $_score2',
+                                  centerScore,
                                   overflow: TextOverflow.ellipsis,
                                   style: const TextStyle(
                                     color: Colors.white,
@@ -412,6 +595,7 @@ class _RefereeDashboardScreenState extends State<RefereeDashboardScreen> {
                                   child: _playerCell(
                                     leftTop,
                                     isServing: _servingPlayer == leftTop,
+                                    isBase: leftTop == _leftBase,
                                   ),
                                 ),
                               ),
@@ -426,7 +610,8 @@ class _RefereeDashboardScreenState extends State<RefereeDashboardScreen> {
                                     padding: const EdgeInsets.all(8.0),
                                     child: _playerCell(
                                       leftBottom,
-                                      isServing: _servingPlayer == leftBottom,
+                                    isServing: _servingPlayer == leftBottom,
+                                    isBase: leftBottom == _leftBase,
                                     ),
                                   ),
                                 ),
@@ -446,7 +631,8 @@ class _RefereeDashboardScreenState extends State<RefereeDashboardScreen> {
                                     padding: const EdgeInsets.all(8.0),
                                     child: _playerCell(
                                       rightTop,
-                                      isServing: _servingPlayer == rightTop,
+                                    isServing: _servingPlayer == rightTop,
+                                    isBase: rightTop == _rightBase,
                                     ),
                                   ),
                                 ),
@@ -458,11 +644,15 @@ class _RefereeDashboardScreenState extends State<RefereeDashboardScreen> {
                                 child: FractionallySizedBox(
                                   widthFactor: 0.5,
                                   heightFactor: 0.5,
-                                  child: Padding(
-                                    padding: const EdgeInsets.all(8.0),
-                                    child: _playerCell(
-                                      rightBottom,
-                                      isServing: _servingPlayer == rightBottom,
+                                  child: Align(
+                                    alignment: Alignment.centerRight,
+                                    child: Padding(
+                                      padding: const EdgeInsets.all(8.0),
+                                      child: _playerCell(
+                                        rightBottom,
+                                        isServing: _servingPlayer == rightBottom,
+                                        isBase: rightBottom == _rightBase,
+                                      ),
                                     ),
                                   ),
                                 ),
@@ -478,10 +668,10 @@ class _RefereeDashboardScreenState extends State<RefereeDashboardScreen> {
                                               child: Column(
                                                 children: [
                                                   Expanded(
-                                      child: InkWell(
+                                                    child: InkWell(
                                                       onTap: () => setState(() {
                                                         _servingPlayer = leftTop;
-                                                        _serverTop = true;
+                                                        _applyDoublesInitialServerLayout(g);
                                                       }),
                                                       splashColor: Colors.white10,
                                                     ),
@@ -490,7 +680,7 @@ class _RefereeDashboardScreenState extends State<RefereeDashboardScreen> {
                                                     child: InkWell(
                                                       onTap: () => setState(() {
                                                         _servingPlayer = leftBottom.isNotEmpty ? leftBottom : leftTop;
-                                                        _serverTop = false;
+                                                        _applyDoublesInitialServerLayout(g);
                                                       }),
                                                       splashColor: Colors.white10,
                                                     ),
@@ -505,7 +695,7 @@ class _RefereeDashboardScreenState extends State<RefereeDashboardScreen> {
                                                     child: InkWell(
                                                       onTap: () => setState(() {
                                                         _servingPlayer = rightTop;
-                                                        _serverTop = true;
+                                                        _applyDoublesInitialServerLayout(g);
                                                       }),
                                                       splashColor: Colors.white10,
                                                     ),
@@ -514,7 +704,7 @@ class _RefereeDashboardScreenState extends State<RefereeDashboardScreen> {
                                                     child: InkWell(
                                                       onTap: () => setState(() {
                                                         _servingPlayer = rightBottom.isNotEmpty ? rightBottom : rightTop;
-                                                        _serverTop = false;
+                                                        _applyDoublesInitialServerLayout(g);
                                                       }),
                                                       splashColor: Colors.white10,
                                                     ),
@@ -559,9 +749,48 @@ class _RefereeDashboardScreenState extends State<RefereeDashboardScreen> {
                   padding: const EdgeInsets.fromLTRB(12, 8, 12, 4),
                   child: Row(
                     children: [
+                      if (!_gameStarted && g != null) ...[
+                        Builder(builder: (_) {
+                          final leftTeam = _splitTeam(g.player1);
+                          final rightTeam = _splitTeam(g.player2);
+                          final isDoubles = leftTeam.length > 1 || rightTeam.length > 1;
+                          final leftServing = _servingPlayer != null && leftTeam.contains(_servingPlayer);
+                          final rightServing = _servingPlayer != null && rightTeam.contains(_servingPlayer);
+                          if (!isDoubles) return const SizedBox.shrink();
+                          return Row(
+                            children: [
+                              IconButton(
+                                tooltip: 'Swap left receiver',
+                                onPressed: leftServing ? null : () => _toggleLeftReceiver(g),
+                                icon: const Icon(Icons.swap_vert),
+                              ),
+                              const SizedBox(width: 8),
+                            ],
+                          );
+                        }),
+                      ],
                       IconButton(onPressed: _onTimeout, icon: const Icon(Icons.timer)),
                       IconButton(onPressed: _onMedicalTimeout, icon: const Icon(Icons.healing)),
                       const Spacer(),
+                      if (!_gameStarted && g != null) ...[
+                        Builder(builder: (_) {
+                          final leftTeam = _splitTeam(g.player1);
+                          final rightTeam = _splitTeam(g.player2);
+                          final isDoubles = leftTeam.length > 1 || rightTeam.length > 1;
+                          final leftServing = _servingPlayer != null && leftTeam.contains(_servingPlayer);
+                          final rightServing = _servingPlayer != null && rightTeam.contains(_servingPlayer);
+                          if (!isDoubles) return const SizedBox.shrink();
+                          return Row(
+                            children: [
+                              IconButton(
+                                tooltip: 'Swap right receiver',
+                                onPressed: rightServing ? null : () => _toggleRightReceiver(g),
+                                icon: const Icon(Icons.swap_vert),
+                              ),
+                            ],
+                          );
+                        }),
+                      ],
                     ],
                   ),
                 ),
@@ -606,12 +835,40 @@ class _RefereeDashboardScreenState extends State<RefereeDashboardScreen> {
                           ),
                         ),
                         SizedBox(
-                          width: 160,
+                          width: 200,
                           height: 56,
                           child: ElevatedButton(
                             onPressed: _sideOut,
                             style: ElevatedButton.styleFrom(backgroundColor: Colors.grey.shade400, foregroundColor: Colors.white),
-                            child: const Text('SIDE OUT', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+                            child: Builder(builder: (_) {
+                              final app = context.read<AppState>();
+                              final g = app.selectedGame;
+                              var label = 'SIDE OUT';
+                              if (g != null) {
+                                final leftTeam = _splitTeam(g.player1);
+                                final rightTeam = _splitTeam(g.player2);
+                                final isDoubles = leftTeam.length > 1 || rightTeam.length > 1;
+                                if (isDoubles && _servingPlayer != null) {
+                                  final onLeft = leftTeam.contains(_servingPlayer);
+                                  final onRight = rightTeam.contains(_servingPlayer);
+                                  final isFirstOnTeam = (onLeft && _servingPlayer == _leftBase) || (onRight && _servingPlayer == _rightBase);
+                                  label = isFirstOnTeam ? 'SECOND SERVER' : 'SIDE OUT';
+                                }
+                              }
+                              if (g != null && _servingPlayer != null) {
+                                final leftTeam = _splitTeam(g.player1);
+                                final rightTeam = _splitTeam(g.player2);
+                                final isDoubles = leftTeam.length > 1 || rightTeam.length > 1;
+                                if (isDoubles) {
+                                  if (leftTeam.contains(_servingPlayer)) {
+                                    label = _leftServeStage <= 1 ? 'SECOND SERVER' : 'SIDE OUT';
+                                  } else if (rightTeam.contains(_servingPlayer)) {
+                                    label = _rightServeStage <= 1 ? 'SECOND SERVER' : 'SIDE OUT';
+                                  }
+                                }
+                              }
+                              return Text(label, style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold));
+                            }),
                           ),
                         ),
                         SizedBox(
@@ -730,8 +987,54 @@ class _RefereeDashboardScreenState extends State<RefereeDashboardScreen> {
                             const SizedBox(width: 8),
                             ElevatedButton(
                               onPressed: () async {
+                                final chosen = await showDialog<int>(
+                                  context: context,
+                                  builder: (_) => SimpleDialog(
+                                    title: const Text('Which game is this?'),
+                                    children: [
+                                      RadioListTile<int>(
+                                        value: 1,
+                                        groupValue: _currentGame,
+                                        onChanged: (v) => Navigator.of(context).pop(v),
+                                        title: const Text('Game 1'),
+                                      ),
+                                      RadioListTile<int>(
+                                        value: 2,
+                                        groupValue: _currentGame,
+                                        onChanged: (v) => Navigator.of(context).pop(v),
+                                        title: const Text('Game 2'),
+                                      ),
+                                      RadioListTile<int>(
+                                        value: 3,
+                                        groupValue: _currentGame,
+                                        onChanged: (v) => Navigator.of(context).pop(v),
+                                        title: const Text('Game 3'),
+                                      ),
+                                    ],
+                                  ),
+                                );
+                                if (chosen != null) {
+                                  setState(() {
+                                    _currentGame = chosen;
+                                  });
+                                }
+                                bool includeNote = true;
+                                if (_refereeNote.trim().isNotEmpty) {
+                                  final decision = await showDialog<bool>(
+                                    context: context,
+                                    builder: (_) => AlertDialog(
+                                      title: const Text('Attach Referee Note?'),
+                                      content: const Text('Send the referee note to the website so it appears in the completed game summary?'),
+                                      actions: [
+                                        TextButton(onPressed: () => Navigator.of(context).pop(false), child: const Text('Skip')),
+                                        ElevatedButton(onPressed: () => Navigator.of(context).pop(true), child: const Text('Send Note')),
+                                      ],
+                                    ),
+                                  );
+                                  includeNote = decision ?? true;
+                                }
                                 final bytes = await sigKey.currentState?.export();
-                                final ok = await _finishSubmit(g, bytes);
+                                final ok = await _finishSubmit(g, bytes, includeNote: includeNote);
                                 if (!mounted) return;
                                 if (ok) {
                                   Navigator.of(context).pop();
@@ -754,7 +1057,7 @@ class _RefereeDashboardScreenState extends State<RefereeDashboardScreen> {
     );
   }
 
-  Future<bool> _finishSubmit(TournamentMatch g, Uint8List? signatureBytes) async {
+  Future<bool> _finishSubmit(TournamentMatch g, Uint8List? signatureBytes, {bool includeNote = true}) async {
     final app = context.read<AppState>();
     final winnerName = _score1 > _score2
         ? g.player1
@@ -769,16 +1072,21 @@ class _RefereeDashboardScreenState extends State<RefereeDashboardScreen> {
       'score2': _score2,
       'finalScorePlayer1': _score1,
       'finalScorePlayer2': _score2,
-      'game1Player1': _score1,
-      'game1Player2': _score2,
       'status': 'Completed',
     };
+    final gKey1 = 'game${_currentGame}Player1';
+    final gKey2 = 'game${_currentGame}Player2';
+    fields[gKey1] = _score1;
+    fields[gKey2] = _score2;
     if (winnerName.isNotEmpty) {
       fields['winner'] = winnerName;
     }
     if (signatureData != null) {
       fields['signatureData'] = signatureData;
       fields['gameSignatures'] = [signatureData, null, null];
+    }
+    if (includeNote && _refereeNote.trim().isNotEmpty) {
+      fields['refereeNote'] = _refereeNote.trim();
     }
     try {
       await app.updateSelectedMatchFields(fields);
@@ -812,7 +1120,9 @@ class _Snapshot {
   final int t2;
   final int mt1;
   final int mt2;
-  _Snapshot(this.s1, this.s2, this.server, this.serverTop, this.t1, this.t2, this.mt1, this.mt2);
+  final int ls;
+  final int rs;
+  _Snapshot(this.s1, this.s2, this.server, this.serverTop, this.t1, this.t2, this.mt1, this.mt2, this.ls, this.rs);
 }
 
 class _SinglesCourtPainter extends CustomPainter {
@@ -856,9 +1166,48 @@ class _SinglesCourtPainter extends CustomPainter {
       oldDelegate.highlightRight != highlightRight || oldDelegate.highlightTop != highlightTop;
 }
 
+class _PickleballIcon extends StatelessWidget {
+  final double size;
+  const _PickleballIcon({this.size = 14});
+  @override
+  Widget build(BuildContext context) {
+    return SizedBox(
+      width: size,
+      height: size,
+      child: CustomPaint(
+        painter: _PickleballIconPainter(),
+      ),
+    );
+  }
+}
+
+class _PickleballIconPainter extends CustomPainter {
+  @override
+  void paint(Canvas canvas, Size size) {
+    final r = size.shortestSide / 2;
+    final c = Offset(size.width / 2, size.height / 2);
+    final paint = Paint()
+      ..shader = ui.Gradient.radial(
+        c,
+        r,
+        [const Color(0xFF34D399), const Color(0xFF059669)],
+      );
+    canvas.drawCircle(c, r, paint);
+    final hole = Paint()..color = Colors.white;
+    final hr = r * 0.18;
+    canvas.drawCircle(c, hr, hole);
+    final d = r * 0.6;
+    canvas.drawCircle(Offset(c.dx, c.dy - d), hr, hole);
+    canvas.drawCircle(Offset(c.dx + d, c.dy), hr, hole);
+    canvas.drawCircle(Offset(c.dx - d, c.dy), hr, hole);
+    canvas.drawCircle(Offset(c.dx, c.dy + d), hr, hole);
+  }
+  @override
+  bool shouldRepaint(covariant CustomPainter oldDelegate) => false;
+}
 extension on _RefereeDashboardScreenState {
   void _pushSnapshot() {
-    _history.add(_Snapshot(_score1, _score2, _servingPlayer, _serverTop, _timeouts1, _timeouts2, _medTimeouts1, _medTimeouts2));
+    _history.add(_Snapshot(_score1, _score2, _servingPlayer, _serverTop, _timeouts1, _timeouts2, _medTimeouts1, _medTimeouts2, _leftServeStage, _rightServeStage));
   }
 
   bool _serverOnTeam1(TournamentMatch g) {
@@ -893,6 +1242,8 @@ extension on _RefereeDashboardScreenState {
       _timeouts2 = last.t2;
       _medTimeouts1 = last.mt1;
       _medTimeouts2 = last.mt2;
+      _leftServeStage = last.ls;
+      _rightServeStage = last.rs;
     });
   }
 
@@ -904,8 +1255,28 @@ extension on _RefereeDashboardScreenState {
     setState(() {
       if (_serverOnTeam1(g)) {
         _score1 += 1;
+        final leftTeam = _splitTeam(g.player1);
+        if (leftTeam.length > 1) {
+          if (_leftTopOverride.isEmpty && _leftBottomOverride.isEmpty) {
+            _leftTopOverride = leftTeam[0];
+            _leftBottomOverride = leftTeam.length > 1 ? leftTeam[1] : '';
+          }
+          final t = _leftTopOverride;
+          _leftTopOverride = _leftBottomOverride;
+          _leftBottomOverride = t;
+        }
       } else {
         _score2 += 1;
+        final rightTeam = _splitTeam(g.player2);
+        if (rightTeam.length > 1) {
+          if (_rightTopOverride.isEmpty && _rightBottomOverride.isEmpty) {
+            _rightTopOverride = rightTeam.length > 1 ? rightTeam[1] : rightTeam[0];
+            _rightBottomOverride = rightTeam.length > 1 ? rightTeam[0] : '';
+          }
+          final t = _rightTopOverride;
+          _rightTopOverride = _rightBottomOverride;
+          _rightBottomOverride = t;
+        }
       }
       _serverTop = !_serverTop;
     });
@@ -919,8 +1290,28 @@ extension on _RefereeDashboardScreenState {
     setState(() {
       if (_serverOnTeam1(g) && _score1 > 0) {
         _score1 -= 1;
+        final leftTeam = _splitTeam(g.player1);
+        if (leftTeam.length > 1) {
+          if (_leftTopOverride.isEmpty && _leftBottomOverride.isEmpty) {
+            _leftTopOverride = leftTeam[0];
+            _leftBottomOverride = leftTeam.length > 1 ? leftTeam[1] : '';
+          }
+          final t = _leftTopOverride;
+          _leftTopOverride = _leftBottomOverride;
+          _leftBottomOverride = t;
+        }
       } else if (!_serverOnTeam1(g) && _score2 > 0) {
         _score2 -= 1;
+        final rightTeam = _splitTeam(g.player2);
+        if (rightTeam.length > 1) {
+          if (_rightTopOverride.isEmpty && _rightBottomOverride.isEmpty) {
+            _rightTopOverride = rightTeam.length > 1 ? rightTeam[1] : rightTeam[0];
+            _rightBottomOverride = rightTeam.length > 1 ? rightTeam[0] : '';
+          }
+          final t = _rightTopOverride;
+          _rightTopOverride = _rightBottomOverride;
+          _rightBottomOverride = t;
+        }
       }
       _serverTop = !_serverTop;
     });
@@ -935,12 +1326,40 @@ extension on _RefereeDashboardScreenState {
       final leftTeam = _splitTeam(g.player1);
       final rightTeam = _splitTeam(g.player2);
       final wasOnLeft = leftTeam.contains(_servingPlayer);
-      if (wasOnLeft) {
-        _servingPlayer = rightTeam.length > 1 ? rightTeam[1] : rightTeam[0];
-        _serverTop = (_score2 % 2 == 0);
+      final isDoubles = leftTeam.length > 1 || rightTeam.length > 1;
+      if (isDoubles) {
+        if (wasOnLeft) {
+          if (_leftServeStage <= 1) {
+            _leftServeStage = 2;
+            _servingPlayer = _servingPlayer == leftTeam[0] ? (leftTeam.length > 1 ? leftTeam[1] : leftTeam[0]) : leftTeam[0];
+          } else {
+            _leftServeStage = 0;
+            _rightServeStage = 1;
+            final rightSide = _rightTopOverride.isNotEmpty ? _rightTopOverride : (rightTeam.length > 1 ? rightTeam[1] : rightTeam[0]);
+            _servingPlayer = rightSide;
+            _serverTop = true;
+          }
+        } else {
+          if (_rightServeStage <= 1) {
+            _rightServeStage = 2;
+            _servingPlayer = _servingPlayer == rightTeam[0] ? (rightTeam.length > 1 ? rightTeam[1] : rightTeam[0]) : rightTeam[0];
+          } else {
+            _rightServeStage = 0;
+            _leftServeStage = 1;
+            final rightSide = _leftBottomOverride.isNotEmpty ? _leftBottomOverride : (leftTeam.length > 1 ? leftTeam[1] : (leftTeam.isNotEmpty ? leftTeam[0] : g.player1));
+            _servingPlayer = rightSide;
+            _serverTop = false;
+          }
+        }
       } else {
-        _servingPlayer = leftTeam[0];
-        _serverTop = (_score1 % 2 != 0);
+        // Singles: previous behavior
+        if (wasOnLeft) {
+          _servingPlayer = rightTeam.length > 1 ? rightTeam[1] : rightTeam[0];
+          _serverTop = (_score2 % 2 == 0);
+        } else {
+          _servingPlayer = leftTeam[0];
+          _serverTop = (_score1 % 2 != 0);
+        }
       }
     });
   }

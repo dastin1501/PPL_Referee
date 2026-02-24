@@ -96,6 +96,12 @@ class TournamentMatch {
   final String court;
   final String date;
   final String time;
+  final String? venue;
+  // Per-game schedule fields for web-managed scheduling
+  final String? mdTime2;
+  final String? mdEnd2;
+  final String? mdTime3;
+  final String? mdEnd3;
   final String status;
   final String categoryId;
   final String matchKey;
@@ -106,6 +112,7 @@ class TournamentMatch {
   final String? winner;
   final String? signatureData;
   final List<String?>? gameSignatures;
+  final String? refereeNote;
 
   TournamentMatch({
     required this.id,
@@ -117,6 +124,11 @@ class TournamentMatch {
     required this.court,
     required this.date,
     required this.time,
+    this.venue,
+    this.mdTime2,
+    this.mdEnd2,
+    this.mdTime3,
+    this.mdEnd3,
     this.status = '',
     this.categoryId = '',
     this.matchKey = '',
@@ -127,9 +139,17 @@ class TournamentMatch {
     this.winner,
     this.signatureData,
     this.gameSignatures,
+    this.refereeNote,
   });
 
   factory TournamentMatch.fromJson(Map<String, dynamic> j) {
+    String normalizeCourt(String s) {
+      final m = RegExp(r'^\s*(?:Court\s*)?(\d+)\s*$').firstMatch(s);
+      if (m != null) {
+        return 'Court ${m.group(1)}';
+      }
+      return s;
+    }
     final explicitStatus = j['status']?.toString();
     final derivedStatus = j['winner'] != null ? 'Completed' : 'Scheduled';
     final resolvedStatus = (explicitStatus != null && explicitStatus.isNotEmpty) ? explicitStatus : derivedStatus;
@@ -145,9 +165,14 @@ class TournamentMatch {
       score1: int.tryParse(j['score1']?.toString() ?? '0') ?? 0,
       score2: int.tryParse(j['score2']?.toString() ?? '0') ?? 0,
       round: j['round']?.toString() ?? '',
-      court: j['court']?.toString() ?? '',
+      court: normalizeCourt(j['court']?.toString() ?? ''),
       date: j['date']?.toString() ?? '',
       time: j['time']?.toString() ?? '',
+      venue: j['venue']?.toString(),
+      mdTime2: j['mdTime2']?.toString(),
+      mdEnd2: j['mdEnd2']?.toString(),
+      mdTime3: j['mdTime3']?.toString(),
+      mdEnd3: j['mdEnd3']?.toString(),
       status: resolvedStatus,
       categoryId: j['categoryId']?.toString() ?? '',
       matchKey: j['matchKey']?.toString() ?? '',
@@ -158,6 +183,7 @@ class TournamentMatch {
       winner: j['winner']?.toString(),
       signatureData: j['signatureData']?.toString(),
       gameSignatures: sigs,
+      refereeNote: j['refereeNote']?.toString(),
     );
   }
 }
@@ -169,6 +195,7 @@ class Tournament {
   final List<TournamentMatch> matches;
   final List<String> courts;
   final Map<String, String> categoryNames;
+  final Map<String, int> categoryGamesPerMatch;
 
   Tournament({
     required this.id,
@@ -177,12 +204,14 @@ class Tournament {
     this.matches = const [],
     this.courts = const [],
     this.categoryNames = const {},
+    this.categoryGamesPerMatch = const {},
   });
 
   factory Tournament.fromJson(Map<String, dynamic> j) {
     final matches = <TournamentMatch>[];
     final courts = <String>{};
     final categoryNames = <String, String>{};
+    final categoryGPM = <String, int>{};
     final idToDisplay = <String, String>{};
 
     // 0. Parse Court Assignments (Schedules.jsx source of truth)
@@ -420,6 +449,8 @@ class Tournament {
         final catName = [division, age, skill].where((s) => s.isNotEmpty).join(' ');
         if (catId.isNotEmpty) {
           categoryNames[catId] = catName;
+          final gpm = int.tryParse(c['gamesPerMatch']?.toString() ?? '') ?? 1;
+          categoryGPM[catId] = gpm.clamp(1, 3);
         }
 
         // Group Stage
@@ -541,6 +572,7 @@ class Tournament {
       matches: matches,
       courts: courts.toList()..sort(),
       categoryNames: categoryNames,
+      categoryGamesPerMatch: categoryGPM,
     );
   }
 }
