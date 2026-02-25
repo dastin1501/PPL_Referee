@@ -33,16 +33,10 @@ class _TournamentListScreenState extends State<TournamentListScreen> {
               accountName: Text(app.currentUser?.name ?? 'Referee'),
               accountEmail: Text(app.currentUser?.email ?? ''),
               currentAccountPicture: const CircleAvatar(
-                backgroundColor: Color(0xFF22C55E),
+                backgroundColor: Color.fromARGB(255, 26, 161, 123),
                 child: Icon(Icons.person, color: Colors.white),
               ),
-              decoration: const BoxDecoration(
-                gradient: LinearGradient(
-                  colors: [Color(0xFF22C55E), Color(0xFF16A34A)],
-                  begin: Alignment.topLeft,
-                  end: Alignment.bottomRight,
-                ),
-              ),
+              decoration: const BoxDecoration(color: Color.fromARGB(255, 26, 161, 123)),
             ),
             ListTile(
               leading: const Icon(Icons.person_outline),
@@ -82,7 +76,7 @@ class _TournamentListScreenState extends State<TournamentListScreen> {
         ),
       ),
       body: RefreshIndicator(
-        color: const Color(0xFF22C55E),
+        color: const Color.fromARGB(255, 26, 161, 123),
         onRefresh: () => app.loadTournaments(),
         child: app.error != null
             ? Center(
@@ -102,7 +96,7 @@ class _TournamentListScreenState extends State<TournamentListScreen> {
                       ElevatedButton(
                         onPressed: () => app.loadTournaments(),
                         style: ElevatedButton.styleFrom(
-                          backgroundColor: const Color(0xFF22C55E),
+                          backgroundColor: const Color.fromARGB(255, 26, 161, 123),
                           foregroundColor: Colors.white,
                         ),
                         child: const Text('Retry'),
@@ -123,7 +117,7 @@ class _TournamentListScreenState extends State<TournamentListScreen> {
                         ElevatedButton(
                           onPressed: () => app.loadTournaments(),
                           style: ElevatedButton.styleFrom(
-                            backgroundColor: const Color(0xFF22C55E),
+                            backgroundColor: const Color.fromARGB(255, 26, 161, 123),
                             foregroundColor: Colors.white,
                           ),
                           child: const Text('Refresh'),
@@ -157,7 +151,7 @@ class _TournamentListScreenState extends State<TournamentListScreen> {
                           ),
                           child: Row(
                             children: [
-                              const Icon(Icons.emoji_events_outlined, color: Color(0xFF22C55E)),
+                              const Icon(Icons.emoji_events_outlined, color: Color.fromARGB(255, 26, 161, 123)),
                               const SizedBox(width: 12),
                               Expanded(
                                 child: Text(

@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import 'package:provider/provider.dart';
+import 'package:flutter_svg/flutter_svg.dart';
 import '../state/app_state.dart';
 
 class SignupScreen extends StatefulWidget {
@@ -105,18 +106,16 @@ class _SignupScreenState extends State<SignupScreen> {
                 const SizedBox(height: 20),
                 // Logo placeholder
                 Center(
-                  child: Container(
-                    width: 80,
-                    height: 80,
-                    decoration: const BoxDecoration(
-                      shape: BoxShape.circle,
-                      gradient: LinearGradient(
-                        colors: [Color(0xFF22C55E), Color(0xFF16A34A)],
-                        begin: Alignment.topLeft,
-                        end: Alignment.bottomRight,
+                  child: SizedBox(
+                    width: 128,
+                    height: 128,
+                    child: Center(
+                      child: SvgPicture.asset(
+                        'assets/images/vite.svg',
+                        width: 112,
+                        height: 112,
                       ),
                     ),
-                    child: const Icon(Icons.sports_tennis, size: 40, color: Colors.white),
                   ),
                 ),
                 const SizedBox(height: 24),
@@ -502,7 +501,7 @@ class _SignupScreenState extends State<SignupScreen> {
                             }
                           },
                     style: ElevatedButton.styleFrom(
-                      backgroundColor: const Color(0xFF22C55E),
+                      backgroundColor: const Color.fromARGB(255, 26, 161, 123),
                       foregroundColor: Colors.white,
                       elevation: 0,
                       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
@@ -525,10 +524,10 @@ class _SignupScreenState extends State<SignupScreen> {
                   children: [
                     const Text('Already have an account? ', style: TextStyle(color: Colors.grey)),
                     GestureDetector(
-                      onTap: () => Navigator.pop(context),
+                      onTap: () => Navigator.pushReplacementNamed(context, '/login'),
                       child: const Text(
                         'Sign in',
-                        style: TextStyle(color: Color(0xFF22C55E), fontWeight: FontWeight.bold),
+                        style: TextStyle(color: Color.fromARGB(255, 26, 161, 123), fontWeight: FontWeight.bold),
                       ),
                     ),
                   ],

@@ -377,9 +377,37 @@ class _RefereeDashboardScreenState extends State<RefereeDashboardScreen> {
     final TournamentMatch? g = app.selectedGame;
     String timerText = '${_elapsed.inMinutes.remainder(60).toString().padLeft(2, '0')}:${_elapsed.inSeconds.remainder(60).toString().padLeft(2, '0')}';
 
+    // Category-based theming
+    Color primaryColor = const Color(0xFF0F766E);
+    Color secondaryColor = const Color(0xFF10B981);
+    Color liningColor = Colors.transparent;
+    String kind = '';
+    if (g != null) {
+      final catName = app.selectedTournament?.categoryNames[g.categoryId]?.toLowerCase() ?? '';
+      if (catName.contains("mixed")) {
+        primaryColor = const Color(0xFF7C3AED);
+        secondaryColor = const Color(0xFFA78BFA);
+        kind = 'mixed';
+      } else if (catName.contains("women")) {
+        primaryColor = const Color(0xFFEC4899);
+        secondaryColor = const Color(0xFFF472B6);
+        kind = 'women';
+      } else if (catName.contains("men")) {
+        primaryColor = const Color(0xFF2563EB);
+        secondaryColor = const Color(0xFF3B82F6);
+        kind = 'men';
+      }
+      final label = '${g.matchLabel} ${g.seedLabel}'.toLowerCase();
+      if (label.contains('final')) {
+        liningColor = const Color(0xFFF59E0B); // gold
+      } else if (label.contains('bronze')) {
+        liningColor = const Color(0xFFCD7F32); // bronze
+      }
+    }
+
     return Scaffold(
       appBar: AppBar(
-        backgroundColor: const Color(0xFF0F766E),
+        backgroundColor: primaryColor,
         title: !_gameStarted
             ? Text('Court ${app.selectedCourt ?? ''}')
             : Row(
@@ -518,17 +546,25 @@ class _RefereeDashboardScreenState extends State<RefereeDashboardScreen> {
                       return GestureDetector(
                         behavior: HitTestBehavior.deferToChild,
                         child: Container(
-                        decoration: BoxDecoration(
-                          gradient: const LinearGradient(
-                            colors: [Color(0xFF0F766E), Color(0xFF10B981)],
-                            begin: Alignment.topLeft,
-                            end: Alignment.bottomRight,
+                          decoration: BoxDecoration(
+                            gradient: LinearGradient(
+                              colors: [primaryColor, secondaryColor],
+                              begin: Alignment.topLeft,
+                              end: Alignment.bottomRight,
+                            ),
+                            borderRadius: BorderRadius.circular(12),
+                            border: liningColor == Colors.transparent
+                                ? null
+                                : Border.all(color: liningColor, width: 4),
                           ),
-                          borderRadius: BorderRadius.circular(12),
-                        ),
                         padding: const EdgeInsets.all(12),
                         child: Stack(
                           children: [
+                            Positioned(
+                              top: 8,
+                              left: 8,
+                              child: _CategoryBadge(kind: kind.isEmpty ? 'ref' : kind),
+                            ),
                             Positioned.fill(
                               child: CustomPaint(
                                 painter: _SinglesCourtPainter(
@@ -1148,6 +1184,49 @@ class _PickleballIconPainter extends CustomPainter {
   }
   @override
   bool shouldRepaint(covariant CustomPainter oldDelegate) => false;
+}
+
+class _CategoryBadge extends StatelessWidget {
+  final String kind;
+  const _CategoryBadge({required this.kind});
+  @override
+  Widget build(BuildContext context) {
+    Color bg;
+    String text;
+    switch (kind) {
+      case 'men':
+        bg = const Color(0xFF2563EB);
+        text = 'M';
+        break;
+      case 'women':
+        bg = const Color(0xFFEC4899);
+        text = 'W';
+        break;
+      case 'mixed':
+        bg = const Color(0xFF7C3AED);
+        text = 'X';
+        break;
+      default:
+        bg = const Color(0xFF0F766E);
+        text = 'R';
+    }
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+      decoration: BoxDecoration(
+        color: bg.withOpacity(0.9),
+        borderRadius: BorderRadius.circular(8),
+        boxShadow: const [BoxShadow(color: Colors.black26, blurRadius: 4, offset: Offset(0, 2))],
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          const Icon(Icons.sports_tennis, color: Colors.white, size: 14),
+          const SizedBox(width: 4),
+          Text(text, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+        ],
+      ),
+    );
+  }
 }
 extension on _RefereeDashboardScreenState {
   void _pushSnapshot() {

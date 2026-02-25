@@ -41,110 +41,83 @@ class SettingsScreen extends StatelessWidget {
             const SizedBox(height: 16),
 
             // Avatar Upload Card
-            Card(
-              elevation: 3,
-              color: Colors.white,
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(12),
-                side: const BorderSide(color: Colors.transparent),
-              ),
-              child: Padding(
-                padding: const EdgeInsets.all(16.0),
-                child: Row(
-                  children: [
-                    CircleAvatar(
-                      radius: 30,
-                      backgroundColor: Colors.grey.shade200,
-                      backgroundImage: user.avatarUrl != null ? NetworkImage(user.avatarUrl!) : null,
-                      child: user.avatarUrl == null
-                          ? Text(user.initials ?? '?', style: const TextStyle(fontSize: 24, color: Colors.grey))
-                          : null,
+            Padding(
+              padding: const EdgeInsets.all(16.0),
+              child: Row(
+                children: [
+                  CircleAvatar(
+                    radius: 30,
+                    backgroundColor: Colors.grey.shade200,
+                    backgroundImage: user.avatarUrl != null ? NetworkImage(user.avatarUrl!) : null,
+                    child: user.avatarUrl == null
+                        ? Text(user.initials ?? '?', style: const TextStyle(fontSize: 24, color: Colors.grey))
+                        : null,
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        const Text('AVATAR', style: TextStyle(fontSize: 10, fontWeight: FontWeight.bold, color: Colors.grey)),
+                        const SizedBox(height: 8),
+                        const SizedBox(height: 4),
+                      ],
                     ),
-                    const SizedBox(width: 12),
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          const Text('AVATAR', style: TextStyle(fontSize: 10, fontWeight: FontWeight.bold, color: Colors.grey)),
-                          const SizedBox(height: 8),
-                          const SizedBox(height: 4),
-                        ],
+                  ),
+                  const SizedBox(width: 12),
+                  SizedBox(
+                    width: 140,
+                    child: ElevatedButton(
+                      onPressed: () {},
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: const Color.fromARGB(255, 26, 161, 123),
+                        foregroundColor: Colors.white,
+                        minimumSize: const Size(double.infinity, 40),
                       ),
+                      child: const Text('UPLOAD PIC', style: TextStyle(fontSize: 12)),
                     ),
-                    const SizedBox(width: 12),
-                    SizedBox(
-                      width: 140,
-                      child: ElevatedButton(
-                        onPressed: () {},
-                        style: ElevatedButton.styleFrom(
-                          backgroundColor: const Color(0xFF22C55E),
-                          foregroundColor: Colors.white,
-                          minimumSize: const Size(double.infinity, 40),
-                        ),
-                        child: const Text('UPLOAD PIC', style: TextStyle(fontSize: 12)),
-                      ),
-                    ),
-                  ],
-                ),
+                  ),
+                ],
               ),
             ),
-            const SizedBox(height: 16),
 
             // Read-only Fields (First/Last Name)
-            Card(
-              elevation: 3,
-              color: Colors.white,
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(12),
-                side: const BorderSide(color: Colors.transparent),
-              ),
-              child: Padding(
-                padding: const EdgeInsets.all(16.0),
-                child: Row(
-                  children: [
-                    Expanded(
-                      child: _buildReadOnlyField('FIRST NAME', user.name.split(' ').first),
-                    ),
-                    const SizedBox(width: 16),
-                    Expanded(
-                      child: _buildReadOnlyField('LAST NAME', user.name.split(' ').length > 1 ? user.name.split(' ').last : ''),
-                    ),
-                  ],
-                ),
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 8.0),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: _buildReadOnlyField('FIRST NAME', user.name.split(' ').first),
+                  ),
+                  const SizedBox(width: 16),
+                  Expanded(
+                    child: _buildReadOnlyField('LAST NAME', user.name.split(' ').length > 1 ? user.name.split(' ').last : ''),
+                  ),
+                ],
               ),
             ),
-            const SizedBox(height: 16),
 
             // Read-only Fields (Birthdate)
-            Card(
-              elevation: 3,
-              color: Colors.white,
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(12),
-                side: const BorderSide(color: Colors.transparent),
-              ),
-              child: Padding(
-                padding: const EdgeInsets.all(16.0),
-                child: Row(
-                  children: [
-                    Expanded(
-                      child: _buildReadOnlyField(
-                        'BIRTHDATE',
-                        user.birthDate != null ? user.birthDate!.toString().split(' ')[0] : 'N/A',
-                      ),
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 8.0),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: _buildReadOnlyField(
+                      'BIRTHDATE',
+                      user.birthDate != null ? user.birthDate!.toString().split(' ')[0] : 'N/A',
                     ),
-                    const SizedBox(width: 16),
-                    Expanded(
-                      child: _buildReadOnlyField(
-                        'AGE',
-                        user.birthDate != null ? '${_calculateAge(user.birthDate!)} years old' : 'N/A',
-                      ),
+                  ),
+                  const SizedBox(width: 16),
+                  Expanded(
+                    child: _buildReadOnlyField(
+                      'AGE',
+                      user.birthDate != null ? '${_calculateAge(user.birthDate!)} years old' : 'N/A',
                     ),
-                  ],
-                ),
+                  ),
+                ],
               ),
             ),
-            const SizedBox(height: 16),
 
             // Editable Fields
             _buildEditableCard('EMAIL ADDRESS', user.email, 'EDIT'),
@@ -203,7 +176,7 @@ class SettingsScreen extends StatelessWidget {
                             ElevatedButton(
                               onPressed: () {},
                               style: ElevatedButton.styleFrom(
-                                backgroundColor: const Color(0xFF22C55E),
+                                backgroundColor: const Color.fromARGB(255, 26, 161, 123),
                                 foregroundColor: Colors.white,
                               ),
                               child: const Text('SEND OTP'),
@@ -227,7 +200,7 @@ class SettingsScreen extends StatelessWidget {
                                 bottomLeft: Radius.circular(14),
                                 bottomRight: Radius.circular(14),
                               ),
-                              borderSide: BorderSide(color: Color(0xFF22C55E), width: 1.5),
+                              borderSide: BorderSide(color: Color.fromARGB(255, 26, 161, 123), width: 1.5),
                             ),
                           ),
                         ),
@@ -254,7 +227,7 @@ class SettingsScreen extends StatelessWidget {
                             bottomLeft: Radius.circular(14),
                             bottomRight: Radius.circular(14),
                           ),
-                          borderSide: BorderSide(color: Color(0xFF22C55E), width: 1.5),
+                          borderSide: BorderSide(color: Color.fromARGB(255, 26, 161, 123), width: 1.5),
                         ),
                       ),
                     ),
@@ -290,7 +263,7 @@ class SettingsScreen extends StatelessWidget {
                             bottomLeft: Radius.circular(14),
                             bottomRight: Radius.circular(14),
                           ),
-                          borderSide: BorderSide(color: Color(0xFF22C55E), width: 1.5),
+                          borderSide: BorderSide(color: Color.fromARGB(255, 26, 161, 123), width: 1.5),
                         ),
                       ),
                     ),
@@ -362,7 +335,7 @@ class SettingsScreen extends StatelessWidget {
   Widget _buildSectionHeader(String title, IconData icon) {
     return Row(
       children: [
-        Icon(icon, color: const Color(0xFF22C55E), size: 24),
+        Icon(icon, color: const Color.fromARGB(255, 26, 161, 123), size: 24),
         const SizedBox(width: 8),
         Text(
           title,
@@ -386,47 +359,39 @@ class SettingsScreen extends StatelessWidget {
   }
 
   Widget _buildEditableCard(String label, String value, String btnLabel, {String? note}) {
-    return Card(
-      elevation: 3,
-      color: Colors.white,
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(12),
-        side: const BorderSide(color: Colors.transparent),
-      ),
-      child: Padding(
-        padding: const EdgeInsets.all(16.0),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
-                Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(label, style: const TextStyle(fontSize: 10, fontWeight: FontWeight.bold, color: Colors.grey)),
-                    const SizedBox(height: 4),
-                    Text(value, style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w500)),
-                  ],
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 8.0),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(label, style: const TextStyle(fontSize: 10, fontWeight: FontWeight.bold, color: Colors.grey)),
+                  const SizedBox(height: 4),
+                  Text(value, style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w500)),
+                ],
+              ),
+              ElevatedButton(
+                onPressed: () {},
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: const Color.fromARGB(255, 26, 161, 123),
+                  foregroundColor: Colors.white,
+                  minimumSize: const Size(60, 30),
+                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
                 ),
-                ElevatedButton(
-                  onPressed: () {},
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: const Color(0xFF22C55E),
-                    foregroundColor: Colors.white,
-                    minimumSize: const Size(60, 30),
-                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                  ),
-                  child: Text(btnLabel, style: const TextStyle(fontSize: 11)),
-                ),
-              ],
-            ),
-            if (note != null) ...[
-              const SizedBox(height: 8),
-              Text(note, style: const TextStyle(fontSize: 11, color: Colors.grey, fontStyle: FontStyle.italic)),
+                child: Text(btnLabel, style: const TextStyle(fontSize: 11)),
+              ),
             ],
+          ),
+          if (note != null) ...[
+            const SizedBox(height: 8),
+            Text(note, style: const TextStyle(fontSize: 11, color: Colors.grey, fontStyle: FontStyle.italic)),
           ],
-        ),
+        ],
       ),
     );
   }

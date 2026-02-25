@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+import 'package:flutter_svg/flutter_svg.dart';
 import '../state/app_state.dart';
 
 class LoginScreen extends StatefulWidget {
@@ -35,19 +36,15 @@ class _LoginScreenState extends State<LoginScreen> {
               mainAxisAlignment: MainAxisAlignment.center,
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                    Container(
-                      width: 80,
-                      height: 80,
-                      decoration: const BoxDecoration(
-                        shape: BoxShape.circle,
-                        gradient: LinearGradient(
-                          colors: [Color(0xFF22C55E), Color(0xFF16A34A)],
-                          begin: Alignment.topLeft,
-                          end: Alignment.bottomRight,
+                    SizedBox(
+                      width: 128,
+                      height: 128,
+                      child: Center(
+                        child: SvgPicture.asset(
+                          'assets/images/vite.svg',
+                          width: 112,
+                          height: 112,
                         ),
-                      ),
-                      child: const Center(
-                        child: Icon(Icons.sports_tennis, color: Colors.white, size: 40),
                       ),
                     ),
                     const SizedBox(height: 20),
@@ -167,7 +164,7 @@ class _LoginScreenState extends State<LoginScreen> {
                                           }
                                         },
                                   style: FilledButton.styleFrom(
-                                    backgroundColor: const Color(0xFF22C55E),
+                                    backgroundColor: const Color.fromARGB(255, 26, 161, 123),
                                     foregroundColor: Colors.white,
                                     shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
                                   ),
@@ -192,7 +189,7 @@ class _LoginScreenState extends State<LoginScreen> {
                         Text("Don't have an account?", style: TextStyle(color: Colors.grey.shade700)),
                         TextButton(
                           onPressed: () => Navigator.pushNamed(context, '/signup'),
-                          style: TextButton.styleFrom(foregroundColor: const Color(0xFF22C55E)),
+                          style: TextButton.styleFrom(foregroundColor: const Color.fromARGB(255, 26, 161, 123)),
                           child: const Text('Create Account'),
                         ),
                       ],

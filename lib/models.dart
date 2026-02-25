@@ -538,21 +538,40 @@ class Tournament {
         if (elim != null) {
           final elimMatches = elim['matches'] as List?;
           if (elimMatches != null) {
-            // Apply schedule overrides
+            // Apply schedule overrides and labels
             for (int i = 0; i < elimMatches.length; i++) {
-               var m = elimMatches[i];
-               if (m is Map<String, dynamic>) {
-                  final mId = m['id']?.toString();
-                  // Matches logic in Schedules.jsx: elim-${cat._id}-${match.id || idx}
-                  final sId = 'elim-$catId-${mId ?? i}';
-                  
-                  if (scheduleMap.containsKey(sId)) {
-                     final info = scheduleMap[sId]!;
-                     m['court'] = info['court'];
-                     m['time'] = info['time'];
-                     m['date'] = info['date'];
+              var m = elimMatches[i];
+              if (m is Map<String, dynamic>) {
+                final mId = m['id']?.toString();
+                // Try multiple key forms used by web scheduler
+                final candidates = <String>[
+                  if (mId != null && mId.isNotEmpty) 'elim-$catId-$mId',
+                  if (mId != null && mId.isNotEmpty) 'elimgen-$catId-$mId',
+                  'elim-$catId-$i',
+                  'elimgen-$catId-$i',
+                ];
+                for (final k in candidates) {
+                  if (scheduleMap.containsKey(k)) {
+                    final info = scheduleMap[k]!;
+                    m['court'] = info['court'];
+                    m['time'] = info['time'];
+                    m['date'] = info['date'];
+                    break;
                   }
-               }
+                }
+                // Provide a match label for elimination rounds
+                final title = m['title']?.toString();
+                final round = m['round']?.toString();
+                if (m['matchLabel'] == null || (m['matchLabel'] as String?)?.isEmpty == true) {
+                  if (title != null && title.isNotEmpty) {
+                    m['matchLabel'] = title;
+                  } else if (round != null && round.isNotEmpty) {
+                    m['matchLabel'] = round;
+                  } else {
+                    m['matchLabel'] = 'Elimination';
+                  }
+                }
+              }
             }
             parseMatches(elimMatches, 'elimination', catId);
           }

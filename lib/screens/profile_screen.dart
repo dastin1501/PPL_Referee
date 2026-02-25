@@ -71,7 +71,7 @@ class ProfileScreen extends StatelessWidget {
               decoration: const BoxDecoration(
                 shape: BoxShape.circle,
                 gradient: LinearGradient(
-                  colors: [Color(0xFF22C55E), Color(0xFF16A34A)],
+                  colors: [Color.fromARGB(255, 26, 161, 123), Color.fromARGB(255, 26, 161, 123)],
                   begin: Alignment.topLeft,
                   end: Alignment.bottomRight,
                 ),
@@ -151,9 +151,9 @@ class ProfileScreen extends StatelessWidget {
       child: Column(
         children: [
           const TabBar(
-            labelColor: Color(0xFF22C55E),
+            labelColor: Color.fromARGB(255, 26, 161, 123),
             unselectedLabelColor: Colors.grey,
-            indicatorColor: Color(0xFF22C55E),
+            indicatorColor: Color.fromARGB(255, 26, 161, 123),
             tabs: [
               Tab(text: 'About'),
               Tab(text: 'My Club'),
@@ -171,7 +171,7 @@ class ProfileScreen extends StatelessWidget {
                     children: [
                       const Text(
                         'Bio',
-                        style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Color(0xFF22C55E)),
+                        style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Color.fromARGB(255, 26, 161, 123)),
                       ),
                       const SizedBox(height: 8),
                       Text(
@@ -183,8 +183,8 @@ class ProfileScreen extends StatelessWidget {
                         onPressed: () {
                           ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Edit Bio coming soon')));
                         },
-                        icon: const Icon(Icons.edit, size: 16, color: Color(0xFF22C55E)),
-                        label: const Text('Edit', style: TextStyle(color: Color(0xFF22C55E))),
+                        icon: const Icon(Icons.edit, size: 16, color: Color.fromARGB(255, 26, 161, 123)),
+                        label: const Text('Edit', style: TextStyle(color: Color.fromARGB(255, 26, 161, 123))),
                       ),
                     ],
                   ),
