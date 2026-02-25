@@ -196,6 +196,18 @@ Widget _buildGamesList(
         final end = (it['end'] as String?) ?? '';
         final scheduled = it['scheduled'] as bool;
       final category = app.selectedTournament?.categoryNames[g.categoryId] ?? '';
+      String displayCategory = category;
+      if (displayCategory.isNotEmpty) {
+        final pattern = RegExp(r'open[\s_-]?tier[\s_-]?\d+', caseSensitive: false);
+        displayCategory = displayCategory.replaceAll(pattern, 'Open');
+        displayCategory = displayCategory
+            .replaceAll(RegExp(r"women'?s?\s+singles", caseSensitive: false), 'WS')
+            .replaceAll(RegExp(r"men'?s?\s+singles", caseSensitive: false), 'MS')
+            .replaceAll(RegExp(r"women'?s?\s+doubles", caseSensitive: false), 'WD')
+            .replaceAll(RegExp(r"men'?s?\s+doubles", caseSensitive: false), 'MD')
+            .replaceAll(RegExp(r"mixed\s+doubles", caseSensitive: false), 'MxD');
+        displayCategory = displayCategory.replaceAll(RegExp(r'\s{2,}'), ' ').trim();
+      }
       final isCompleted = g.status == 'Completed';
       String displayStatus;
       if (g.status.toString().isNotEmpty) {
@@ -206,6 +218,20 @@ Widget _buildGamesList(
             : ((start.trim().isNotEmpty) && (g.court.toString().trim().isNotEmpty));
         displayStatus = hasSchedule ? 'Scheduled' : 'Unscheduled';
       }
+        // Determine accent color by category (women=pink, men=blue, mixed=green)
+        final catText = category.toLowerCase();
+        final isMixed = catText.contains('mixed');
+        final isWomen = catText.contains('women') || catText.contains('ladies') || catText.contains('female') || catText.contains('girls');
+        final isMen = catText.contains('men') || catText.contains('male') || catText.contains('boys');
+        final Color mixedGreen = const Color.fromARGB(255, 26, 161, 123);
+        final Color accentColor = isWomen
+            ? const Color(0xFFE91E63)
+            : isMen
+                ? const Color(0xFF1E88E5)
+                : isMixed
+                    ? mixedGreen
+                    : mixedGreen;
+        final Color bgColor = accentColor.withOpacity(0.15);
         return InkWell(
           onTap: () {
             if (isCompleted) {
@@ -222,27 +248,27 @@ Widget _buildGamesList(
             decoration: BoxDecoration(
               color: Colors.white,
               borderRadius: BorderRadius.circular(16),
-              border: Border.all(color: Colors.grey.shade300),
+              border: Border.all(color: accentColor.withOpacity(0.35)),
             ),
             child: Row(
               children: [
                 CircleAvatar(
-                  backgroundColor: isCompleted ? const Color(0xFF22C55E) : Colors.orange,
-                  child: Icon(isCompleted ? Icons.check : Icons.schedule, color: Colors.white, size: 20),
+                  backgroundColor: bgColor,
+                  child: Icon(isCompleted ? Icons.check : Icons.schedule, color: accentColor, size: 20),
                 ),
                 const SizedBox(width: 12),
                 Expanded(
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      if (category.isNotEmpty)
+                      if (displayCategory.isNotEmpty)
                         Container(
                           padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
                           decoration: BoxDecoration(
-                            border: Border.all(color: const Color(0xFF22C55E)),
+                            border: Border.all(color: accentColor),
                             borderRadius: BorderRadius.circular(8),
                           ),
-                          child: Text(category, style: const TextStyle(fontSize: 12, color: Color(0xFF22C55E))),
+                          child: Text(displayCategory, style: TextStyle(fontSize: 12, color: accentColor)),
                         ),
                       if (g.matchLabel.isNotEmpty || g.seedLabel.isNotEmpty)
                         Padding(
@@ -252,7 +278,16 @@ Widget _buildGamesList(
                             style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 14),
                           ),
                         ),
-                      Text('${g.player1} vs ${g.player2}', style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w500)),
+                      RichText(
+                        text: TextSpan(
+                          style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w500),
+                          children: [
+                            TextSpan(text: g.player1),
+                            const TextSpan(text: ' vs ', style: TextStyle(color: Colors.red)),
+                            TextSpan(text: g.player2),
+                          ],
+                        ),
+                      ),
                       if (scheduled)
                         Text(end.isNotEmpty ? 'Time: $start – $end' : 'Time: $start', style: const TextStyle(fontSize: 12, color: Colors.grey))
                       else
@@ -309,7 +344,16 @@ void _showCompletedSummaryDialog(BuildContext context, dynamic g) {
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Text('${g.player1} vs ${g.player2}'),
+              RichText(
+                text: TextSpan(
+                  style: DefaultTextStyle.of(context).style,
+                  children: [
+                    TextSpan(text: g.player1),
+                    const TextSpan(text: ' vs ', style: TextStyle(color: Colors.red)),
+                    TextSpan(text: g.player2),
+                  ],
+                ),
+              ),
               const SizedBox(height: 8),
               Text('Final Score: $s1 - $s2', style: const TextStyle(fontWeight: FontWeight.bold)),
               if (winnerName.isNotEmpty) ...[

@@ -54,13 +54,13 @@ class SettingsScreen extends StatelessWidget {
                         : null,
                   ),
                   const SizedBox(width: 12),
-                  Expanded(
+                  const Expanded(
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        const Text('AVATAR', style: TextStyle(fontSize: 10, fontWeight: FontWeight.bold, color: Colors.grey)),
-                        const SizedBox(height: 8),
-                        const SizedBox(height: 4),
+                        Text('AVATAR', style: TextStyle(fontSize: 10, fontWeight: FontWeight.bold, color: Colors.grey)),
+                        SizedBox(height: 8),
+                        SizedBox(height: 4),
                       ],
                     ),
                   ),
@@ -158,14 +158,14 @@ class SettingsScreen extends StatelessWidget {
                       children: [
                         Row(
                           children: [
-                            Expanded(
+                            const Expanded(
                               child: Column(
                                 crossAxisAlignment: CrossAxisAlignment.start,
                                 children: [
-                                  const Text('ONE-TIME CODE (OTP)',
+                                  Text('ONE-TIME CODE (OTP)',
                                       style: TextStyle(fontSize: 10, fontWeight: FontWeight.bold, color: Colors.grey)),
-                                  const SizedBox(height: 4),
-                                  const Text(
+                                  SizedBox(height: 4),
+                                  Text(
                                     'Click "Send OTP" to receive a code via email, then enter it below.',
                                     style: TextStyle(fontSize: 10, color: Colors.grey, fontStyle: FontStyle.italic),
                                   ),

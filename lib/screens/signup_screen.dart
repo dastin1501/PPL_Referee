@@ -233,7 +233,7 @@ class _SignupScreenState extends State<SignupScreen> {
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
                           DropdownButtonFormField<String>(
-                            value: _selectedCountry,
+                            initialValue: _selectedCountry,
                             items: _countries.map((c) => DropdownMenuItem(value: c, child: Text(c))).toList(),
                             onChanged: (v) => setState(() => _selectedCountry = v),
                             decoration: InputDecoration(
@@ -359,7 +359,7 @@ class _SignupScreenState extends State<SignupScreen> {
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
                           DropdownButtonFormField<String>(
-                            value: _selectedGender,
+                            initialValue: _selectedGender,
                             items: _genders
                                 .map(
                                   (g) => DropdownMenuItem(

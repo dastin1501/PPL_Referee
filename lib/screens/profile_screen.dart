@@ -42,7 +42,7 @@ class ProfileScreen extends StatelessWidget {
   }
 
   Widget _buildSliverAppBar(User user) {
-    return SliverAppBar(
+    return const SliverAppBar(
       toolbarHeight: 56.0,
       floating: false,
       pinned: true,

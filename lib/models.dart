@@ -419,8 +419,9 @@ class Tournament {
                    if (n1 == 'TBD') n1 = '';
                    if (n2 == 'TBD') n2 = '';
                    
-                   if (n1.isNotEmpty && n2.isNotEmpty) name = '$n1 / $n2';
-                   else if (n1.isNotEmpty) name = n1;
+                   if (n1.isNotEmpty && n2.isNotEmpty) {
+                     name = '$n1 / $n2';
+                   } else if (n1.isNotEmpty) name = n1;
                    else if (n2.isNotEmpty) name = n2;
                  } else {
                    name = n1;

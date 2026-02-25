@@ -46,6 +46,7 @@ class _RefereeDashboardScreenState extends State<RefereeDashboardScreen> {
   int _leftServeStage = 0;
   int _rightServeStage = 0;
   int _currentGame = 1;
+  bool _endsSwitched = false;
 
   String _fmt(int s) {
     final m = s ~/ 60;
@@ -405,22 +406,50 @@ class _RefereeDashboardScreenState extends State<RefereeDashboardScreen> {
       }
     }
 
-    return Scaffold(
-      appBar: AppBar(
-        backgroundColor: primaryColor,
-        title: !_gameStarted
-            ? Text('Court ${app.selectedCourt ?? ''}')
-            : Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  const Icon(Icons.timer, size: 18, color: Colors.white),
-                  const SizedBox(width: 6),
-                  Text(
-                    timerText,
-                    style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
-                  ),
-                ],
+    final courtRaw = app.selectedCourt ?? '';
+    final courtTitle = courtRaw.toLowerCase().contains('court')
+        ? courtRaw
+        : (courtRaw.isEmpty ? '' : 'Court $courtRaw');
+
+    return WillPopScope(
+      onWillPop: () async => !_gameStarted,
+      child: Scaffold(
+          appBar: AppBar(
+        backgroundColor: const Color.fromARGB(255, 26, 161, 123),
+        automaticallyImplyLeading: !_gameStarted,
+        title: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(
+              courtTitle,
+              style: const TextStyle(color: Colors.white),
+            ),
+            const SizedBox(width: 8),
+            IconButton(
+              padding: EdgeInsets.zero,
+              constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
+              onPressed: _switchCourt,
+              icon: const Icon(Icons.compare_arrows, color: Colors.white, size: 20),
+              tooltip: 'Switch Court',
+            ),
+          ],
+        ),
+        flexibleSpace: SafeArea(
+          child: Center(
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+              decoration: BoxDecoration(
+                color: const Color(0xFF0E7C6F),
+                borderRadius: BorderRadius.circular(8),
+                border: Border.all(color: Colors.white70, width: 1),
               ),
+              child: Text(
+                timerText,
+                style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 18),
+              ),
+            ),
+          ),
+        ),
         actions: [
           if (_gameStarted && g != null)
             Padding(
@@ -462,43 +491,25 @@ class _RefereeDashboardScreenState extends State<RefereeDashboardScreen> {
               children: [
                 Padding(
                   padding: const EdgeInsets.fromLTRB(12, 8, 12, 6),
-                  child: Row(
+                  child: Stack(
+                    alignment: Alignment.center,
                     children: [
-                      if (!_gameStarted)
-                        Container(
-                          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                          decoration: BoxDecoration(
-                            color: const Color(0xFF0E7C6F),
-                            borderRadius: BorderRadius.circular(10),
-                            border: Border.all(color: Colors.white70, width: 2),
-                          ),
-                          child: Column(
+                      if (!_gameStarted && _servingPlayer == null)
+                        const Align(
+                          alignment: Alignment.center,
+                          child: Row(
                             mainAxisSize: MainAxisSize.min,
-                            crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
-                              const Text('TIME', style: TextStyle(color: Colors.white70, fontWeight: FontWeight.w600)),
+                              Icon(Icons.touch_app, size: 16, color: Color.fromARGB(255, 26, 161, 123)),
+                              SizedBox(width: 6),
                               Text(
-                                timerText,
-                                style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 16),
+                                'Tap a player to choose server',
+                                style: TextStyle(color: Colors.black87, fontWeight: FontWeight.w600),
+                                textAlign: TextAlign.center,
                               ),
                             ],
                           ),
                         ),
-                      if (!_gameStarted && _servingPlayer == null) ...[
-                        const SizedBox(width: 12),
-                        Container(
-                          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                          decoration: BoxDecoration(
-                            color: Colors.black.withOpacity(0.1),
-                            borderRadius: BorderRadius.circular(10),
-                          ),
-                          child: const Text(
-                            'Tap a player to choose server',
-                            style: TextStyle(color: Colors.black87, fontWeight: FontWeight.w600),
-                          ),
-                        ),
-                      ],
-                      const Spacer(),
                     ],
                   ),
                 ),
@@ -527,8 +538,27 @@ class _RefereeDashboardScreenState extends State<RefereeDashboardScreen> {
                       final noServer = _servingPlayer == null;
                       final serverOnLeft = _servingPlayer != null && leftTeam.contains(_servingPlayer);
                       final serverOnRight = _servingPlayer != null && rightTeam.contains(_servingPlayer);
-                      final serverRight = serverOnRight;
-                      final serviceTop = _servingPlayer == null ? true : _serverTop;
+                      // Apply end switch mapping for display
+                      if (_endsSwitched) {
+                        if (isDoubles) {
+                          final lt = leftTop;
+                          final lb = leftBottom;
+                          final rt = rightTop;
+                          final rb = rightBottom;
+                          leftTop = rb;
+                          leftBottom = rt;
+                          rightTop = lb;
+                          rightBottom = lt;
+                        } else {
+                          final lt = leftTop;
+                          leftTop = rightTop;
+                          rightTop = lt;
+                        }
+                      }
+                      final displayServerOnLeft = _endsSwitched ? serverOnRight : serverOnLeft;
+                      final displayServerOnRight = _endsSwitched ? serverOnLeft : serverOnRight;
+                      final serverRight = displayServerOnRight;
+                      final serviceTop = _servingPlayer == null ? true : (_endsSwitched ? !_serverTop : _serverTop);
                       String centerScore;
                       if (isDoubles) {
                         int sNum = 0;
@@ -543,21 +573,38 @@ class _RefereeDashboardScreenState extends State<RefereeDashboardScreen> {
                       } else {
                         centerScore = '$_score1 - $_score2';
                       }
+                      final int leftAvail = (2 - (_timeouts1 + _medTimeouts1)).clamp(0, 2);
+                      final int rightAvail = (2 - (_timeouts2 + _medTimeouts2)).clamp(0, 2);
+                      final int bottomLeftAvail = _endsSwitched ? rightAvail : leftAvail;
+                      final int bottomRightAvail = _endsSwitched ? leftAvail : rightAvail;
+                      Widget dot(bool filled) {
+                        final color = const Color.fromARGB(255, 26, 161, 123);
+                        return Container(
+                          width: 10,
+                          height: 10,
+                          decoration: BoxDecoration(
+                            shape: BoxShape.circle,
+                            color: filled ? color : Colors.transparent,
+                            border: Border.all(color: filled ? color : Colors.grey.shade400, width: 1.5),
+                          ),
+                        );
+                      }
                       return GestureDetector(
                         behavior: HitTestBehavior.deferToChild,
                         child: Container(
                           decoration: BoxDecoration(
-                            gradient: LinearGradient(
-                              colors: [primaryColor, secondaryColor],
-                              begin: Alignment.topLeft,
-                              end: Alignment.bottomRight,
-                            ),
-                            borderRadius: BorderRadius.circular(12),
-                            border: liningColor == Colors.transparent
-                                ? null
-                                : Border.all(color: liningColor, width: 4),
+                            color: Colors.white,
+                            borderRadius: BorderRadius.zero,
+                            boxShadow: [
+                              BoxShadow(
+                                color: Colors.black.withOpacity(0.15),
+                                blurRadius: 16,
+                                spreadRadius: 1,
+                                offset: const Offset(0, 6),
+                              ),
+                            ],
                           ),
-                        padding: const EdgeInsets.all(12),
+                        padding: const EdgeInsets.all(6),
                         child: Stack(
                           children: [
                             Positioned(
@@ -566,37 +613,61 @@ class _RefereeDashboardScreenState extends State<RefereeDashboardScreen> {
                               child: _CategoryBadge(kind: kind.isEmpty ? 'ref' : kind),
                             ),
                             Positioned.fill(
-                              child: CustomPaint(
-                                painter: _SinglesCourtPainter(
-                                  highlightRight: serverRight,
-                                  highlightTop: serviceTop,
-                                ),
-                              ),
-                            ),
-                            Align(
-                              alignment: Alignment.center,
-                              child: Container(
-                                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-                                decoration: BoxDecoration(
-                                  color: Colors.black,
-                                  borderRadius: BorderRadius.circular(8),
-                                ),
-                                child: Text(
-                                  centerScore,
-                                  overflow: TextOverflow.ellipsis,
-                                  style: const TextStyle(
-                                    color: Colors.white,
-                                    fontSize: 48,
-                                    fontWeight: FontWeight.w900,
+                              child: ClipRRect(
+                                borderRadius: BorderRadius.zero,
+                                child: CustomPaint(
+                                  painter: _SinglesCourtPainter(
+                                    highlightRight: serverRight,
+                                    highlightTop: serviceTop,
                                   ),
                                 ),
                               ),
                             ),
                             Align(
-                              alignment: isSingles
-                                  ? (serverOnLeft
-                                      ? (serviceTop ? Alignment.topLeft : Alignment.bottomLeft)
-                                      : (serviceTop ? Alignment.bottomLeft : Alignment.topLeft))
+                              alignment: Alignment.center,
+                              child: Text(
+                                centerScore,
+                                overflow: TextOverflow.ellipsis,
+                                style: const TextStyle(
+                                  color: Colors.white,
+                                  fontSize: 48,
+                                  fontWeight: FontWeight.w900,
+                                ),
+                              ),
+                            ),
+                            Align(
+                              alignment: Alignment.bottomLeft,
+                              child: Padding(
+                                padding: const EdgeInsets.all(6),
+                                child: Row(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    dot(bottomLeftAvail >= 1),
+                                    const SizedBox(width: 6),
+                                    dot(bottomLeftAvail >= 2),
+                                  ],
+                                ),
+                              ),
+                            ),
+                            Align(
+                              alignment: Alignment.bottomRight,
+                              child: Padding(
+                                padding: const EdgeInsets.all(6),
+                                child: Row(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    dot(bottomRightAvail >= 2),
+                                    const SizedBox(width: 6),
+                                    dot(bottomRightAvail >= 1),
+                                  ],
+                                ),
+                              ),
+                            ),
+                            Align(
+                            alignment: isSingles
+                                ? (displayServerOnLeft
+                                    ? (serviceTop ? Alignment.topLeft : Alignment.bottomLeft)
+                                    : (serviceTop ? Alignment.bottomLeft : Alignment.topLeft))
                                   : Alignment.topLeft,
                               child: FractionallySizedBox(
                                 widthFactor: 0.5,
@@ -628,10 +699,10 @@ class _RefereeDashboardScreenState extends State<RefereeDashboardScreen> {
                                 ),
                               ),
                             Align(
-                              alignment: isSingles
-                                  ? (serverOnRight
-                                      ? (serviceTop ? Alignment.topRight : Alignment.bottomRight)
-                                      : (noServer ? Alignment.topRight : (serviceTop ? Alignment.bottomRight : Alignment.topRight)))
+                            alignment: isSingles
+                                ? (displayServerOnRight
+                                    ? (serviceTop ? Alignment.topRight : Alignment.bottomRight)
+                                    : (noServer ? Alignment.topRight : (serviceTop ? Alignment.bottomRight : Alignment.topRight)))
                                   : Alignment.topRight,
                               child: FractionallySizedBox(
                                 widthFactor: 0.5,
@@ -807,22 +878,22 @@ class _RefereeDashboardScreenState extends State<RefereeDashboardScreen> {
                 ),
                 if (!_gameStarted)
                   Container(
-                    color: const Color(0xFF0F766E),
-                    padding: const EdgeInsets.all(12),
+                    color: const Color.fromARGB(255, 26, 161, 123),
+                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
                     child: Row(
                       children: [
                         Expanded(
                           child: SizedBox(
-                            height: 56,
+                            height: 44,
                             child: ElevatedButton.icon(
                               onPressed: _servingPlayer != null ? _startGame : null,
                               style: ElevatedButton.styleFrom(
-                                backgroundColor: const Color(0xFF10B981),
+                                backgroundColor: const Color.fromARGB(255, 26, 161, 123),
                                 disabledBackgroundColor: Colors.grey[700],
                                 foregroundColor: Colors.white,
                               ),
-                              icon: const Icon(Icons.play_arrow, size: 28),
-                              label: const Text('START GAME', style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
+                              icon: const Icon(Icons.play_arrow, size: 22),
+                              label: const Text('START GAME', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
                             ),
                           ),
                         ),
@@ -841,7 +912,7 @@ class _RefereeDashboardScreenState extends State<RefereeDashboardScreen> {
                           height: 56,
                           child: ElevatedButton(
                             onPressed: _decrementPoint,
-                            style: ElevatedButton.styleFrom(backgroundColor: Colors.grey.shade400, foregroundColor: Colors.white),
+                            style: ElevatedButton.styleFrom(backgroundColor: const Color.fromARGB(255, 26, 161, 123), foregroundColor: Colors.white),
                             child: const Text('-', style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold)),
                           ),
                         ),
@@ -850,7 +921,7 @@ class _RefereeDashboardScreenState extends State<RefereeDashboardScreen> {
                           height: 56,
                           child: ElevatedButton(
                             onPressed: _sideOut,
-                            style: ElevatedButton.styleFrom(backgroundColor: Colors.grey.shade400, foregroundColor: Colors.white),
+                            style: ElevatedButton.styleFrom(backgroundColor: const Color.fromARGB(255, 26, 161, 123), foregroundColor: Colors.white),
                             child: Builder(builder: (_) {
                               final app = context.read<AppState>();
                               final g = app.selectedGame;
@@ -887,7 +958,7 @@ class _RefereeDashboardScreenState extends State<RefereeDashboardScreen> {
                           height: 56,
                           child: ElevatedButton(
                             onPressed: _incrementPoint,
-                            style: ElevatedButton.styleFrom(backgroundColor: Colors.grey.shade400, foregroundColor: Colors.white),
+                            style: ElevatedButton.styleFrom(backgroundColor: const Color.fromARGB(255, 26, 161, 123), foregroundColor: Colors.white),
                             child: const Text('+', style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold)),
                           ),
                         ),
@@ -896,6 +967,7 @@ class _RefereeDashboardScreenState extends State<RefereeDashboardScreen> {
                   ),
               ],
             ),
+      ),
     );
   }
 
@@ -960,7 +1032,18 @@ class _RefereeDashboardScreenState extends State<RefereeDashboardScreen> {
                               Text('Score: $_score1 - $_score2'),
                               if (winnerName.isNotEmpty) ...[
                                 const SizedBox(height: 8),
-                                Text('Winner: $winnerName'),
+                                Text.rich(
+                                  TextSpan(
+                                    text: 'Winner: ',
+                                    style: const TextStyle(),
+                                    children: [
+                                      TextSpan(
+                                        text: winnerName,
+                                        style: const TextStyle(fontWeight: FontWeight.bold),
+                                      ),
+                                    ],
+                                  ),
+                                ),
                               ],
                               const SizedBox(height: 16),
                               Container(
@@ -1111,27 +1194,36 @@ class _SinglesCourtPainter extends CustomPainter {
   _SinglesCourtPainter({required this.highlightRight, required this.highlightTop});
   @override
   void paint(Canvas canvas, Size size) {
-    final bg = Paint()..color = const Color(0xFF064E3B);
-    canvas.drawRRect(
-      RRect.fromRectAndRadius(Offset.zero & size, const Radius.circular(10)),
-      bg,
-    );
     final line = Paint()
       ..color = Colors.white
-      ..strokeWidth = 2;
+      ..strokeWidth = 1;
     final w = size.width;
     final h = size.height;
-    final pad = 12.0;
+    final pad = 0.0;
     final rect = Rect.fromLTWH(pad, pad, w - pad * 2, h - pad * 2);
-    canvas.drawRect(rect, Paint()..style = PaintingStyle.stroke..color = Colors.white..strokeWidth = 3);
-    final midX = rect.left + rect.width / 2;
+    final sideFill = Paint()
+      ..color = const Color(0xFF0B2A5A)
+      ..style = PaintingStyle.fill;
+    final kitchenFill = Paint()
+      ..color = const Color(0xFF2563EB)
+      ..style = PaintingStyle.fill;
+    final x1 = rect.left + rect.width / 3;
+    final x2 = rect.left + rect.width * 2 / 3;
+    final leftRect = Rect.fromLTWH(rect.left, rect.top, rect.width / 3, rect.height);
+    final rightRect = Rect.fromLTWH(x2, rect.top, rect.width / 3, rect.height);
+    final kitchenRect = Rect.fromLTWH(x1, rect.top, rect.width / 3, rect.height);
+    canvas.drawRect(leftRect, sideFill);
+    canvas.drawRect(rightRect, sideFill);
+    canvas.drawRect(kitchenRect, kitchenFill);
     final midY = rect.top + rect.height / 2;
-    canvas.drawLine(Offset(midX, rect.top), Offset(midX, rect.bottom), line);
-    canvas.drawLine(Offset(rect.left, midY), Offset(rect.right, midY), line);
-    final rightRectTop = Rect.fromLTWH(midX, rect.top, rect.width / 2, rect.height / 2);
-    final rightRectBottom = Rect.fromLTWH(midX, midY, rect.width / 2, rect.height / 2);
-    final leftRectTop = Rect.fromLTWH(rect.left, rect.top, rect.width / 2, rect.height / 2);
-    final leftRectBottom = Rect.fromLTWH(rect.left, midY, rect.width / 2, rect.height / 2);
+    canvas.drawLine(Offset(x1, rect.top), Offset(x1, rect.bottom), line);
+    canvas.drawLine(Offset(x2, rect.top), Offset(x2, rect.bottom), line);
+    canvas.drawLine(Offset(rect.left, midY), Offset(x1, midY), line);
+    canvas.drawLine(Offset(x2, midY), Offset(rect.right, midY), line);
+    final leftRectTop = Rect.fromLTWH(rect.left, rect.top, rect.width / 3, rect.height / 2);
+    final leftRectBottom = Rect.fromLTWH(rect.left, midY, rect.width / 3, rect.height / 2);
+    final rightRectTop = Rect.fromLTWH(x2, rect.top, rect.width / 3, rect.height / 2);
+    final rightRectBottom = Rect.fromLTWH(x2, midY, rect.width / 3, rect.height / 2);
     final hl = Paint()..color = Colors.yellow.withOpacity(0.15);
     Rect toDraw;
     if (highlightRight) {
@@ -1140,6 +1232,19 @@ class _SinglesCourtPainter extends CustomPainter {
       toDraw = highlightTop ? leftRectTop : leftRectBottom;
     }
     canvas.drawRect(toDraw, hl);
+    final midX = rect.left + rect.width / 2;
+    final netPaint = Paint()
+      ..color = Colors.white70
+      ..strokeWidth = 1;
+    const double dash = 4.0;
+    const double gap = 3.0;
+    double cy = rect.top;
+    while (cy < rect.bottom) {
+      double ny = cy + dash;
+      if (ny > rect.bottom) ny = rect.bottom;
+      canvas.drawLine(Offset(midX, cy), Offset(midX, ny), netPaint);
+      cy = ny + gap;
+    }
   }
   @override
   bool shouldRepaint(covariant _SinglesCourtPainter oldDelegate) =>
@@ -1231,6 +1336,12 @@ class _CategoryBadge extends StatelessWidget {
 extension on _RefereeDashboardScreenState {
   void _pushSnapshot() {
     _history.add(_Snapshot(_score1, _score2, _servingPlayer, _serverTop, _timeouts1, _timeouts2, _medTimeouts1, _medTimeouts2, _leftServeStage, _rightServeStage));
+  }
+
+  void _switchCourt() {
+    setState(() {
+      _endsSwitched = !_endsSwitched;
+    });
   }
 
   bool _serverOnTeam1(TournamentMatch g) {
@@ -1429,20 +1540,61 @@ extension on _RefereeDashboardScreenState {
       builder: (_) {
         final p1Disabled = _timeouts1 >= 1;
         final p2Disabled = _timeouts2 >= 1;
-        return SimpleDialog(
-          title: const Text('Timeout'),
-          children: [
-            ListTile(
-              title: Text(g.player1),
-              enabled: !p1Disabled,
-              onTap: p1Disabled ? null : () => Navigator.pop(context, 'p1'),
-            ),
-            ListTile(
-              title: Text(g.player2),
-              enabled: !p2Disabled,
-              onTap: p2Disabled ? null : () => Navigator.pop(context, 'p2'),
-            ),
-          ],
+        return AlertDialog(
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+          title: Row(
+            children: const [
+              Icon(Icons.timer, color: Color.fromARGB(255, 26, 161, 123)),
+              SizedBox(width: 8),
+              Text('Timeout'),
+            ],
+          ),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              SizedBox(
+                width: double.infinity,
+                child: ElevatedButton(
+                  onPressed: p1Disabled ? null : () => Navigator.pop(context, 'p1'),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: const Color.fromARGB(255, 26, 161, 123),
+                    foregroundColor: Colors.white,
+                    padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 16),
+                  ),
+                  child: Align(
+                    alignment: Alignment.center,
+                    child: Text(
+                      g.player1,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      textAlign: TextAlign.center,
+                    ),
+                  ),
+                ),
+              ),
+              const SizedBox(height: 8),
+              SizedBox(
+                width: double.infinity,
+                child: ElevatedButton(
+                  onPressed: p2Disabled ? null : () => Navigator.pop(context, 'p2'),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: const Color.fromARGB(255, 26, 161, 123),
+                    foregroundColor: Colors.white,
+                    padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 16),
+                  ),
+                  child: Align(
+                    alignment: Alignment.center,
+                    child: Text(
+                      g.player2,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      textAlign: TextAlign.center,
+                    ),
+                  ),
+                ),
+              ),
+            ],
+          ),
         );
       },
     );
@@ -1451,11 +1603,28 @@ extension on _RefereeDashboardScreenState {
     final confirm = await showDialog<bool>(
       context: context,
       builder: (_) => AlertDialog(
-        title: const Text('Confirm Timeout'),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        title: Row(
+          children: const [
+            Icon(Icons.timer_outlined, color: Color.fromARGB(255, 26, 161, 123)),
+            SizedBox(width: 8),
+            Text('Confirm Timeout'),
+          ],
+        ),
         content: Text('Are you sure you want to timeout $name?'),
         actions: [
-          TextButton(onPressed: () => Navigator.of(context).pop(false), child: const Text('Cancel')),
-          ElevatedButton(onPressed: () => Navigator.of(context).pop(true), child: const Text('OK')),
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: const Text('Cancel'),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.of(context).pop(true),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: const Color.fromARGB(255, 26, 161, 123),
+              foregroundColor: Colors.white,
+            ),
+            child: const Text('OK'),
+          ),
         ],
       ),
     );
@@ -1495,10 +1664,41 @@ extension on _RefereeDashboardScreenState {
             });
           });
           return AlertDialog(
-            title: const Text('Timeout'),
-            content: Text('${_fmt(_timeoutSecondsLeft)} remaining'),
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+            title: Row(
+              children: const [
+                Icon(Icons.timer, color: Color.fromARGB(255, 26, 161, 123)),
+                SizedBox(width: 8),
+                Text('Timeout'),
+              ],
+            ),
+            content: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(
+                  _fmt(_timeoutSecondsLeft),
+                  style: const TextStyle(fontSize: 48, fontWeight: FontWeight.w900),
+                ),
+                const SizedBox(height: 8),
+                LinearProgressIndicator(
+                  value: remaining / 60.0,
+                  valueColor: const AlwaysStoppedAnimation(Color.fromARGB(255, 26, 161, 123)),
+                  backgroundColor: Colors.grey.shade300,
+                  minHeight: 6,
+                ),
+                const SizedBox(height: 8),
+                const Text('remaining'),
+              ],
+            ),
             actions: [
-              TextButton(onPressed: () => Navigator.of(context).pop(), child: const Text('Resume')),
+              ElevatedButton(
+                onPressed: () => Navigator.of(context).pop(),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: const Color.fromARGB(255, 26, 161, 123),
+                  foregroundColor: Colors.white,
+                ),
+                child: const Text('Resume'),
+              ),
             ],
           );
         });
@@ -1520,20 +1720,61 @@ extension on _RefereeDashboardScreenState {
       builder: (_) {
         final p1Disabled = _medTimeouts1 >= 1;
         final p2Disabled = _medTimeouts2 >= 1;
-        return SimpleDialog(
-          title: const Text('Medical Timeout'),
-          children: [
-            ListTile(
-              title: Text(g.player1),
-              enabled: !p1Disabled,
-              onTap: p1Disabled ? null : () => Navigator.pop(context, 'p1'),
-            ),
-            ListTile(
-              title: Text(g.player2),
-              enabled: !p2Disabled,
-              onTap: p2Disabled ? null : () => Navigator.pop(context, 'p2'),
-            ),
-          ],
+        return AlertDialog(
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+          title: Row(
+            children: const [
+              Icon(Icons.medical_services_outlined, color: Color.fromARGB(255, 26, 161, 123)),
+              SizedBox(width: 8),
+              Text('Medical Timeout'),
+            ],
+          ),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              SizedBox(
+                width: double.infinity,
+                child: ElevatedButton(
+                  onPressed: p1Disabled ? null : () => Navigator.pop(context, 'p1'),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: const Color.fromARGB(255, 26, 161, 123),
+                    foregroundColor: Colors.white,
+                    padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 16),
+                  ),
+                  child: Align(
+                    alignment: Alignment.center,
+                    child: Text(
+                      g.player1,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      textAlign: TextAlign.center,
+                    ),
+                  ),
+                ),
+              ),
+              const SizedBox(height: 8),
+              SizedBox(
+                width: double.infinity,
+                child: ElevatedButton(
+                  onPressed: p2Disabled ? null : () => Navigator.pop(context, 'p2'),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: const Color.fromARGB(255, 26, 161, 123),
+                    foregroundColor: Colors.white,
+                    padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 16),
+                  ),
+                  child: Align(
+                    alignment: Alignment.center,
+                    child: Text(
+                      g.player2,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      textAlign: TextAlign.center,
+                    ),
+                  ),
+                ),
+              ),
+            ],
+          ),
         );
       },
     );
@@ -1542,11 +1783,28 @@ extension on _RefereeDashboardScreenState {
     final confirm = await showDialog<bool>(
       context: context,
       builder: (_) => AlertDialog(
-        title: const Text('Confirm Medical Timeout'),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        title: Row(
+          children: const [
+            Icon(Icons.medical_services_outlined, color: Color.fromARGB(255, 26, 161, 123)),
+            SizedBox(width: 8),
+            Text('Confirm Medical Timeout'),
+          ],
+        ),
         content: Text('Are you sure you want to start a medical timeout for $name?'),
         actions: [
-          TextButton(onPressed: () => Navigator.of(context).pop(false), child: const Text('Cancel')),
-          ElevatedButton(onPressed: () => Navigator.of(context).pop(true), child: const Text('OK')),
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: const Text('Cancel'),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.of(context).pop(true),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: const Color.fromARGB(255, 26, 161, 123),
+              foregroundColor: Colors.white,
+            ),
+            child: const Text('OK'),
+          ),
         ],
       ),
     );
@@ -1586,10 +1844,41 @@ extension on _RefereeDashboardScreenState {
             });
           });
           return AlertDialog(
-            title: const Text('Medical Timeout'),
-            content: Text('${_fmt(_timeoutSecondsLeft)} remaining'),
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+            title: Row(
+              children: const [
+                Icon(Icons.medical_services_outlined, color: Color.fromARGB(255, 26, 161, 123)),
+                SizedBox(width: 8),
+                Text('Medical Timeout'),
+              ],
+            ),
+            content: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(
+                  _fmt(_timeoutSecondsLeft),
+                  style: const TextStyle(fontSize: 48, fontWeight: FontWeight.w900),
+                ),
+                const SizedBox(height: 8),
+                LinearProgressIndicator(
+                  value: remaining / 300.0,
+                  valueColor: const AlwaysStoppedAnimation(Color.fromARGB(255, 26, 161, 123)),
+                  backgroundColor: Colors.grey.shade300,
+                  minHeight: 6,
+                ),
+                const SizedBox(height: 8),
+                const Text('remaining'),
+              ],
+            ),
             actions: [
-              TextButton(onPressed: () => Navigator.of(context).pop(), child: const Text('Resume')),
+              ElevatedButton(
+                onPressed: () => Navigator.of(context).pop(),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: const Color.fromARGB(255, 26, 161, 123),
+                  foregroundColor: Colors.white,
+                ),
+                child: const Text('Resume'),
+              ),
             ],
           );
         });
