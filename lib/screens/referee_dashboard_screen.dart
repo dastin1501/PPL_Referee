@@ -63,18 +63,6 @@ class _RefereeDashboardScreenState extends State<RefereeDashboardScreen> {
     ]);
 
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      final app = context.read<AppState>();
-      final court = app.selectedCourt;
-      final g = app.selectedGame;
-      String norm(String? s) {
-        if (s == null) return '';
-        final m = RegExp(r'^\\s*(?:Court\\s*)?(\\d+)\\s*\$').firstMatch(s);
-        if (m != null) return 'Court ${m.group(1)}';
-        return s;
-      }
-      if (g == null || g.status == 'Completed' || (court != null && norm(g.court) != norm(court))) {
-        app.openNextScheduledForSelectedCourt();
-      }
       _checkCoinToss();
     });
   }
@@ -347,8 +335,6 @@ class _RefereeDashboardScreenState extends State<RefereeDashboardScreen> {
     }
     setState(() {});
   }
-
-
 
   Future<void> _addRefereeNote(TournamentMatch g) async {
     final ctrl = TextEditingController(text: _refereeNote);
@@ -1307,10 +1293,6 @@ class _RefereeDashboardScreenState extends State<RefereeDashboardScreen> {
       fields['finalScorePlayer1'] = _score1;
       fields['finalScorePlayer2'] = _score2;
       fields['status'] = 'Completed';
-      final sc = context.read<AppState>().selectedCourt ?? g.court;
-      if (sc.toString().trim().isNotEmpty) {
-        context.read<AppState>().markMatchCompletionCourt(g.id, sc);
-      }
       if (winnerName.isNotEmpty) {
         fields['winner'] = winnerName;
       }
@@ -1577,44 +1559,27 @@ extension on _RefereeDashboardScreenState {
         _score1 += 1;
         final leftTeam = _splitTeam(g.player1);
         if (leftTeam.length > 1) {
-          if (_leftTopOverride.isEmpty || _leftBottomOverride.isEmpty) {
-            final partner = leftTeam.firstWhere((p) => p != _servingPlayer, orElse: () => leftTeam[0]);
-            if (_servingPlayer != null && leftTeam.contains(_servingPlayer)) {
-              if (_serverTop) {
-                _leftTopOverride = _servingPlayer!;
-                _leftBottomOverride = partner;
-              } else {
-                _leftTopOverride = partner;
-                _leftBottomOverride = _servingPlayer!;
-              }
-            } else {
-              _leftTopOverride = leftTeam[0];
-              _leftBottomOverride = leftTeam.length > 1 ? leftTeam[1] : '';
-            }
-            if (_leftBase.isEmpty || _leftSecond.isEmpty) {
-              _leftBase = _leftBottomOverride.isNotEmpty ? _leftBottomOverride : _leftTopOverride;
-              _leftSecond = _leftTopOverride;
-            }
-          }
-          final temp = _leftTopOverride;
-          _leftTopOverride = _leftBottomOverride;
-          _leftBottomOverride = temp;
+          // Swap left team display positions when they score
+          final currentTop = _leftTopOverride.isNotEmpty ? _leftTopOverride : leftTeam[0];
+          final currentBottom = _leftBottomOverride.isNotEmpty
+              ? _leftBottomOverride
+              : (leftTeam.length > 1 ? leftTeam[1] : leftTeam[0]);
+          _leftTopOverride = currentBottom;
+          _leftBottomOverride = currentTop;
         }
       } else {
         _score2 += 1;
         final rightTeam = _splitTeam(g.player2);
         if (rightTeam.length > 1) {
-          // Keep base (top-right) and second (bottom-right) anchored
-          if (_rightBase.isEmpty || _rightSecond.isEmpty) {
-            _rightTopOverride = rightTeam.length > 1 ? rightTeam[1] : rightTeam[0];
-            _rightBottomOverride = rightTeam.length > 1 ? rightTeam[0] : '';
-            _rightBase = _rightTopOverride;
-            _rightSecond = _rightBottomOverride.isNotEmpty ? _rightBottomOverride : _rightTopOverride;
-          } else {
-            final temp = _rightTopOverride;
-            _rightTopOverride = _rightBottomOverride;
-            _rightBottomOverride = temp;
-          }
+          // Swap right team display positions when they score
+          final currentTop = _rightTopOverride.isNotEmpty
+              ? _rightTopOverride
+              : (rightTeam.length > 1 ? rightTeam[1] : rightTeam[0]);
+          final currentBottom = _rightBottomOverride.isNotEmpty
+              ? _rightBottomOverride
+              : (rightTeam.length > 1 ? rightTeam[0] : '');
+          _rightTopOverride = currentBottom.isNotEmpty ? currentBottom : currentTop;
+          _rightBottomOverride = currentTop;
         }
       }
       _serverTop = !_serverTop;

@@ -33,38 +33,11 @@ class AppState extends ChangeNotifier {
         e['matchKey'] == matchKey);
   }
 
-  // Local override to remember which court a match actually finished on
-  static const _storageCourtOverrideKey = 'referee_completion_court_overrides_v1';
-  Map<String, String> _completionCourtOverrides = {};
-  Future<void> _loadOverrides() async {
-    final prefs = await SharedPreferences.getInstance();
-    final jsonStr = prefs.getString(_storageCourtOverrideKey);
-    if (jsonStr != null && jsonStr.isNotEmpty) {
-      try {
-        final Map<String, dynamic> m = jsonDecode(jsonStr);
-        _completionCourtOverrides = m.map((k, v) => MapEntry(k, v.toString()));
-      } catch (_) {
-        _completionCourtOverrides = {};
-      }
-    }
-  }
-  Future<void> _saveOverrides() async {
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setString(_storageCourtOverrideKey, jsonEncode(_completionCourtOverrides));
-  }
-  void markMatchCompletionCourt(String matchId, String court) {
-    if (matchId.isEmpty || court.isEmpty) return;
-    _completionCourtOverrides[matchId] = court;
-    _saveOverrides();
-  }
-  String? overrideCourtFor(String matchId) => _completionCourtOverrides[matchId];
-
   Future<void> init() async {
     final prefs = await SharedPreferences.getInstance();
     final token = prefs.getString(_storageTokenKey);
     final userJson = prefs.getString(_storageUserKey);
     await _loadOutbox();
-    await _loadOverrides();
     if (token != null && userJson != null) {
       try {
         final data = jsonDecode(userJson) as Map<String, dynamic>;
@@ -196,12 +169,7 @@ class AppState extends ChangeNotifier {
       return s;
     }
     final target = norm(selectedCourt);
-    String effectiveCourt(TournamentMatch g) {
-      final o = overrideCourtFor(g.id);
-      if (o != null && o.isNotEmpty) return norm(o);
-      return norm(g.court);
-    }
-    final filtered = games.where((g) => effectiveCourt(g) == target).toList();
+    final filtered = games.where((g) => norm(g.court) == target).toList();
     final seen = <String>{};
     final unique = <TournamentMatch>[];
     for (final m in filtered) {
@@ -226,59 +194,6 @@ class AppState extends ChangeNotifier {
     selectedGame = g;
     selectedGameNumber = gameNo;
     notifyListeners();
-  }
-
-  void openNextScheduledForSelectedCourt() {
-    final court = selectedCourt;
-    if (court == null) return;
-    final courtMatches = matchesForSelectedCourt;
-    if (courtMatches.isEmpty) return;
-    // Build per-game schedule items similar to CourtGamesScreen
-    final items = <Map<String, dynamic>>[];
-    int gpmFor(TournamentMatch m) =>
-        selectedTournament?.categoryGamesPerMatch[m.categoryId] ?? 1;
-    for (final g in courtMatches) {
-      final gpm = gpmFor(g);
-      void addItem(int n, String? start, String? end) {
-        if (start != null && start.toString().trim().isNotEmpty) {
-          items.add({
-            'g': g,
-            'n': n,
-            'start': start.toString(),
-            'end': end?.toString() ?? '',
-          });
-        }
-      }
-      if (gpm >= 1) addItem(1, g.time, null);
-      if (gpm >= 2) addItem(2, g.mdTime2, g.mdEnd2);
-      if (gpm >= 3) addItem(3, g.mdTime3, g.mdEnd3);
-    }
-    if (items.isEmpty) return;
-    int timeKey(Map<String, dynamic> it) {
-      final raw = (it['start'] as String?)?.trim() ?? '';
-      if (raw.isEmpty) return 999999;
-      final t = raw.toUpperCase();
-      final ampm = RegExp(r'^(\d{1,2}):(\d{2})\s*(AM|PM)?$').firstMatch(t)
-          ?? RegExp(r'^(\d{1,2})(\d{2})\s*(AM|PM)?$').firstMatch(t);
-      if (ampm != null) {
-        int h = int.tryParse(ampm.group(1) ?? '0') ?? 0;
-        final m = int.tryParse(ampm.group(2) ?? '0') ?? 0;
-        final ap = ampm.group(3);
-        if (ap == 'PM' && h < 12) h += 12;
-        if (ap == 'AM' && h == 12) h = 0;
-        return h * 60 + m;
-      }
-      return 999998;
-    }
-    items.sort((a, b) => timeKey(a).compareTo(timeKey(b)));
-    // Prefer non-completed matches
-    Map<String, dynamic>? pick = items.firstWhere(
-      (it) => (it['g'] as TournamentMatch).status != 'Completed',
-      orElse: () => items.first,
-    );
-    final g = pick['g'] as TournamentMatch;
-    final n = pick['n'] as int;
-    openGameWithNumber(g, n);
   }
 
   Future<void> refreshSelectedTournament() async {

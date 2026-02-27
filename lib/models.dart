@@ -119,8 +119,6 @@ class TournamentMatch {
   final String? signatureData;
   final List<String?>? gameSignatures;
   final String? refereeNote;
-  // Status coming from Court Assignments cell, if any (e.g., 'Completed')
-  final String caStatus;
 
   TournamentMatch({
     required this.id,
@@ -154,7 +152,6 @@ class TournamentMatch {
     this.signatureData,
     this.gameSignatures,
     this.refereeNote,
-    this.caStatus = '',
   });
 
   factory TournamentMatch.fromJson(Map<String, dynamic> j) {
@@ -205,7 +202,6 @@ class TournamentMatch {
       signatureData: j['signatureData']?.toString(),
       gameSignatures: sigs,
       refereeNote: j['refereeNote']?.toString(),
-      caStatus: j['caStatus']?.toString() ?? '',
     );
   }
 }
@@ -276,7 +272,6 @@ class Tournament {
                   'court': 'Court ${c + 1}',
                   'time': time ?? '',
                   'date': dateOverride ?? ca['scheduleDate']?.toString() ?? '',
-                  'status': cell['status']?.toString() ?? '',
                 };
               }
             }
@@ -488,21 +483,6 @@ class Tournament {
                 groupMatches.forEach((k, v) {
                   if (v is Map<String, dynamic>) {
                     final groupId = g['id']?.toString() ?? '';
-                    // Clear any stale schedule only for not-completed items; completed should preserve their court/time
-                    bool _shouldClear(Map<String, dynamic> x) {
-                      final status = x['status']?.toString().toLowerCase() ?? '';
-                      final hasWinner = (x['winner']?.toString().trim().isNotEmpty ?? false);
-                      return status != 'completed' && !hasWinner;
-                    }
-                    if (_shouldClear(v)) {
-                      v['court'] = '';
-                      v['time'] = '';
-                      v['date'] = '';
-                      v['mdTime2'] = '';
-                      v['mdEnd2'] = '';
-                      v['mdTime3'] = '';
-                      v['mdEnd3'] = '';
-                    }
                     v['matchKey'] = k;
                     v['groupId'] = groupId;
                     final sId = 'rr-$catId-$groupId-$k';
@@ -511,7 +491,6 @@ class Tournament {
                       v['court'] = info['court'];
                       v['time'] = info['time'];
                       v['date'] = info['date'];
-                      v['caStatus'] = info['status'];
                     }
                     var originalPlayers = g['originalPlayers'] as List?;
                     if (originalPlayers == null || originalPlayers.isEmpty) {
@@ -556,28 +535,12 @@ class Tournament {
                      final mk = m['matchKey']?.toString();
                      if (mk != null) {
                         final groupId = g['id']?.toString() ?? '';
-                        // Clear any stale schedule only for not-completed items
-                        bool _shouldClear(Map<String, dynamic> x) {
-                          final status = x['status']?.toString().toLowerCase() ?? '';
-                          final hasWinner = (x['winner']?.toString().trim().isNotEmpty ?? false);
-                          return status != 'completed' && !hasWinner;
-                        }
-                        if (_shouldClear(m)) {
-                          m['court'] = '';
-                          m['time'] = '';
-                          m['date'] = '';
-                          m['mdTime2'] = '';
-                          m['mdEnd2'] = '';
-                          m['mdTime3'] = '';
-                          m['mdEnd3'] = '';
-                        }
                         final sId = 'rr-$catId-$groupId-$mk';
                         if (scheduleMap.containsKey(sId)) {
                           final info = scheduleMap[sId]!;
                           m['court'] = info['court'];
                           m['time'] = info['time'];
                           m['date'] = info['date'];
-                          m['caStatus'] = info['status'];
                         }
                         m['groupId'] = groupId;
                      }
@@ -600,21 +563,6 @@ class Tournament {
               if (m is Map<String, dynamic>) {
                 final mId = m['id']?.toString();
                 // Try multiple key forms used by web scheduler
-              // Clear any stale schedule only for not-completed items
-              bool _shouldClear(Map<String, dynamic> x) {
-                final status = x['status']?.toString().toLowerCase() ?? '';
-                final hasWinner = (x['winner']?.toString().trim().isNotEmpty ?? false);
-                return status != 'completed' && !hasWinner;
-              }
-              if (_shouldClear(m)) {
-                m['court'] = '';
-                m['time'] = '';
-                m['date'] = '';
-                m['mdTime2'] = '';
-                m['mdEnd2'] = '';
-                m['mdTime3'] = '';
-                m['mdEnd3'] = '';
-              }
                 final candidates = <String>[
                   if (mId != null && mId.isNotEmpty) 'elim-$catId-$mId',
                   if (mId != null && mId.isNotEmpty) 'elimgen-$catId-$mId',
@@ -627,7 +575,6 @@ class Tournament {
                     m['court'] = info['court'];
                     m['time'] = info['time'];
                     m['date'] = info['date'];
-                    m['caStatus'] = info['status'];
                     break;
                   }
                 }

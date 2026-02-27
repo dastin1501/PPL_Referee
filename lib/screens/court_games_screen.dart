@@ -151,35 +151,23 @@ Widget _buildGamesList(
       });
     }
 
-    bool added = false;
     if (gpm >= 1 && (g.time?.toString().trim().isNotEmpty ?? false)) {
       addItem(1, g.time?.toString(), null);
-      added = true;
     }
     if (gpm >= 2 && (g.mdTime2?.toString().trim().isNotEmpty ?? false)) {
       addItem(2, g.mdTime2?.toString(), g.mdEnd2?.toString());
-      added = true;
     }
     if (gpm >= 3 && (g.mdTime3?.toString().trim().isNotEmpty ?? false)) {
       addItem(3, g.mdTime3?.toString(), g.mdEnd3?.toString());
-      added = true;
-    }
-    // Ensure completed matches appear even if they lack schedule times
-    if (!added && (g.status == 'Completed')) {
-      addItem(1, '', '');
     }
   }
 
   // Filter by tab: scheduled vs completed
   if (showScheduled) {
     items.removeWhere((it) => !(it['scheduled'] as bool));
-    items.removeWhere((it) {
-      final g = it['g'];
-      final s = (g.status ?? '').toString().toLowerCase();
-      final cas = (g.caStatus ?? '').toString().toLowerCase();
-      return s == 'completed' || cas == 'completed';
-    });
+    items.removeWhere((it) => (it['g'].status == 'Completed'));
   } else {
+    items.removeWhere((it) => !(it['scheduled'] as bool));
     items.removeWhere((it) => (it['g'].status != 'Completed'));
   }
 
