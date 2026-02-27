@@ -647,7 +647,15 @@ class _RefereeDashboardScreenState extends State<RefereeDashboardScreen> {
                             sNum = _rightServeStage <= 1 ? 1 : 2;
                           }
                         }
-                        centerScore = '$leftScore - $rightScore - $sNum';
+                        if (_servingPlayer != null) {
+                          if (displayServerOnLeft) {
+                            centerScore = '$leftScore - $rightScore - $sNum';
+                          } else {
+                            centerScore = '$rightScore - $leftScore - $sNum';
+                          }
+                        } else {
+                          centerScore = '$leftScore - $rightScore';
+                        }
                       } else {
                         centerScore = '$leftScore - $rightScore';
                       }
