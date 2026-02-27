@@ -26,7 +26,7 @@ class RefereeApp extends StatelessWidget {
       child: Consumer<AppState>(
         builder: (context, app, _) {
           return MaterialApp(
-            title: 'Referee App',
+            title: 'PPL REFEREE',
             theme: ThemeData(
               colorScheme: ColorScheme.fromSeed(seedColor: Colors.blue),
               useMaterial3: true,
