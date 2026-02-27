@@ -612,12 +612,31 @@ class _RefereeDashboardScreenState extends State<RefereeDashboardScreen> {
                       final displayServerOnLeft = _endsSwitched ? serverOnRight : serverOnLeft;
                       final displayServerOnRight = _endsSwitched ? serverOnLeft : serverOnRight;
                       final serverRight = displayServerOnRight;
-                      final serviceTop = isSingles
-                          ? (_servingPlayer != null ? displayServerOnRight : true)
-                          : (_servingPlayer == null ? true : (_endsSwitched ? !_serverTop : _serverTop));
                       // Swap displayed left/right scores when ends are switched
                       final int leftScore = _endsSwitched ? _score2 : _score1;
                       final int rightScore = _endsSwitched ? _score1 : _score2;
+                      bool leftSinglesTop = false;
+                      bool rightSinglesTop = true;
+                      if (isSingles) {
+                        if (_servingPlayer != null) {
+                          final servingScore = displayServerOnLeft ? leftScore : rightScore;
+                          final isEven = (servingScore % 2 == 0);
+                          leftSinglesTop = !isEven;
+                          rightSinglesTop = isEven;
+                        } else {
+                          leftSinglesTop = false;
+                          rightSinglesTop = true;
+                        }
+                      }
+                      final serviceTop = isSingles
+                          ? (_servingPlayer != null
+                              ? (displayServerOnLeft ? leftSinglesTop : rightSinglesTop)
+                              : rightSinglesTop)
+                          : (_servingPlayer == null
+                              ? true
+                              : (displayServerOnLeft
+                                  ? (_servingPlayer == leftTop)
+                                  : (_servingPlayer == rightTop)));
                       String centerScore;
                       if (isDoubles) {
                         int sNum = 0;
@@ -724,7 +743,7 @@ class _RefereeDashboardScreenState extends State<RefereeDashboardScreen> {
                             ),
                             Align(
                             alignment: isSingles
-                                ? Alignment.bottomLeft
+                                ? (leftSinglesTop ? Alignment.topLeft : Alignment.bottomLeft)
                                 : Alignment.topLeft,
                               child: FractionallySizedBox(
                                 widthFactor: 0.5,
@@ -757,7 +776,7 @@ class _RefereeDashboardScreenState extends State<RefereeDashboardScreen> {
                               ),
                             Align(
                             alignment: isSingles
-                                ? Alignment.topRight
+                                ? (rightSinglesTop ? Alignment.topRight : Alignment.bottomRight)
                                 : Alignment.topRight,
                               child: FractionallySizedBox(
                                 widthFactor: 0.5,
