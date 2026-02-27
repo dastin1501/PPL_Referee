@@ -1,0 +1,292 @@
+PROBLEM:
+When the mobile app starts a game (sets status to "Ongoing") or completes a game,
+ALL other matches in the same group are losing their schedule information 
+(date, time, court) on the web interface. This is happening even though the 
+backend has been fixed to ignore schedule fields from mobile app.
+
+ROOT CAUSE:
+The mobile app is sending schedule fields (date, time, court, venue) in the 
+request payload, even when it should ONLY send status and scores. The backend 
+now IGNORES these fields, but we need to ensure the mobile app NEVER sends them.
+
+================================================================================
+WHAT THE MOBILE APP MUST DO:
+================================================================================
+
+✅ DO SEND (when starting a game):
+{
+  "tournamentId": "...",
+  "categoryId": "...",
+  "type": "group",
+  "groupId": "...",
+  "matchKey": "...",
+  "status": "Ongoing"
+}
+
+✅ DO SEND (when completing a game):
+{
+  "tournamentId": "...",
+  "categoryId": "...",
+  "type": "group",
+  "groupId": "...",
+  "matchKey": "...",
+  "status": "Completed",
+  "game1Player1": 8,
+  "game1Player2": 6,
+  "finalScorePlayer1": 8,
+  "finalScorePlayer2": 6,
+  "winner": "Player Name",
+  "signatureData": "...",
+  "gameSignatures": [...]
+}
+
+❌ DO NOT SEND (EVER):
+- date
+- time
+- court
+- venue
+- mdDate
+- mdTime
+- wdDate
+- wdTime
+- xdDate
+- xdTime
+
+================================================================================
+FLUTTER/DART CODE EXAMPLES:
+================================================================================
+
+✅ CORRECT - Starting a game:
+
+```dart
+Future<void> startGame(TournamentMatch match) async {
+  final payload = {
+    'tournamentId': match.tournamentId,
+    'categoryId': match.categoryId,
+    'type': 'group',
+    'groupId': match.groupId,
+    'matchKey': match.matchKey,
+    'status': 'Ongoing',
+    // DO NOT include date, time, court, or venue
+  };
+  
+  await apiService.updateGroupMatch(
+    tournamentId: match.tournamentId,
+    categoryId: match.categoryId,
+    groupId: match.groupId,
+    matchKey: match.matchKey,
+    fields: payload,
+  );
+}
+```
+
+✅ CORRECT - Completing a game:
+
+```dart
+Future<void> completeGame(TournamentMatch match, {
+  required int game1Player1,
+  required int game1Player2,
+  required String winner,
+  String? signatureData,
+}) async {
+  final payload = {
+    'tournamentId': match.tournamentId,
+    'categoryId': match.categoryId,
+    'type': 'group',
+    'groupId': match.groupId,
+    'matchKey': match.matchKey,
+    'status': 'Completed',
+    'game1Player1': game1Player1,
+    'game1Player2': game1Player2,
+    'finalScorePlayer1': game1Player1,
+    'finalScorePlayer2': game1Player2,
+    'winner': winner,
+    // DO NOT include date, time, court, or venue
+  };
+  
+  if (signatureData != null) {
+    payload['signatureData'] = signatureData;
+  }
+  
+  await apiService.updateGroupMatch(
+    tournamentId: match.tournamentId,
+    categoryId: match.categoryId,
+    groupId: match.groupId,
+    matchKey: match.matchKey,
+    fields: payload,
+  );
+}
+```
+
+❌ WRONG - Don't do this:
+
+```dart
+// DON'T DO THIS - Don't send the entire match object
+final payload = {
+  ...match.toJson(),  // ❌ BAD - includes all fields
+  'status': 'Ongoing',
+};
+
+// DON'T DO THIS - Don't send schedule fields even if they exist
+final payload = {
+  'status': 'Ongoing',
+  'date': match.date ?? '',      // ❌ BAD - empty string
+  'time': match.time ?? '',      // ❌ BAD - empty string
+  'court': match.court ?? '',    // ❌ BAD - empty string
+};
+
+// DON'T DO THIS - Don't send null values
+final payload = {
+  'status': 'Ongoing',
+  'date': match.date,    // ❌ BAD - might be null
+  'time': match.time,    // ❌ BAD - might be null
+  'court': match.court,  // ❌ BAD - might be null
+};
+```
+
+================================================================================
+CHECK YOUR API SERVICE:
+================================================================================
+
+In your `ApiService.updateGroupMatch` method, make sure you're NOT including 
+schedule fields:
+
+✅ CORRECT:
+
+```dart
+Future<void> updateGroupMatch({
+  required String tournamentId,
+  required String categoryId,
+  required String groupId,
+  required String matchKey,
+  required Map<String, dynamic> fields,
+}) async {
+  // Remove schedule fields if they exist
+  final safeFields = Map<String, dynamic>.from(fields)
+    ..removeWhere((key, value) {
+      // Remove schedule-related fields
+      if (['date', 'time', 'court', 'venue', 'mdDate', 'mdTime', 
+           'wdDate', 'wdTime', 'xdDate', 'xdTime'].contains(key)) {
+        return true; // Remove this field
+      }
+      // Remove null or empty string values
+      if (value == null || (value is String && value.trim().isEmpty)) {
+        return true; // Remove this field
+      }
+      return false; // Keep this field
+    });
+  
+  // Ensure id is included
+  if (!safeFields.containsKey('id') || safeFields['id'] == null) {
+    safeFields['id'] = fields['id'] ?? ''; // Use id from fields if available
+  }
+  
+  final response = await http.put(
+    Uri.parse('$baseUrl/api/tournaments/$tournamentId/categories/$categoryId/groups/$groupId/matches'),
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': 'Bearer $token',
+    },
+    body: jsonEncode({
+      'matches': {
+        matchKey: safeFields,
+      },
+    }),
+  );
+  
+  if (response.statusCode != 200) {
+    throw Exception('Failed to update match');
+  }
+}
+```
+
+================================================================================
+CHECK YOUR APP STATE:
+================================================================================
+
+In your `AppState.updateSelectedMatchFields` method, make sure you're NOT 
+including schedule fields:
+
+✅ CORRECT:
+
+```dart
+Future<void> updateSelectedMatchFields(Map<String, dynamic> fields) async {
+  if (selectedTournament == null || selectedGame == null) return;
+  
+  // Remove schedule fields before sending
+  final safeFields = Map<String, dynamic>.from(fields)
+    ..removeWhere((key, value) {
+      // Remove schedule-related fields
+      if (['date', 'time', 'court', 'venue', 'mdDate', 'mdTime', 
+           'wdDate', 'wdTime', 'xdDate', 'xdTime'].contains(key)) {
+        return true;
+      }
+      // Remove null or empty values
+      if (value == null || (value is String && value.trim().isEmpty)) {
+        return true;
+      }
+      return false;
+    });
+  
+  // Ensure id is included
+  if (!safeFields.containsKey('id') || safeFields['id'] == null) {
+    safeFields['id'] = selectedGame!.id;
+  }
+  
+  await _api.updateGroupMatch(
+    tournamentId: selectedTournament!.id,
+    categoryId: selectedGame!.categoryId,
+    groupId: selectedGame!.groupId,
+    matchKey: selectedGame!.matchKey,
+    fields: safeFields,
+  );
+}
+```
+
+================================================================================
+TESTING INSTRUCTIONS:
+================================================================================
+
+1. BEFORE TESTING:
+   - Schedule some matches on the web interface (set date, time, court)
+   - Verify they show as "Scheduled" with schedule info visible
+
+2. TEST STARTING A GAME:
+   - On mobile app, start a game (set status to "Ongoing")
+   - Check web interface - the started match should be "Ongoing"
+   - Check web interface - ALL OTHER matches should STILL have their schedule info
+   - If schedule info is missing, the mobile app is still sending schedule fields
+
+3. TEST COMPLETING A GAME:
+   - On mobile app, complete a game (set status to "Completed" with scores)
+   - Check web interface - the completed match should be "Completed"
+   - Check web interface - ALL OTHER matches should STILL have their schedule info
+   - If schedule info is missing, the mobile app is still sending schedule fields
+
+4. DEBUG:
+   - Check backend logs for: `WARNING: Mobile app sent schedule fields`
+   - If you see this warning, the mobile app is still sending schedule fields
+   - Fix the mobile app code to remove schedule fields before sending
+
+================================================================================
+SUMMARY - THE GOLDEN RULE:
+================================================================================
+
+✅ SEND: Only status, scores, winner, signatures
+❌ DON'T SEND: date, time, court, venue (EVER!)
+
+The backend will preserve existing schedule data if you don't send these fields.
+If you send them (even as empty strings or null), the backend will ignore them,
+but it's better to not send them at all to avoid confusion.
+
+================================================================================
+QUESTIONS TO CHECK:
+================================================================================
+
+1. In your `updateSelectedMatchFields` method, are you filtering out schedule fields?
+2. In your `ApiService.updateGroupMatch` method, are you removing schedule fields?
+3. Are you sending the entire match object instead of just the fields you're updating?
+4. Are you including `date`, `time`, `court`, or `venue` in the payload?
+
+If the answer to ANY of these is "no" or "I'm not sure", please fix the code
+to ensure schedule fields are NEVER sent to the backend.
