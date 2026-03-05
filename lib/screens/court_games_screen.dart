@@ -395,82 +395,86 @@ void _showCompletedSummaryDialog(BuildContext context, dynamic g) {
       bytes = base64Decode(cleaned);
     } catch (_) {}
   }
-  showDialog(
+  showModalBottomSheet(
     context: context,
-    barrierDismissible: true,
-    builder: (_) {
-      final maxH = MediaQuery.of(context).size.height * 0.7;
-      return AlertDialog(
-        backgroundColor: Colors.white,
-        surfaceTintColor: Colors.white,
-        elevation: 8,
-        title: const Text('Match Summary'),
-        content: ConstrainedBox(
-          constraints: BoxConstraints(maxWidth: 420, maxHeight: maxH),
-          child: SingleChildScrollView(
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text.rich(
-                  TextSpan(
-                    children: [
-                      TextSpan(text: g.player1),
-                      const TextSpan(text: '  vs  ', style: TextStyle(color: Colors.red)),
-                      TextSpan(text: g.player2),
-                    ],
+    isScrollControlled: true,
+    backgroundColor: Colors.white,
+    builder: (sheetContext) {
+      final maxH = MediaQuery.of(sheetContext).size.height * 0.85;
+      return SafeArea(
+        child: Padding(
+          padding: EdgeInsets.only(bottom: MediaQuery.of(sheetContext).viewInsets.bottom),
+          child: ConstrainedBox(
+            constraints: BoxConstraints(maxHeight: maxH),
+            child: SingleChildScrollView(
+              padding: const EdgeInsets.fromLTRB(16, 16, 16, 12),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text('Match Summary', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+                  const SizedBox(height: 10),
+                  Text.rich(
+                    TextSpan(
+                      children: [
+                        TextSpan(text: g.player1),
+                        const TextSpan(text: '  vs  ', style: TextStyle(color: Colors.red)),
+                        TextSpan(text: g.player2),
+                      ],
+                    ),
+                    style: const TextStyle(fontSize: 16, height: 1.25, color: Colors.black87, fontWeight: FontWeight.w600),
+                    softWrap: true,
                   ),
-                  style: const TextStyle(fontSize: 16, height: 1.25, color: Colors.black87, fontWeight: FontWeight.w600),
-                  softWrap: true,
-                ),
-                const SizedBox(height: 10),
-                Text('Final Score: $s1 - $s2', style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 15)),
-                if (winnerName.isNotEmpty) ...[
-                  const SizedBox(height: 6),
-                  Text('Winner: $winnerName', style: const TextStyle(fontSize: 14)),
-                ],
-                if ((g.refereeNote?.toString().trim().isNotEmpty ?? false)) ...[
+                  const SizedBox(height: 10),
+                  Text('Final Score: $s1 - $s2', style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 15)),
+                  if (winnerName.isNotEmpty) ...[
+                    const SizedBox(height: 6),
+                    Text('Winner: $winnerName', style: const TextStyle(fontSize: 14)),
+                  ],
+                  if ((g.refereeNote?.toString().trim().isNotEmpty ?? false)) ...[
+                    const SizedBox(height: 12),
+                    const Text('Referee Note', style: TextStyle(color: Colors.grey)),
+                    const SizedBox(height: 6),
+                    Container(
+                      width: double.infinity,
+                      padding: const EdgeInsets.all(10),
+                      decoration: BoxDecoration(
+                        border: Border.all(color: Colors.black12),
+                        borderRadius: BorderRadius.circular(6),
+                      ),
+                      child: Text(
+                        g.refereeNote.toString(),
+                        style: const TextStyle(fontSize: 14, height: 1.3),
+                      ),
+                    ),
+                  ],
                   const SizedBox(height: 12),
-                  const Text('Referee Note', style: TextStyle(color: Colors.grey)),
-                  const SizedBox(height: 6),
+                  const Text('Signature', style: TextStyle(color: Colors.grey)),
+                  const SizedBox(height: 8),
                   Container(
                     width: double.infinity,
-                    padding: const EdgeInsets.all(10),
+                    height: 220,
+                    alignment: Alignment.center,
                     decoration: BoxDecoration(
                       border: Border.all(color: Colors.black12),
                       borderRadius: BorderRadius.circular(6),
                     ),
-                    child: Text(
-                      g.refereeNote.toString(),
-                      style: const TextStyle(fontSize: 14, height: 1.3),
+                    child: bytes != null
+                        ? Image.memory(bytes, fit: BoxFit.contain, width: double.infinity, height: double.infinity)
+                        : const Text('No signature available'),
+                  ),
+                  const SizedBox(height: 16),
+                  Align(
+                    alignment: Alignment.centerRight,
+                    child: ElevatedButton(
+                      onPressed: () => Navigator.of(sheetContext).pop(),
+                      child: const Text('Close'),
                     ),
                   ),
                 ],
-                const SizedBox(height: 12),
-                const Text('Signature', style: TextStyle(color: Colors.grey)),
-                const SizedBox(height: 8),
-                Container(
-                  width: double.infinity,
-                  height: 220,
-                  alignment: Alignment.center,
-                  decoration: BoxDecoration(
-                    border: Border.all(color: Colors.black12),
-                    borderRadius: BorderRadius.circular(6),
-                  ),
-                  child: bytes != null
-                      ? Image.memory(bytes, fit: BoxFit.contain, width: double.infinity, height: double.infinity)
-                      : const Text('No signature available'),
-                ),
-              ],
+              ),
             ),
           ),
         ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(context).pop(),
-            child: const Text('Close'),
-          ),
-        ],
       );
     },
   );

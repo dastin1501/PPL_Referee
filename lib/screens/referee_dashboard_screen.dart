@@ -657,7 +657,11 @@ class _RefereeDashboardScreenState extends State<RefereeDashboardScreen> {
                           centerScore = '$leftScore - $rightScore';
                         }
                       } else {
-                        centerScore = '$leftScore - $rightScore';
+                        if (_servingPlayer != null) {
+                          centerScore = displayServerOnLeft ? '$leftScore - $rightScore' : '$rightScore - $leftScore';
+                        } else {
+                          centerScore = '$leftScore - $rightScore';
+                        }
                       }
                       final int leftAvail = (2 - (_timeouts1 + _medTimeouts1)).clamp(0, 2);
                       final int rightAvail = (2 - (_timeouts2 + _medTimeouts2)).clamp(0, 2);
