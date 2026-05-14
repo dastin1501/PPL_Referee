@@ -163,7 +163,13 @@ class TournamentMatch {
       return s;
     }
     final explicitStatus = j['status']?.toString();
-    final derivedStatus = j['winner'] != null ? 'Completed' : 'Scheduled';
+    final hasWinner = j['winner'] != null && j['winner'].toString().trim().isNotEmpty;
+    final hasSchedule = (j['time']?.toString().trim().isNotEmpty ?? false) &&
+        (j['court']?.toString().trim().isNotEmpty ?? false) &&
+        (j['date']?.toString().trim().isNotEmpty ?? false);
+    final derivedStatus = hasWinner
+        ? 'Completed'
+        : (hasSchedule ? 'Scheduled' : 'Unscheduled');
     final resolvedStatus = (explicitStatus != null && explicitStatus.isNotEmpty) ? explicitStatus : derivedStatus;
     List<String?>? sigs;
     final gs = j['gameSignatures'];
@@ -439,8 +445,11 @@ class Tournament {
                    
                    if (n1.isNotEmpty && n2.isNotEmpty) {
                      name = '$n1 / $n2';
-                   } else if (n1.isNotEmpty) name = n1;
-                   else if (n2.isNotEmpty) name = n2;
+                  } else if (n1.isNotEmpty) {
+                    name = n1;
+                  } else if (n2.isNotEmpty) {
+                    name = n2;
+                  }
                  } else {
                    name = n1;
                  }

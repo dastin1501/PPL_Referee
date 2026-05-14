@@ -1,7 +1,6 @@
 import 'dart:convert';
 import 'dart:typed_data';
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 import '../state/app_state.dart';
 
@@ -23,6 +22,8 @@ class CourtGamesScreen extends StatelessWidget {
         return a.toLowerCase().compareTo(b.toLowerCase());
       });
     final hasCourt = app.selectedCourt != null;
+    final dates = hasCourt ? app.availableDatesForSelectedCourt : <String>[];
+    final hasDate = app.selectedDate != null;
     final games = hasCourt ? app.matchesForSelectedCourt : [];
 
     return DefaultTabController(
@@ -62,7 +63,7 @@ class CourtGamesScreen extends StatelessWidget {
                 )
               else
                 DropdownButtonFormField<String>(
-                  value: courts.contains(app.selectedCourt) ? app.selectedCourt : null,
+                  initialValue: courts.contains(app.selectedCourt) ? app.selectedCourt : null,
                   items: courts
                       .map((c) => DropdownMenuItem<String>(
                             value: c,
@@ -97,11 +98,70 @@ class CourtGamesScreen extends StatelessWidget {
               Expanded(
                 child: TabBarView(
                   children: [
-                    _buildGamesList(context, app, games, hasCourt, showScheduled: true, emptyMessage: 'No scheduled matches for this court.'),
-                    _buildGamesList(context, app, games, hasCourt, showScheduled: false, emptyMessage: 'No completed matches for this court.'),
+                    _buildGamesList(
+                      context,
+                      app,
+                      games,
+                      hasCourt && hasDate,
+                      showScheduled: true,
+                      emptyMessage: 'No scheduled matches for this court/date.',
+                      noSelectionMessage: hasCourt
+                          ? 'Please select a date to view matches.'
+                          : 'Please select a court to view matches.',
+                    ),
+                    _buildGamesList(
+                      context,
+                      app,
+                      games,
+                      hasCourt && hasDate,
+                      showScheduled: false,
+                      emptyMessage: 'No completed matches for this court/date.',
+                      noSelectionMessage: hasCourt
+                          ? 'Please select a date to view matches.'
+                          : 'Please select a court to view matches.',
+                    ),
                   ],
                 ),
               ),
+              const SizedBox(height: 8),
+              if (hasCourt)
+                DropdownButtonFormField<String>(
+                  initialValue: dates.contains(app.selectedDate) ? app.selectedDate : null,
+                  items: dates
+                      .map((d) => DropdownMenuItem<String>(
+                            value: d,
+                            child: Text(d),
+                          ))
+                      .toList(),
+                  onChanged: (d) {
+                    if (d != null) {
+                      app.selectDate(d);
+                    }
+                  },
+                  decoration: InputDecoration(
+                    labelText: 'Select Date',
+                    border: OutlineInputBorder(borderRadius: BorderRadius.circular(14)),
+                    enabledBorder: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(14),
+                      borderSide: BorderSide(color: Colors.grey.shade300),
+                    ),
+                    focusedBorder: const OutlineInputBorder(
+                      borderRadius: BorderRadius.only(
+                        topLeft: Radius.circular(14),
+                        topRight: Radius.circular(14),
+                        bottomLeft: Radius.circular(14),
+                        bottomRight: Radius.circular(14),
+                      ),
+                      borderSide: BorderSide(color: Color(0xFF22C55E), width: 1.5),
+                    ),
+                    contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                  ),
+                ),
+              if (hasCourt && dates.isEmpty)
+                const Padding(
+                  padding: EdgeInsets.only(top: 8.0),
+                  child: Text('No schedule dates found for this court.'),
+                ),
             ],
           ),
         ),
@@ -117,9 +177,10 @@ Widget _buildGamesList(
   bool hasCourt, {
   required bool showScheduled,
   required String emptyMessage,
+  required String noSelectionMessage,
 }) {
   if (!hasCourt) {
-    return const Center(child: Text('Please select a court to view matches.'));
+    return Center(child: Text(noSelectionMessage));
   }
   if (games.isEmpty) {
     return Center(
@@ -207,8 +268,8 @@ Widget _buildGamesList(
     final na = a['n'] as int;
     final nb = b['n'] as int;
     if (na != nb) return na.compareTo(nb);
-    final la = (a['g'].matchLabel?.toString() ?? '') as String;
-    final lb = (b['g'].matchLabel?.toString() ?? '') as String;
+    final la = a['g'].matchLabel?.toString() ?? '';
+    final lb = b['g'].matchLabel?.toString() ?? '';
     return la.compareTo(lb);
   });
 
@@ -253,7 +314,7 @@ Widget _buildGamesList(
         final isMixed = catText.contains('mixed');
         final isWomen = catText.contains('women') || catText.contains('ladies') || catText.contains('female') || catText.contains('girls');
         final isMen = catText.contains('men') || catText.contains('male') || catText.contains('boys');
-        final Color mixedGreen = const Color.fromARGB(255, 26, 161, 123);
+        const Color mixedGreen = Color.fromARGB(255, 26, 161, 123);
         final Color accentColor = isWomen
             ? const Color(0xFFE91E63)
             : isMen
@@ -261,7 +322,7 @@ Widget _buildGamesList(
                 : isMixed
                     ? mixedGreen
                     : mixedGreen;
-        final Color bgColor = accentColor.withOpacity(0.15);
+        final Color bgColor = accentColor.withValues(alpha: 0.15);
         return InkWell(
           onTap: disabled
               ? null
@@ -282,7 +343,7 @@ Widget _buildGamesList(
             decoration: BoxDecoration(
               color: disabled ? const Color(0xFFF5F5F7) : Colors.white,
               borderRadius: BorderRadius.circular(16),
-              border: Border.all(color: disabled ? Colors.grey.shade300 : accentColor.withOpacity(0.35)),
+              border: Border.all(color: disabled ? Colors.grey.shade300 : accentColor.withValues(alpha: 0.35)),
             ),
             child: Row(
               children: [
@@ -380,7 +441,7 @@ Widget _buildGamesList(
 void _showCompletedSummaryDialog(BuildContext context, dynamic g) {
   final int s1 = g.score1;
   final int s2 = g.score2;
-  final String winnerName = (g.winner?.toString()?.isNotEmpty ?? false)
+  final String winnerName = (g.winner?.toString().isNotEmpty ?? false)
       ? g.winner.toString()
       : (s1 > s2 ? g.player1 : (s2 > s1 ? g.player2 : ''));
   String? sig = g.signatureData;

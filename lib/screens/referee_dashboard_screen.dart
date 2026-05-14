@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:typed_data';
 import 'dart:ui' as ui;
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter/rendering.dart';
@@ -503,6 +504,16 @@ class _RefereeDashboardScreenState extends State<RefereeDashboardScreen> {
           ),
         ),
         actions: [
+          if (app.ongoingSyncing)
+            const Padding(
+              padding: EdgeInsets.only(right: 8.0),
+              child: Center(
+                child: Text(
+                  'syncing...',
+                  style: TextStyle(color: Colors.white70, fontSize: 11),
+                ),
+              ),
+            ),
           if (_gameStarted && g != null)
             Padding(
               padding: const EdgeInsets.only(right: 8.0),
@@ -1615,6 +1626,7 @@ extension on _RefereeDashboardScreenState {
       }
       _serverTop = !_serverTop;
     });
+    _syncLiveScoreTick();
   }
 
   void _decrementPoint() {
@@ -1646,6 +1658,7 @@ extension on _RefereeDashboardScreenState {
       }
       _serverTop = !_serverTop;
     });
+    _syncLiveScoreTick();
   }
 
   void _sideOut() {
@@ -1693,6 +1706,30 @@ extension on _RefereeDashboardScreenState {
         }
       }
     });
+    _syncLiveScoreTick();
+  }
+
+  void _syncLiveScoreTick() {
+    final app = context.read<AppState>();
+    final g = app.selectedGame;
+    if (g == null) return;
+    final fields = <String, dynamic>{
+      'status': 'Ongoing',
+      'score1': _score1,
+      'score2': _score2,
+      'game${_currentGame}Player1': _score1,
+      'game${_currentGame}Player2': _score2,
+    };
+    if (kDebugMode) {
+      final matchRef = g.type == 'group'
+          ? 'groupId=${g.groupId}, matchKey=${g.matchKey}'
+          : 'matchId=${g.id}';
+      debugPrint(
+        '[score-sync][tap] $matchRef selectedGame=$_currentGame '
+        'score=$_score1-$_score2 action=score-interaction',
+      );
+    }
+    app.updateSelectedMatchFields(fields, debounceOngoing: true);
   }
 
   Future<void> _noShow(TournamentMatch g, String noShowPlayer, String winner) async {

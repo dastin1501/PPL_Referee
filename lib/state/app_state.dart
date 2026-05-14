@@ -1,6 +1,6 @@
 import 'dart:convert';
+import 'dart:async';
 import 'package:flutter/foundation.dart';
-import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../services/api_service.dart';
 import '../models.dart';
@@ -17,10 +17,15 @@ class AppState extends ChangeNotifier {
   List<TournamentMatch> games = [];
   Tournament? selectedTournament;
   String? selectedCourt;
+  String? selectedDate;
   TournamentMatch? selectedGame;
+  String? _scheduledQueueEtag;
   bool loading = false;
   String? error;
   bool initialized = false;
+  bool ongoingSyncing = false;
+  Timer? _ongoingSyncTimer;
+  Map<String, dynamic>? _pendingOngoingFields;
 
   // Offline outbox for match updates
   static const _storageOutboxKey = 'referee_outbox_v1';
@@ -102,14 +107,12 @@ class AppState extends ChangeNotifier {
         await loadTournaments();
         return true;
       } else {
-        final server = dotenv.env['API_BASE_URL'] ?? 'localhost';
-        error = 'User: ${result.user?.email}\nRoles: ${result.user?.roles}\nServer: $server\nError: Not authorized as referee.';
+        error = 'Invalid email or password';
         notifyListeners();
         return false;
       }
     } else {
-      final server = dotenv.env['API_BASE_URL'] ?? 'localhost';
-      error = '${result.error}\nServer: $server';
+      error = 'Invalid email or password';
       notifyListeners();
       return false;
     }
@@ -147,6 +150,7 @@ class AppState extends ChangeNotifier {
       games = fullTournament.matches;
       
       selectedCourt = null;
+      selectedDate = null;
     } catch (e) {
       error = 'Failed to load tournament details: $e';
     }
@@ -156,20 +160,47 @@ class AppState extends ChangeNotifier {
 
   Future<void> selectCourt(String c) async {
     selectedCourt = c;
+    _autoPickSelectedDate();
     notifyListeners();
     await refreshSelectedTournament();
+    await _refreshScheduledQueueForSelection();
+  }
+
+  Future<void> selectDate(String d) async {
+    selectedDate = d.trim().isEmpty ? null : d.trim();
+    notifyListeners();
+    await refreshSelectedTournament();
+    await _refreshScheduledQueueForSelection();
+  }
+
+  List<String> get availableDatesForSelectedCourt {
+    if (selectedCourt == null) return const [];
+    final targetCourt = _normalizeCourt(selectedCourt);
+    final dates = <String>{};
+    for (final g in games) {
+      if (_normalizeCourt(g.court) != targetCourt) continue;
+      final d = _normalizeDate(g.date);
+      if (d != null) dates.add(d);
+    }
+    final sorted = dates.toList()
+      ..sort((a, b) => _parseDateValue(a).compareTo(_parseDateValue(b)));
+    return sorted;
   }
   
   List<TournamentMatch> get matchesForSelectedCourt {
-    if (selectedCourt == null) return [];
-    String norm(String? s) {
-      if (s == null) return '';
-      final m = RegExp(r'^\s*(?:Court\s*)?(\d+)\s*$').firstMatch(s);
-      if (m != null) return 'Court ${m.group(1)}';
-      return s;
-    }
-    final target = norm(selectedCourt);
-    final filtered = games.where((g) => norm(g.court) == target).toList();
+    if (selectedCourt == null || selectedDate == null) return [];
+    final targetCourt = _normalizeCourt(selectedCourt);
+    final targetDate = _normalizeDate(selectedDate);
+    if (targetDate == null) return [];
+
+    final filtered = games.where((g) {
+      if (_normalizeCourt(g.court) != targetCourt) return false;
+      final gameDate = _normalizeDate(g.date);
+      if (gameDate == null || gameDate != targetDate) return false;
+      // Only show matches with valid schedule-to-court/date mapping.
+      if ((g.time).trim().isEmpty) return false;
+      return true;
+    }).toList();
     final seen = <String>{};
     final unique = <TournamentMatch>[];
     for (final m in filtered) {
@@ -179,7 +210,11 @@ class AppState extends ChangeNotifier {
       }
     }
     unique.sort((a, b) {
-      return '${a.date} ${a.time}'.compareTo('${b.date} ${b.time}');
+      final ta = _timeSortValue(a.time);
+      final tb = _timeSortValue(b.time);
+      if (ta != tb) return ta.compareTo(tb);
+      return '${a.matchLabel}-${a.matchKey}-${a.id}'
+          .compareTo('${b.matchLabel}-${b.matchKey}-${b.id}');
     });
     return unique;
   }
@@ -206,6 +241,12 @@ class AppState extends ChangeNotifier {
       selectedTournament = fullTournament;
       courts = fullTournament.courts;
       games = fullTournament.matches;
+      if (selectedCourt != null &&
+          !courts.any((c) => _normalizeCourt(c) == _normalizeCourt(selectedCourt))) {
+        selectedCourt = null;
+      }
+      _autoPickSelectedDate();
+      await _refreshScheduledQueueForSelection();
       // Try syncing queued updates after refresh
       await trySyncOutbox();
     } catch (e) {
@@ -215,77 +256,376 @@ class AppState extends ChangeNotifier {
     notifyListeners();
   }
 
-  Future<void> updateSelectedMatchFields(Map<String, dynamic> fields) async {
+  Future<void> updateSelectedMatchFields(
+    Map<String, dynamic> fields, {
+    bool debounceOngoing = false,
+  }) async {
     final t = selectedTournament;
     final g = selectedGame;
     if (t == null || g == null) return;
-    if (g.type == 'group' && g.groupId.isNotEmpty && g.matchKey.isNotEmpty) {
-      final scheduleKeys = <String>{
-        'date','time','court','venue','mdDate','mdTime','wdDate','wdTime','xdDate','xdTime'
-      };
-      final payload = Map<String, dynamic>.from(fields)
-        ..removeWhere((key, value) {
-          if (scheduleKeys.contains(key)) return true;
-          if (value == null) return true;
-          if (value is String && value.trim().isEmpty) return true;
-          return false;
-        });
-      if (!payload.containsKey('id') || payload['id'] == null || payload['id'].toString().isEmpty) {
-        payload['id'] = g.id;
-      }
-      try {
-        await _api.updateGroupMatch(
-          tournamentId: t.id,
-          categoryId: g.categoryId,
-          groupId: g.groupId,
-          matchKey: g.matchKey,
-          fields: payload,
-        );
-        final updated = TournamentMatch(
-          id: g.id,
-          player1: g.player1,
-          player2: g.player2,
-          score1: payload['score1'] is int ? payload['score1'] as int : g.score1,
-          score2: payload['score2'] is int ? payload['score2'] as int : g.score2,
-          round: g.round,
-          court: g.court,
-          date: g.date,
-          time: g.time,
-          venue: g.venue,
-          mdTime2: g.mdTime2,
-          mdEnd2: g.mdEnd2,
-          mdTime3: g.mdTime3,
-          mdEnd3: g.mdEnd3,
-          status: payload['status']?.toString() ?? g.status,
-          categoryId: g.categoryId,
-          matchKey: g.matchKey,
-          type: g.type,
-          seedLabel: g.seedLabel,
-          matchLabel: g.matchLabel,
-          groupId: g.groupId,
-          winner: payload['winner']?.toString() ?? g.winner,
-          signatureData: payload['signatureData']?.toString() ?? g.signatureData,
-          gameSignatures: (payload['gameSignatures'] is List)
-              ? (payload['gameSignatures'] as List).map((e) => e?.toString()).toList()
-              : g.gameSignatures,
-          refereeNote: payload['refereeNote']?.toString() ?? g.refereeNote,
-        );
-        games = games.map((m) => m.id == g.id ? updated : m).toList();
-        selectedGame = updated;
-        notifyListeners();
-      } catch (e) {
-        // Queue offline
-        await queueMatchUpdate(
-          tournamentId: t.id,
-          categoryId: g.categoryId,
-          groupId: g.groupId,
-          matchKey: g.matchKey,
-          fields: payload,
-        );
-        error = 'Saved offline; will sync when online.';
-        notifyListeners();
+    final payloadFields = _sanitizeMatchFields(fields);
+    if (!payloadFields.containsKey('id') ||
+        payloadFields['id'] == null ||
+        payloadFields['id'].toString().isEmpty) {
+      payloadFields['id'] = g.id;
+    }
+    final status = payloadFields['status']?.toString().trim();
+    if (status != null && status.isNotEmpty) {
+      final currentStatus = g.status.trim().isEmpty ? 'Scheduled' : g.status.trim();
+      if (status != currentStatus) {
+        final allowedNext = <String, Set<String>>{
+          'Scheduled': {'Called', 'Ongoing', 'Completed'},
+          'Called': {'Ongoing', 'Completed'},
+          'Ongoing': {'Completed'},
+          'Completed': <String>{},
+        };
+        final nextAllowed = allowedNext[currentStatus] ?? const <String>{};
+        if (!nextAllowed.contains(status)) {
+          error = 'Invalid status transition: $currentStatus -> $status.';
+          notifyListeners();
+          return;
+        }
       }
     }
+    if (!_hasStableIdentifiers(g)) {
+      error = 'Missing stable match identifier for score sync.';
+      notifyListeners();
+      return;
+    }
+    if (!_hasValidSelectedScheduleContext(g) && kDebugMode) {
+      debugPrint(
+        '[score-sync] proceeding with weak schedule context: '
+        'court=${g.court}, date=${g.date}, selectedCourt=$selectedCourt, selectedDate=$selectedDate',
+      );
+    }
+
+    // Optimistic local state first for responsive scoreboard.
+    final updated = _mergeMatchWithFields(g, payloadFields);
+    _replaceSelectedGame(updated, g);
+    notifyListeners();
+
+    if (status == 'Ongoing' && debounceOngoing) {
+      _pendingOngoingFields = payloadFields;
+      _ongoingSyncTimer?.cancel();
+      _ongoingSyncTimer = Timer(const Duration(milliseconds: 900), () async {
+        final pending = _pendingOngoingFields;
+        _pendingOngoingFields = null;
+        if (pending == null) return;
+        await _submitSelectedMatchPayload(
+          fields: pending,
+          retryOnce: true,
+          throwOnFailure: false,
+        );
+      });
+      return;
+    }
+
+    await _submitSelectedMatchPayload(
+      fields: payloadFields,
+      retryOnce: status == 'Ongoing',
+      throwOnFailure: status != 'Ongoing',
+    );
+  }
+
+  Map<String, dynamic> _sanitizeMatchFields(Map<String, dynamic> fields) {
+    final scheduleKeys = <String>{
+      'date',
+      'time',
+      'court',
+      'venue',
+      'mdDate',
+      'mdTime',
+      'wdDate',
+      'wdTime',
+      'xdDate',
+      'xdTime',
+    };
+    final payload = Map<String, dynamic>.from(fields)
+      ..removeWhere((key, value) {
+        if (scheduleKeys.contains(key)) return true;
+        if (value == null) return true;
+        if (value is String && value.trim().isEmpty) return true;
+        return false;
+      });
+    return payload;
+  }
+
+  bool _hasStableIdentifiers(TournamentMatch g) {
+    if (selectedTournament == null || g.categoryId.trim().isEmpty) return false;
+    if (g.type == 'group') {
+      return g.groupId.trim().isNotEmpty && g.matchKey.trim().isNotEmpty;
+    }
+    if (g.type == 'elimination') {
+      return g.id.trim().isNotEmpty;
+    }
+    return false;
+  }
+
+  TournamentMatch _mergeMatchWithFields(TournamentMatch g, Map<String, dynamic> payload) {
+    return TournamentMatch(
+      id: g.id,
+      player1: g.player1,
+      player2: g.player2,
+      score1: _fieldAsInt(payload, 'score1', g.score1) ?? g.score1,
+      score2: _fieldAsInt(payload, 'score2', g.score2) ?? g.score2,
+      game1Player1: _fieldAsInt(payload, 'game1Player1', g.game1Player1),
+      game1Player2: _fieldAsInt(payload, 'game1Player2', g.game1Player2),
+      game2Player1: _fieldAsInt(payload, 'game2Player1', g.game2Player1),
+      game2Player2: _fieldAsInt(payload, 'game2Player2', g.game2Player2),
+      game3Player1: _fieldAsInt(payload, 'game3Player1', g.game3Player1),
+      game3Player2: _fieldAsInt(payload, 'game3Player2', g.game3Player2),
+      round: g.round,
+      court: g.court,
+      date: g.date,
+      time: g.time,
+      venue: g.venue,
+      mdTime2: g.mdTime2,
+      mdEnd2: g.mdEnd2,
+      mdTime3: g.mdTime3,
+      mdEnd3: g.mdEnd3,
+      status: payload['status']?.toString() ?? g.status,
+      categoryId: g.categoryId,
+      matchKey: g.matchKey,
+      type: g.type,
+      seedLabel: g.seedLabel,
+      matchLabel: g.matchLabel,
+      groupId: g.groupId,
+      winner: payload['winner']?.toString() ?? g.winner,
+      signatureData: payload['signatureData']?.toString() ?? g.signatureData,
+      gameSignatures: (payload['gameSignatures'] is List)
+          ? (payload['gameSignatures'] as List).map((e) => e?.toString()).toList()
+          : g.gameSignatures,
+      refereeNote: payload['refereeNote']?.toString() ?? g.refereeNote,
+    );
+  }
+
+  void _replaceSelectedGame(TournamentMatch updated, TournamentMatch original) {
+    games = games.map((m) {
+      final sameId = original.id.isNotEmpty && m.id == original.id;
+      final sameComposite = m.categoryId == original.categoryId &&
+          m.groupId == original.groupId &&
+          m.matchKey == original.matchKey;
+      return (sameId || sameComposite) ? updated : m;
+    }).toList();
+    selectedGame = updated;
+  }
+
+  Future<void> _submitSelectedMatchPayload({
+    required Map<String, dynamic> fields,
+    required bool retryOnce,
+    required bool throwOnFailure,
+  }) async {
+    final t = selectedTournament;
+    final g = selectedGame;
+    if (t == null || g == null) return;
+
+    final selectedIndex = selectedGameNumber.clamp(1, 3);
+    final s1 = _fieldAsInt(fields, 'game${selectedIndex}Player1', _scoreForGame(g, selectedIndex, true)) ?? 0;
+    final s2 = _fieldAsInt(fields, 'game${selectedIndex}Player2', _scoreForGame(g, selectedIndex, false)) ?? 0;
+    final gamesArray = List.generate(3, (i) {
+      final idx = i + 1;
+      final a = _fieldAsInt(fields, 'game${idx}Player1', _scoreForGame(g, idx, true)) ?? 0;
+      final b = _fieldAsInt(fields, 'game${idx}Player2', _scoreForGame(g, idx, false)) ?? 0;
+      return {'a': a, 'b': b};
+    });
+
+    final payload = <String, dynamic>{
+      'tournamentId': t.id,
+      'categoryId': g.categoryId,
+      'type': g.type,
+      'selectedGame': selectedIndex,
+      'game': {'a': s1, 'b': s2},
+      'games': gamesArray,
+      ...fields,
+    };
+    if (g.type == 'group') {
+      payload['groupId'] = g.groupId;
+      payload['matchKey'] = g.matchKey;
+    } else {
+      payload['matchId'] = g.id;
+    }
+
+    final status = (payload['status']?.toString() ?? '').trim();
+    if (kDebugMode) {
+      final matchRef = g.type == 'group'
+          ? 'groupId=${g.groupId}, matchKey=${g.matchKey}'
+          : 'matchId=${g.id}';
+      debugPrint(
+        '[score-sync] OUT -> tournamentId=${t.id}, categoryId=${g.categoryId}, $matchRef, '
+        'selectedGame=$selectedIndex, status=$status, score=$s1-$s2, keys=${fields.keys.toList()}',
+      );
+    }
+
+    Future<void> attemptSubmit() async {
+      ongoingSyncing = status == 'Ongoing';
+      if (ongoingSyncing) notifyListeners();
+      try {
+        await _api.submitScore(payload);
+        if (kDebugMode) {
+          debugPrint('[score-sync] IN <- submit-score success status=$status');
+        }
+      } finally {
+        if (ongoingSyncing) {
+          ongoingSyncing = false;
+          notifyListeners();
+        }
+      }
+    }
+
+    try {
+      await attemptSubmit();
+    } catch (e) {
+      if (retryOnce) {
+        try {
+          await Future<void>.delayed(const Duration(milliseconds: 350));
+          await attemptSubmit();
+          return;
+        } catch (_) {}
+      }
+      if (throwOnFailure) {
+        rethrow;
+      }
+      if (kDebugMode) {
+        debugPrint('[score-sync] ongoing sync failed and skipped: $e');
+      }
+    }
+  }
+
+  int? _scoreForGame(TournamentMatch g, int gameIndex, bool teamA) {
+    switch (gameIndex) {
+      case 1:
+        return teamA ? g.game1Player1 : g.game1Player2;
+      case 2:
+        return teamA ? g.game2Player1 : g.game2Player2;
+      case 3:
+        return teamA ? g.game3Player1 : g.game3Player2;
+      default:
+        return 0;
+    }
+  }
+
+  bool _hasValidSelectedScheduleContext(TournamentMatch g) {
+    if (selectedCourt == null || selectedDate == null) return false;
+    final c = _normalizeCourt(g.court);
+    final d = _normalizeDate(g.date);
+    final sc = _normalizeCourt(selectedCourt);
+    final sd = _normalizeDate(selectedDate);
+    if (d == null || sd == null) return false;
+    if (g.time.trim().isEmpty) return false;
+    return c == sc && d == sd;
+  }
+
+  void _autoPickSelectedDate() {
+    final dates = availableDatesForSelectedCourt;
+    if (dates.isEmpty) {
+      selectedDate = null;
+      return;
+    }
+    final current = _normalizeDate(selectedDate);
+    if (current != null && dates.contains(current)) {
+      selectedDate = current;
+      return;
+    }
+    selectedDate = dates.first;
+  }
+
+  String _normalizeCourt(String? s) {
+    if (s == null) return '';
+    final m = RegExp(r'^\s*(?:Court\s*)?(\d+)\s*$', caseSensitive: false).firstMatch(s);
+    if (m != null) return 'Court ${m.group(1)}';
+    return s.trim();
+  }
+
+  String? _normalizeDate(String? input) {
+    if (input == null) return null;
+    final raw = input.trim();
+    if (raw.isEmpty) return null;
+    final dt = _parseDateValue(raw);
+    return _formatDateIso(dt);
+  }
+
+  DateTime _parseDateValue(String input) {
+    final parsed = DateTime.tryParse(input);
+    if (parsed != null) {
+      return DateTime(parsed.year, parsed.month, parsed.day);
+    }
+    final slash = RegExp(r'^(\d{1,2})/(\d{1,2})/(\d{2,4})$').firstMatch(input);
+    if (slash != null) {
+      var month = int.tryParse(slash.group(1) ?? '') ?? 1;
+      var day = int.tryParse(slash.group(2) ?? '') ?? 1;
+      var year = int.tryParse(slash.group(3) ?? '') ?? DateTime.now().year;
+      if (year < 100) year += 2000;
+      month = month.clamp(1, 12);
+      day = day.clamp(1, 31);
+      return DateTime(year, month, day);
+    }
+    return DateTime(1970, 1, 1);
+  }
+
+  String _formatDateIso(DateTime dt) {
+    final y = dt.year.toString().padLeft(4, '0');
+    final m = dt.month.toString().padLeft(2, '0');
+    final d = dt.day.toString().padLeft(2, '0');
+    return '$y-$m-$d';
+  }
+
+  int _timeSortValue(String raw) {
+    final text = raw.trim().toUpperCase();
+    if (text.isEmpty) return 999999;
+    final m = RegExp(r'^(\d{1,2}):(\d{2})\s*(AM|PM)?$').firstMatch(text) ??
+        RegExp(r'^(\d{1,2})(\d{2})\s*(AM|PM)?$').firstMatch(text);
+    if (m == null) return 999998;
+    var h = int.tryParse(m.group(1) ?? '') ?? 0;
+    final mins = int.tryParse(m.group(2) ?? '') ?? 0;
+    final ap = m.group(3);
+    if (ap == 'PM' && h < 12) h += 12;
+    if (ap == 'AM' && h == 12) h = 0;
+    return h * 60 + mins;
+  }
+
+  Future<void> _refreshScheduledQueueForSelection() async {
+    final t = selectedTournament;
+    if (t == null || selectedCourt == null || selectedDate == null) return;
+    try {
+      final response = await _api.getScheduledMatches(
+        tournamentId: t.id,
+        date: selectedDate!,
+        court: selectedCourt!,
+        page: 1,
+        limit: 100,
+        ifNoneMatch: _scheduledQueueEtag,
+      );
+      if (response.notModified) return;
+      _scheduledQueueEtag = response.etag ?? _scheduledQueueEtag;
+      final incoming = response.matches;
+      final incomingIds = incoming
+          .where((m) => m.id.isNotEmpty)
+          .map((m) => m.id)
+          .toSet();
+      final keep = games.where((m) {
+        // Keep non-scheduled or non-selected context matches from current cache.
+        final selectedCourtNorm = _normalizeCourt(selectedCourt);
+        final selectedDateNorm = _normalizeDate(selectedDate);
+        final sameCourt = _normalizeCourt(m.court) == selectedCourtNorm;
+        final sameDate = _normalizeDate(m.date) == selectedDateNorm;
+        if (sameCourt && sameDate && m.status == 'Scheduled') {
+          if (m.id.isNotEmpty) return !incomingIds.contains(m.id);
+        }
+        return true;
+      }).toList();
+      games = [...keep, ...incoming];
+      notifyListeners();
+    } catch (_) {
+      // Keep fallback behavior when endpoint is not available.
+    }
+  }
+
+  int? _fieldAsInt(Map<String, dynamic> source, String key, int? fallback) {
+    final v = source[key];
+    if (v is int) return v;
+    if (v is num) return v.toInt();
+    final parsed = int.tryParse(v?.toString() ?? '');
+    return parsed ?? fallback;
   }
 
   Future<void> queueMatchUpdate({
@@ -353,12 +693,14 @@ class AppState extends ChangeNotifier {
   }
 
   Future<void> logout() async {
+    _ongoingSyncTimer?.cancel();
     currentUser = null;
     tournaments = [];
     courts = [];
     games = [];
     selectedTournament = null;
     selectedCourt = null;
+    selectedDate = null;
     selectedGame = null;
     final prefs = await SharedPreferences.getInstance();
     await prefs.remove(_storageTokenKey);

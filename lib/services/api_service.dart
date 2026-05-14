@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'package:flutter/foundation.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'package:http/http.dart' as http;
 import '../models.dart';
@@ -9,6 +10,17 @@ class ApiResult {
   final User? user;
   final String? token;
   ApiResult({required this.ok, this.error, this.user, this.token});
+}
+
+class MatchQueueResult {
+  final bool notModified;
+  final String? etag;
+  final List<TournamentMatch> matches;
+  MatchQueueResult({
+    required this.notModified,
+    required this.matches,
+    this.etag,
+  });
 }
 
 class ApiService {
@@ -171,6 +183,90 @@ class ApiService {
       }
     } catch (e) {
       rethrow;
+    }
+  }
+
+  Future<MatchQueueResult> getScheduledMatches({
+    required String tournamentId,
+    required String date,
+    required String court,
+    int page = 1,
+    int limit = 50,
+    String? ifNoneMatch,
+  }) async {
+    final uri = Uri.parse('$baseUrl/api/tournaments/$tournamentId/referee/matches').replace(
+      queryParameters: {
+        'date': date,
+        'court': court,
+        'status': 'Scheduled',
+        'page': '$page',
+        'limit': '$limit',
+      },
+    );
+    final headers = Map<String, String>.from(_headers);
+    if (ifNoneMatch != null && ifNoneMatch.trim().isNotEmpty) {
+      headers['If-None-Match'] = ifNoneMatch.trim();
+    }
+    final res = await http.get(uri, headers: headers);
+    if (res.statusCode == 304) {
+      return MatchQueueResult(notModified: true, matches: const []);
+    }
+    if (res.statusCode != 200) {
+      throw Exception('Status ${res.statusCode}: ${res.body}');
+    }
+    final body = jsonDecode(res.body);
+    final raw = (body is Map<String, dynamic>) ? (body['matches'] ?? const []) : body;
+    final list = (raw as List).map((e) => TournamentMatch.fromJson(Map<String, dynamic>.from(e))).toList();
+    return MatchQueueResult(
+      notModified: false,
+      matches: list,
+      etag: res.headers['etag'],
+    );
+  }
+
+  Future<void> submitScore(Map<String, dynamic> payload) async {
+    final scheduleKeys = <String>{
+      'date',
+      'time',
+      'court',
+      'venue',
+      'mdDate',
+      'mdTime',
+      'wdDate',
+      'wdTime',
+      'xdDate',
+      'xdTime',
+    };
+    final safePayload = Map<String, dynamic>.from(payload)
+      ..removeWhere((key, value) {
+        if (scheduleKeys.contains(key)) return true;
+        if (value == null) return true;
+        if (value is String && value.trim().isEmpty) return true;
+        return false;
+      });
+    if (kDebugMode) {
+      final idSummary = safePayload['type'] == 'group'
+          ? 'groupId=${safePayload['groupId']}, matchKey=${safePayload['matchKey']}'
+          : 'matchId=${safePayload['matchId']}';
+      final game = safePayload['game'];
+      print(
+        '[score-sync][api] POST /api/referees/submit-score '
+        'tournamentId=${safePayload['tournamentId']} '
+        'categoryId=${safePayload['categoryId']} '
+        '$idSummary selectedGame=${safePayload['selectedGame']} '
+        'status=${safePayload['status']} game=$game',
+      );
+    }
+    final res = await http.post(
+      Uri.parse('$baseUrl/api/referees/submit-score'),
+      headers: _headers,
+      body: jsonEncode(safePayload),
+    );
+    if (kDebugMode) {
+      print('[score-sync][api] RESPONSE ${res.statusCode}: ${res.body}');
+    }
+    if (res.statusCode != 200 && res.statusCode != 201) {
+      throw Exception('Status ${res.statusCode}: ${res.body}');
     }
   }
 }

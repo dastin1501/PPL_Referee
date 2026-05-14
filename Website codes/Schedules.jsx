@@ -1658,6 +1658,7 @@ export default function Schedules() {
                   time: t,
                   court: String(cIdx + 1),
                   venue: String(venue.name || ""),
+                  status: "Scheduled",
                 };
                 scheduledNow.add(`${catId}|${gId}|${String(m.matchKey)}`);
               }
@@ -1681,7 +1682,7 @@ export default function Schedules() {
                   if (!scheduledNow.has(key)) {
                     out[catId] = out[catId] || {};
                     out[catId][gid] = out[catId][gid] || {};
-                    out[catId][gid][mk] = { date: "", time: "", court: "" };
+                    out[catId][gid][mk] = { date: "", time: "", court: "", status: "Unscheduled" };
                   }
                 }
               });
@@ -1782,7 +1783,14 @@ export default function Schedules() {
               const matches = { ...(g?.matches || {}) };
               Object.keys(gUpdates).forEach((mk) => {
                 const md = matches[mk] || {};
-                  matches[mk] = { ...md, date: gUpdates[mk].date, time: gUpdates[mk].time, court: gUpdates[mk].court, venue: gUpdates[mk].venue };
+                  matches[mk] = {
+                    ...md,
+                    date: gUpdates[mk].date,
+                    time: gUpdates[mk].time,
+                    court: gUpdates[mk].court,
+                    venue: gUpdates[mk].venue,
+                    status: gUpdates[mk].status || (gUpdates[mk].time ? "Scheduled" : "Unscheduled"),
+                  };
               });
               return { ...g, matches };
             });
