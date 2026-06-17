@@ -220,6 +220,7 @@ class Tournament {
   final List<String> courts;
   final Map<String, String> categoryNames;
   final Map<String, int> categoryGamesPerMatch;
+  final Map<String, String> categoryScoringTypes;
 
   Tournament({
     required this.id,
@@ -229,6 +230,7 @@ class Tournament {
     this.courts = const [],
     this.categoryNames = const {},
     this.categoryGamesPerMatch = const {},
+    this.categoryScoringTypes = const {},
   });
 
   factory Tournament.fromJson(Map<String, dynamic> j) {
@@ -236,6 +238,7 @@ class Tournament {
     final courts = <String>{};
     final categoryNames = <String, String>{};
     final categoryGPM = <String, int>{};
+    final categoryScoringTypes = <String, String>{};
     final idToDisplay = <String, String>{};
 
     // 0. Parse Court Assignments (Schedules.jsx source of truth)
@@ -479,6 +482,10 @@ class Tournament {
           categoryNames[catId] = catName;
           final gpm = int.tryParse(c['gamesPerMatch']?.toString() ?? '') ?? 1;
           categoryGPM[catId] = gpm.clamp(1, 3);
+          final scoringType = c['scoringType']?.toString().trim();
+          if (scoringType != null && scoringType.isNotEmpty) {
+            categoryScoringTypes[catId] = scoringType;
+          }
         }
 
         // Group Stage
@@ -620,6 +627,7 @@ class Tournament {
       courts: courts.toList()..sort(),
       categoryNames: categoryNames,
       categoryGamesPerMatch: categoryGPM,
+      categoryScoringTypes: categoryScoringTypes,
     );
   }
 }

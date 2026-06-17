@@ -55,6 +55,28 @@ class _RefereeDashboardScreenState extends State<RefereeDashboardScreen> {
     return '${m.toString().padLeft(2, '0')}:${ss.toString().padLeft(2, '0')}';
   }
 
+  String? _rawScoringTypeForSelectedGame() {
+    final app = context.read<AppState>();
+    final g = app.selectedGame;
+    if (g == null) return null;
+    return app.selectedTournament?.categoryScoringTypes[g.categoryId];
+  }
+
+  bool _isRallyScoringForSelectedGame() {
+    final raw = _rawScoringTypeForSelectedGame();
+    return raw != null && raw.toLowerCase().trim() == 'rally';
+  }
+
+  void _showRallyUnsupportedSnack() {
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text(
+          'Rally Scoring is not supported yet in PPL Referee App. Please switch this category to Side Out Scoring in Tournament Dashboard → Categories.',
+        ),
+      ),
+    );
+  }
+
   @override
   void initState() {
     super.initState();
@@ -100,6 +122,9 @@ class _RefereeDashboardScreenState extends State<RefereeDashboardScreen> {
       _score1 = s1;
       _score2 = s2;
     }
+    if (_isRallyScoringForSelectedGame()) {
+      return;
+    }
     if (g != null && _score1 == 0 && _score2 == 0 && _servingPlayer == null && !_gameStarted) {
       _showCoinTossDialog(g);
     }
@@ -129,6 +154,10 @@ class _RefereeDashboardScreenState extends State<RefereeDashboardScreen> {
   }
 
   void _startGame() async {
+    if (_isRallyScoringForSelectedGame()) {
+      _showRallyUnsupportedSnack();
+      return;
+    }
     if (_servingPlayer == null) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Please select a server first (Coin Toss or tap player)')),
@@ -379,11 +408,13 @@ class _RefereeDashboardScreenState extends State<RefereeDashboardScreen> {
 
   Widget _playerCell(String name, {Color color = const Color(0xFF0D9488), bool isServing = false, bool isBase = false}) {
     return InkWell(
-      onTap: !_gameStarted ? () {
-        setState(() {
-          _servingPlayer = name;
-        });
-      } : null,
+      onTap: (!_gameStarted && !_isRallyScoringForSelectedGame())
+          ? () {
+              setState(() {
+                _servingPlayer = name;
+              });
+            }
+          : null,
       child: Padding(
         padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
         child: Row(
@@ -430,6 +461,13 @@ class _RefereeDashboardScreenState extends State<RefereeDashboardScreen> {
     final app = context.watch<AppState>();
     final TournamentMatch? g = app.selectedGame;
     String timerText = '${_elapsed.inMinutes.remainder(60).toString().padLeft(2, '0')}:${_elapsed.inSeconds.remainder(60).toString().padLeft(2, '0')}';
+    final rawScoringType = g == null ? null : app.selectedTournament?.categoryScoringTypes[g.categoryId];
+    final normalizedScoringType = rawScoringType?.toLowerCase().trim();
+    final bool isRallyScoring = normalizedScoringType == 'rally';
+    final bool isExplicitSideOut = normalizedScoringType == 'sideout';
+    final String scoringTypeLabel = isRallyScoring
+        ? 'Scoring Type: Rally Scoring'
+        : (isExplicitSideOut ? 'Scoring Type: Side Out Scoring' : 'Scoring Type: Side Out Scoring (default)');
 
     // Category-based theming
     Color primaryColor = const Color(0xFF0F766E);
@@ -465,11 +503,11 @@ class _RefereeDashboardScreenState extends State<RefereeDashboardScreen> {
         : (courtRaw.isEmpty ? '' : 'Court $courtRaw');
 
     return WillPopScope(
-      onWillPop: () async => !_gameStarted,
+      onWillPop: () async => isRallyScoring ? true : !_gameStarted,
       child: Scaffold(
           appBar: AppBar(
         backgroundColor: const Color.fromARGB(255, 26, 161, 123),
-        automaticallyImplyLeading: !_gameStarted,
+        automaticallyImplyLeading: isRallyScoring ? true : !_gameStarted,
         title: Row(
           mainAxisSize: MainAxisSize.min,
           children: [
@@ -518,7 +556,7 @@ class _RefereeDashboardScreenState extends State<RefereeDashboardScreen> {
             Padding(
               padding: const EdgeInsets.only(right: 8.0),
               child: TextButton.icon(
-                onPressed: () => _showSubmitDialog(g),
+                onPressed: isRallyScoring ? null : () => _showSubmitDialog(g),
                 icon: const Icon(Icons.flag, color: Colors.white),
                 label: const Text('SUBMIT', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
                 style: TextButton.styleFrom(
@@ -527,11 +565,12 @@ class _RefereeDashboardScreenState extends State<RefereeDashboardScreen> {
               ),
             ),
           IconButton(
-            onPressed: _undoLast,
+            onPressed: isRallyScoring ? null : _undoLast,
             icon: const Icon(Icons.replay),
             tooltip: 'Redo',
           ),
           PopupMenuButton<String>(
+            enabled: !isRallyScoring,
             onSelected: (v) async {
               if (g == null) return;
               if (v == 'coin') {
@@ -552,6 +591,49 @@ class _RefereeDashboardScreenState extends State<RefereeDashboardScreen> {
           ? const Center(child: Text('No game selected'))
           : Column(
               children: [
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(12, 10, 12, 4),
+                  child: Align(
+                    alignment: Alignment.centerLeft,
+                    child: Text(
+                      scoringTypeLabel,
+                      style: TextStyle(
+                        color: isRallyScoring ? Colors.red.shade700 : Colors.black87,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                  ),
+                ),
+                if (isRallyScoring)
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(12, 0, 12, 8),
+                    child: Container(
+                      width: double.infinity,
+                      padding: const EdgeInsets.all(12),
+                      decoration: BoxDecoration(
+                        color: Colors.red.shade50,
+                        border: Border.all(color: Colors.red.shade200),
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            'Rally Scoring is not supported yet in PPL Referee App. Please switch this category to Side Out Scoring in Tournament Dashboard → Categories.',
+                            style: TextStyle(color: Colors.red.shade800, fontWeight: FontWeight.w600),
+                          ),
+                          const SizedBox(height: 10),
+                          SizedBox(
+                            width: double.infinity,
+                            child: ElevatedButton(
+                              onPressed: () => Navigator.of(context).maybePop(),
+                              child: const Text('Go back'),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
                 Padding(
                   padding: const EdgeInsets.fromLTRB(12, 8, 12, 6),
                   child: Stack(
@@ -848,19 +930,23 @@ class _RefereeDashboardScreenState extends State<RefereeDashboardScreen> {
                                                 children: [
                                                   Expanded(
                                                     child: InkWell(
-                                                      onTap: () => setState(() {
-                                                        _servingPlayer = leftTop;
-                                                        _applyDoublesInitialServerLayout(g);
-                                                      }),
+                                                      onTap: isRallyScoring
+                                                          ? null
+                                                          : () => setState(() {
+                                                                _servingPlayer = leftTop;
+                                                                _applyDoublesInitialServerLayout(g);
+                                                              }),
                                                       splashColor: Colors.white10,
                                                     ),
                                                   ),
                                                   Expanded(
                                                     child: InkWell(
-                                                      onTap: () => setState(() {
-                                                        _servingPlayer = leftBottom.isNotEmpty ? leftBottom : leftTop;
-                                                        _applyDoublesInitialServerLayout(g);
-                                                      }),
+                                                      onTap: isRallyScoring
+                                                          ? null
+                                                          : () => setState(() {
+                                                                _servingPlayer = leftBottom.isNotEmpty ? leftBottom : leftTop;
+                                                                _applyDoublesInitialServerLayout(g);
+                                                              }),
                                                       splashColor: Colors.white10,
                                                     ),
                                                   ),
@@ -872,19 +958,23 @@ class _RefereeDashboardScreenState extends State<RefereeDashboardScreen> {
                                                 children: [
                                                   Expanded(
                                                     child: InkWell(
-                                                      onTap: () => setState(() {
-                                                        _servingPlayer = rightTop;
-                                                        _applyDoublesInitialServerLayout(g);
-                                                      }),
+                                                      onTap: isRallyScoring
+                                                          ? null
+                                                          : () => setState(() {
+                                                                _servingPlayer = rightTop;
+                                                                _applyDoublesInitialServerLayout(g);
+                                                              }),
                                                       splashColor: Colors.white10,
                                                     ),
                                                   ),
                                                   Expanded(
                                                     child: InkWell(
-                                                      onTap: () => setState(() {
-                                                        _servingPlayer = rightBottom.isNotEmpty ? rightBottom : rightTop;
-                                                        _applyDoublesInitialServerLayout(g);
-                                                      }),
+                                                      onTap: isRallyScoring
+                                                          ? null
+                                                          : () => setState(() {
+                                                                _servingPlayer = rightBottom.isNotEmpty ? rightBottom : rightTop;
+                                                                _applyDoublesInitialServerLayout(g);
+                                                              }),
                                                       splashColor: Colors.white10,
                                                     ),
                                                   ),
@@ -897,19 +987,23 @@ class _RefereeDashboardScreenState extends State<RefereeDashboardScreen> {
                                           children: [
                                             Expanded(
                                               child: InkWell(
-                                                onTap: () => setState(() {
-                                                  _servingPlayer = leftTop;
-                                                  _serverTop = false;
-                                                }),
+                                                onTap: isRallyScoring
+                                                    ? null
+                                                    : () => setState(() {
+                                                          _servingPlayer = leftTop;
+                                                          _serverTop = false;
+                                                        }),
                                                 splashColor: Colors.white10,
                                               ),
                                             ),
                                             Expanded(
                                               child: InkWell(
-                                                onTap: () => setState(() {
-                                                  _servingPlayer = rightTop;
-                                                  _serverTop = true;
-                                                }),
+                                                onTap: isRallyScoring
+                                                    ? null
+                                                    : () => setState(() {
+                                                          _servingPlayer = rightTop;
+                                                          _serverTop = true;
+                                                        }),
                                                 splashColor: Colors.white10,
                                               ),
                                             ),
@@ -942,7 +1036,7 @@ class _RefereeDashboardScreenState extends State<RefereeDashboardScreen> {
                             children: [
                               IconButton(
                                 tooltip: 'Swap left receiver',
-                                onPressed: displayLeftServing ? null : leftHandler,
+                                onPressed: (isRallyScoring || displayLeftServing) ? null : leftHandler,
                                 icon: const Icon(Icons.swap_vert),
                               ),
                               const SizedBox(width: 8),
@@ -950,8 +1044,8 @@ class _RefereeDashboardScreenState extends State<RefereeDashboardScreen> {
                           );
                         }),
                       ],
-                      IconButton(onPressed: _onTimeout, icon: const Icon(Icons.timer)),
-                      IconButton(onPressed: _onMedicalTimeout, icon: const Icon(Icons.healing)),
+                      IconButton(onPressed: isRallyScoring ? null : _onTimeout, icon: const Icon(Icons.timer)),
+                      IconButton(onPressed: isRallyScoring ? null : _onMedicalTimeout, icon: const Icon(Icons.healing)),
                       const Spacer(),
                       if (!_gameStarted && g != null) ...[
                         Builder(builder: (_) {
@@ -967,7 +1061,7 @@ class _RefereeDashboardScreenState extends State<RefereeDashboardScreen> {
                             children: [
                               IconButton(
                                 tooltip: 'Swap right receiver',
-                                onPressed: displayRightServing ? null : rightHandler,
+                                onPressed: (isRallyScoring || displayRightServing) ? null : rightHandler,
                                 icon: const Icon(Icons.swap_vert),
                               ),
                             ],
@@ -987,7 +1081,7 @@ class _RefereeDashboardScreenState extends State<RefereeDashboardScreen> {
                           child: SizedBox(
                             height: 44,
                             child: ElevatedButton.icon(
-                              onPressed: _servingPlayer != null ? _startGame : null,
+                              onPressed: (!isRallyScoring && _servingPlayer != null) ? _startGame : null,
                               style: ElevatedButton.styleFrom(
                                 backgroundColor: const Color.fromARGB(255, 26, 161, 123),
                                 disabledBackgroundColor: Colors.grey[700],
@@ -1012,7 +1106,7 @@ class _RefereeDashboardScreenState extends State<RefereeDashboardScreen> {
                           width: 120,
                           height: 56,
                           child: ElevatedButton(
-                            onPressed: _decrementPoint,
+                            onPressed: isRallyScoring ? null : _decrementPoint,
                             style: ElevatedButton.styleFrom(backgroundColor: const Color.fromARGB(255, 26, 161, 123), foregroundColor: Colors.white),
                             child: const Text('-', style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold)),
                           ),
@@ -1021,7 +1115,7 @@ class _RefereeDashboardScreenState extends State<RefereeDashboardScreen> {
                           width: 200,
                           height: 56,
                           child: ElevatedButton(
-                            onPressed: _sideOut,
+                            onPressed: isRallyScoring ? null : _sideOut,
                             style: ElevatedButton.styleFrom(backgroundColor: const Color.fromARGB(255, 26, 161, 123), foregroundColor: Colors.white),
                             child: Builder(builder: (_) {
                               final app = context.read<AppState>();
@@ -1058,7 +1152,7 @@ class _RefereeDashboardScreenState extends State<RefereeDashboardScreen> {
                           width: 120,
                           height: 56,
                           child: ElevatedButton(
-                            onPressed: _incrementPoint,
+                            onPressed: isRallyScoring ? null : _incrementPoint,
                             style: ElevatedButton.styleFrom(backgroundColor: const Color.fromARGB(255, 26, 161, 123), foregroundColor: Colors.white),
                             child: const Text('+', style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold)),
                           ),
@@ -1073,6 +1167,10 @@ class _RefereeDashboardScreenState extends State<RefereeDashboardScreen> {
   }
 
   void _showSubmitDialog(TournamentMatch g) {
+    if (_isRallyScoringForSelectedGame()) {
+      _showRallyUnsupportedSnack();
+      return;
+    }
     final app = context.read<AppState>();
     final category = app.selectedTournament?.categoryNames[g.categoryId] ?? '';
     final winnerName = _score1 > _score2
@@ -1304,6 +1402,10 @@ class _RefereeDashboardScreenState extends State<RefereeDashboardScreen> {
   }
 
   Future<bool> _finishSubmit(TournamentMatch g, Uint8List? signatureBytes, {bool includeNote = true}) async {
+    if (_isRallyScoringForSelectedGame()) {
+      _showRallyUnsupportedSnack();
+      return false;
+    }
     final app = context.read<AppState>();
     final winnerName = _score1 > _score2
         ? g.player1
@@ -1575,6 +1677,10 @@ extension on _RefereeDashboardScreenState {
   }
 
   void _undoLast() {
+    if (_isRallyScoringForSelectedGame()) {
+      _showRallyUnsupportedSnack();
+      return;
+    }
     if (_history.isEmpty) return;
     final last = _history.removeLast();
     setState(() {
@@ -1592,6 +1698,10 @@ extension on _RefereeDashboardScreenState {
   }
 
   void _incrementPoint() {
+    if (_isRallyScoringForSelectedGame()) {
+      _showRallyUnsupportedSnack();
+      return;
+    }
     final app = context.read<AppState>();
     final g = app.selectedGame;
     if (!_gameStarted || g == null || _servingPlayer == null) return;
@@ -1630,6 +1740,10 @@ extension on _RefereeDashboardScreenState {
   }
 
   void _decrementPoint() {
+    if (_isRallyScoringForSelectedGame()) {
+      _showRallyUnsupportedSnack();
+      return;
+    }
     final app = context.read<AppState>();
     final g = app.selectedGame;
     if (!_gameStarted || g == null || _servingPlayer == null) return;
@@ -1662,6 +1776,10 @@ extension on _RefereeDashboardScreenState {
   }
 
   void _sideOut() {
+    if (_isRallyScoringForSelectedGame()) {
+      _showRallyUnsupportedSnack();
+      return;
+    }
     final app = context.read<AppState>();
     final g = app.selectedGame;
     if (!_gameStarted || g == null || _servingPlayer == null) return;
