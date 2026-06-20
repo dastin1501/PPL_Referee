@@ -2,10 +2,41 @@ import 'dart:convert';
 import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+import '../models.dart';
 import '../state/app_state.dart';
 
-class CourtGamesScreen extends StatelessWidget {
+class CourtGamesScreen extends StatefulWidget {
   const CourtGamesScreen({super.key});
+
+  @override
+  State<CourtGamesScreen> createState() => _CourtGamesScreenState();
+}
+
+class _CourtGamesScreenState extends State<CourtGamesScreen>
+    with SingleTickerProviderStateMixin {
+  late final TabController _tabController;
+
+  @override
+  void initState() {
+    super.initState();
+    _tabController = TabController(length: 2, vsync: this);
+  }
+
+  void _openDashboardForGame(TournamentMatch g, int gameNo) {
+    context.read<AppState>().openGameWithNumber(g, gameNo);
+    Navigator.of(context).pushNamed('/dashboard').then((result) {
+      if (!mounted) return;
+      if (result == 'completed') {
+        _tabController.animateTo(1);
+      }
+    });
+  }
+
+  @override
+  void dispose() {
+    _tabController.dispose();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -24,11 +55,10 @@ class CourtGamesScreen extends StatelessWidget {
     final hasCourt = app.selectedCourt != null;
     final dates = hasCourt ? app.availableDatesForSelectedCourt : <String>[];
     final hasDate = app.selectedDate != null;
-    final games = hasCourt ? app.matchesForSelectedCourt : [];
+    final List<TournamentMatch> games =
+        hasCourt ? app.matchesForSelectedCourt : <TournamentMatch>[];
 
-    return DefaultTabController(
-      length: 2,
-      child: Scaffold(
+    return Scaffold(
         appBar: AppBar(
           title: Text(app.selectedTournament?.name ?? 'Tournament'),
           backgroundColor: Colors.white,
@@ -42,11 +72,12 @@ class CourtGamesScreen extends StatelessWidget {
                 label: Text('Sync ${app.pendingSyncCount}', style: const TextStyle(color: Color(0xFF22C55E))),
               ),
           ],
-          bottom: const TabBar(
+          bottom: TabBar(
+            controller: _tabController,
             indicatorColor: Color(0xFF22C55E),
             labelColor: Color(0xFF22C55E),
             unselectedLabelColor: Colors.grey,
-            tabs: [
+            tabs: const [
               Tab(text: 'Scheduled'),
               Tab(text: 'Completed'),
             ],
@@ -97,12 +128,14 @@ class CourtGamesScreen extends StatelessWidget {
               const SizedBox(height: 12),
               Expanded(
                 child: TabBarView(
+                  controller: _tabController,
                   children: [
                     _buildGamesList(
                       context,
                       app,
                       games,
                       hasCourt && hasDate,
+                      onOpenGame: _openDashboardForGame,
                       showScheduled: true,
                       emptyMessage: 'No scheduled matches for this court/date.',
                       noSelectionMessage: hasCourt
@@ -114,6 +147,7 @@ class CourtGamesScreen extends StatelessWidget {
                       app,
                       games,
                       hasCourt && hasDate,
+                      onOpenGame: _openDashboardForGame,
                       showScheduled: false,
                       emptyMessage: 'No completed matches for this court/date.',
                       noSelectionMessage: hasCourt
@@ -165,7 +199,6 @@ class CourtGamesScreen extends StatelessWidget {
             ],
           ),
         ),
-      ),
     );
   }
 }
@@ -173,8 +206,9 @@ class CourtGamesScreen extends StatelessWidget {
 Widget _buildGamesList(
   BuildContext context,
   AppState app,
-  List games,
+  List<TournamentMatch> games,
   bool hasCourt, {
+  required void Function(TournamentMatch g, int gameNo) onOpenGame,
   required bool showScheduled,
   required String emptyMessage,
   required String noSelectionMessage,
@@ -198,7 +232,7 @@ Widget _buildGamesList(
   final items = <Map<String, dynamic>>[];
   for (final g in games) {
     final int gpm = app.selectedTournament?.categoryGamesPerMatch[g.categoryId] ?? 1;
-    String label = g.matchLabel?.toString() ?? '';
+    String label = g.matchLabel.toString() ?? '';
     if (label.isEmpty) label = 'GA';
 
     void addItem(int n, String? start, String? end) {
@@ -212,8 +246,8 @@ Widget _buildGamesList(
       });
     }
 
-    if (gpm >= 1 && (g.time?.toString().trim().isNotEmpty ?? false)) {
-      addItem(1, g.time?.toString(), null);
+    if (gpm >= 1 && (g.time.toString().trim().isNotEmpty ?? false)) {
+      addItem(1, g.time.toString(), null);
     }
     if (gpm >= 2 && (g.mdTime2?.toString().trim().isNotEmpty ?? false)) {
       addItem(2, g.mdTime2?.toString(), g.mdEnd2?.toString());
@@ -323,6 +357,10 @@ Widget _buildGamesList(
                     ? mixedGreen
                     : mixedGreen;
         final Color bgColor = accentColor.withValues(alpha: 0.15);
+        final bool isRallyScoring = g.isRallyScoring;
+        final Color scoringBg = isRallyScoring ? const Color(0xFFFFF1F2) : const Color(0xFFF0FDF4);
+        final Color scoringBorder = isRallyScoring ? const Color(0xFFFB7185) : const Color(0xFF22C55E);
+        final String scoringLabel = isRallyScoring ? 'Rally' : 'Side-Out';
         return InkWell(
           onTap: disabled
               ? null
@@ -330,8 +368,7 @@ Widget _buildGamesList(
                   if (!showScheduled) {
                     _showCompletedSummaryDialog(context, g);
                   } else {
-                    app.openGameWithNumber(g, n);
-                    Navigator.of(context).pushNamed('/dashboard');
+                    onOpenGame(g, n);
                   }
                 },
           borderRadius: BorderRadius.circular(16),
@@ -360,14 +397,33 @@ Widget _buildGamesList(
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      if (displayCategory.isNotEmpty)
-                        Container(
-                          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-                          decoration: BoxDecoration(
-                            border: Border.all(color: accentColor),
-                            borderRadius: BorderRadius.circular(8),
-                          ),
-                          child: Text(displayCategory, style: TextStyle(fontSize: 12, color: accentColor)),
+                      if (displayCategory.isNotEmpty || scoringLabel.isNotEmpty)
+                        Wrap(
+                          spacing: 6,
+                          runSpacing: 6,
+                          children: [
+                            if (displayCategory.isNotEmpty)
+                              Container(
+                                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                                decoration: BoxDecoration(
+                                  border: Border.all(color: accentColor),
+                                  borderRadius: BorderRadius.circular(8),
+                                ),
+                                child: Text(displayCategory, style: TextStyle(fontSize: 12, color: accentColor)),
+                              ),
+                            Container(
+                              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                              decoration: BoxDecoration(
+                                color: scoringBg,
+                                border: Border.all(color: scoringBorder),
+                                borderRadius: BorderRadius.circular(8),
+                              ),
+                              child: Text(
+                                'Scoring: $scoringLabel',
+                                style: TextStyle(fontSize: 12, color: scoringBorder, fontWeight: FontWeight.w600),
+                              ),
+                            ),
+                          ],
                         ),
                       Padding(
                         padding: const EdgeInsets.symmetric(vertical: 2.0),
@@ -474,6 +530,11 @@ void _showCompletedSummaryDialog(BuildContext context, dynamic g) {
                 children: [
                   const Text('Match Summary', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
                   const SizedBox(height: 10),
+                  _ScoringFormatBadge(
+                    label: g.scoringFormatBadgeLabel.toString(),
+                    isRally: g.isRallyScoring == true,
+                  ),
+                  const SizedBox(height: 10),
                   Text.rich(
                     TextSpan(
                       children: [
@@ -539,4 +600,36 @@ void _showCompletedSummaryDialog(BuildContext context, dynamic g) {
       );
     },
   );
+}
+
+class _ScoringFormatBadge extends StatelessWidget {
+  final String label;
+  final bool isRally;
+
+  const _ScoringFormatBadge({
+    required this.label,
+    required this.isRally,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final bg = isRally ? const Color(0xFFFFF1F2) : const Color(0xFFF0FDF4);
+    final fg = isRally ? const Color(0xFFE11D48) : const Color(0xFF15803D);
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+      decoration: BoxDecoration(
+        color: bg,
+        borderRadius: BorderRadius.circular(999),
+        border: Border.all(color: fg.withValues(alpha: 0.4)),
+      ),
+      child: Text(
+        label,
+        style: TextStyle(
+          color: fg,
+          fontSize: 12,
+          fontWeight: FontWeight.w700,
+        ),
+      ),
+    );
+  }
 }

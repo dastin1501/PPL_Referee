@@ -119,6 +119,7 @@ class TournamentMatch {
   final String? signatureData;
   final List<String?>? gameSignatures;
   final String? refereeNote;
+  final String scoringFormat;
 
   TournamentMatch({
     required this.id,
@@ -152,7 +153,26 @@ class TournamentMatch {
     this.signatureData,
     this.gameSignatures,
     this.refereeNote,
+    this.scoringFormat = 'sideout',
   });
+
+  static String normalizeScoringFormat(String? raw) {
+    final normalized = raw
+            ?.trim()
+            .toLowerCase()
+            .replaceAll(RegExp(r'[\s_-]+'), '') ??
+        '';
+    if (normalized == 'rally') return 'rally';
+    if (normalized == 'sideout') return 'sideout';
+    return 'sideout';
+  }
+
+  bool get isRallyScoring => normalizeScoringFormat(scoringFormat) == 'rally';
+
+  bool get isSideOutScoring => !isRallyScoring;
+
+  String get scoringFormatBadgeLabel =>
+      isRallyScoring ? 'Scoring Format: Rally' : 'Scoring Format: Side-Out';
 
   factory TournamentMatch.fromJson(Map<String, dynamic> j) {
     String normalizeCourt(String s) {
@@ -208,6 +228,9 @@ class TournamentMatch {
       signatureData: j['signatureData']?.toString(),
       gameSignatures: sigs,
       refereeNote: j['refereeNote']?.toString(),
+      scoringFormat: normalizeScoringFormat(
+        j['scoringFormat']?.toString() ?? j['scoringType']?.toString(),
+      ),
     );
   }
 }
@@ -221,6 +244,7 @@ class Tournament {
   final Map<String, String> categoryNames;
   final Map<String, int> categoryGamesPerMatch;
   final Map<String, String> categoryScoringTypes;
+  final String? preferredScheduleDate;
 
   Tournament({
     required this.id,
@@ -231,6 +255,7 @@ class Tournament {
     this.categoryNames = const {},
     this.categoryGamesPerMatch = const {},
     this.categoryScoringTypes = const {},
+    this.preferredScheduleDate,
   });
 
   factory Tournament.fromJson(Map<String, dynamic> j) {
@@ -240,53 +265,111 @@ class Tournament {
     final categoryGPM = <String, int>{};
     final categoryScoringTypes = <String, String>{};
     final idToDisplay = <String, String>{};
+    final hasRootCourtAssignments = j['courtAssignments'] is Map<String, dynamic>;
+    final hasCourtAssignmentsByDate = j['courtAssignmentsByDate'] is Map<String, dynamic>;
+    final hasAuthoritativeSchedule = hasRootCourtAssignments || hasCourtAssignmentsByDate;
+    final preferredScheduleDate =
+        (j['courtAssignments'] is Map<String, dynamic>)
+            ? (j['courtAssignments']['scheduleDate']?.toString())
+            : null;
 
     // 0. Parse Court Assignments (Schedules.jsx source of truth)
     final scheduleMap = <String, Map<String, dynamic>>{};
     
-    void parseCA(Map<String, dynamic> ca, String? dateOverride) {
-      final assignments = ca['assignments'] as List?;
-      final timeSlots = ca['timeSlots'] as List?;
-      final courtCount = int.tryParse(ca['courtCount']?.toString() ?? '');
+    void mergeScheduleCell({
+      required String id,
+      required String date,
+      required String time,
+      String? endTime,
+      required String court,
+      String? venue,
+    }) {
+      final baseId = id.replaceFirst(RegExp(r'-g(\d+)$'), '');
+      final gameMatch = RegExp(r'-g(\d+)$').firstMatch(id);
+      final gameIndex = int.tryParse(gameMatch?.group(1) ?? '') ?? 1;
+      final existing = scheduleMap[baseId] ?? <String, dynamic>{};
+      existing['date'] = (existing['date']?.toString().isNotEmpty ?? false) ? existing['date'] : date;
+      existing['court'] = (existing['court']?.toString().isNotEmpty ?? false) ? existing['court'] : court;
+      existing['venue'] = (existing['venue']?.toString().isNotEmpty ?? false) ? existing['venue'] : (venue ?? '');
+      if (gameIndex <= 1) {
+        existing['time'] = time;
+      } else if (gameIndex == 2) {
+        existing['mdTime2'] = time;
+        existing['mdEnd2'] = endTime ?? '';
+      } else if (gameIndex == 3) {
+        existing['mdTime3'] = time;
+        existing['mdEnd3'] = endTime ?? '';
+      }
+      scheduleMap[baseId] = existing;
+    }
+
+    void parseScheduleVenue(Map<String, dynamic> source, String resolvedDate, {String? venueName}) {
+      final assignments = source['assignments'] as List?;
+      final timeSlots = source['timeSlots'] as List?;
+      final courtCount = int.tryParse(source['courtCount']?.toString() ?? '');
 
       if (courtCount != null && courtCount > 0) {
         for (int i = 1; i <= courtCount; i++) {
           courts.add('Court $i');
         }
       } else if (assignments != null && assignments.isNotEmpty) {
-         // Fallback: derive from column count
-         final row = assignments[0] as List?;
-         if (row != null) {
-            for (int i = 1; i <= row.length; i++) {
-               courts.add('Court $i');
-            }
-         }
-      }
-      
-      if (assignments != null && timeSlots != null) {
-        for (int r = 0; r < assignments.length; r++) {
-          if (r >= timeSlots.length) break;
-          final row = assignments[r] as List?;
-          if (row == null) continue;
-          
-          final ts = timeSlots[r];
-          final time = (ts is Map) ? ts['startTime']?.toString() : null;
-          
-          for (int c = 0; c < row.length; c++) {
-            final cell = row[c];
-            if (cell is Map) {
-              final id = cell['id']?.toString();
-              if (id != null) {
-                scheduleMap[id] = {
-                  'court': 'Court ${c + 1}',
-                  'time': time ?? '',
-                  'date': dateOverride ?? ca['scheduleDate']?.toString() ?? '',
-                };
-              }
-            }
+        final row = assignments[0] as List?;
+        if (row != null) {
+          for (int i = 1; i <= row.length; i++) {
+            courts.add('Court $i');
           }
         }
       }
+
+      if (assignments == null || timeSlots == null) return;
+
+      for (int r = 0; r < assignments.length; r++) {
+        if (r >= timeSlots.length) break;
+        final row = assignments[r] as List?;
+        if (row == null) continue;
+
+        final ts = timeSlots[r];
+        final startTime = (ts is Map) ? ts['startTime']?.toString() ?? '' : '';
+        final endTime = (ts is Map) ? ts['endTime']?.toString() ?? '' : '';
+
+        for (int c = 0; c < row.length; c++) {
+          final cell = row[c];
+          if (cell is Map) {
+            final id = cell['id']?.toString();
+            if (id == null || id.isEmpty) continue;
+            mergeScheduleCell(
+              id: id,
+              date: resolvedDate,
+              time: startTime,
+              endTime: endTime,
+              court: 'Court ${c + 1}',
+              venue: venueName,
+            );
+          }
+        }
+      }
+    }
+
+    void parseCA(Map<String, dynamic> ca, String? dateOverride) {
+      final resolvedDate = dateOverride ?? ca['scheduleDate']?.toString() ?? '';
+      final venues = ca['venues'] as List?;
+      if (venues != null && venues.isNotEmpty) {
+        for (final venue in venues) {
+          if (venue is Map<String, dynamic>) {
+            parseScheduleVenue(
+              venue,
+              resolvedDate,
+              venueName: venue['name']?.toString(),
+            );
+          }
+        }
+      }
+
+      parseScheduleVenue(
+        ca,
+        resolvedDate,
+        venueName: ca['venue']?.toString(),
+      );
     }
 
     if (j['courtAssignments'] is Map<String, dynamic>) {
@@ -384,11 +467,50 @@ class Tournament {
       return resolveName(p);
     }
 
+    void clearScheduleFields(Map<String, dynamic> m) {
+      m['court'] = '';
+      m['time'] = '';
+      m['date'] = '';
+      m['venue'] = '';
+      m['mdTime2'] = '';
+      m['mdEnd2'] = '';
+      m['mdTime3'] = '';
+      m['mdEnd3'] = '';
+      final status = m['status']?.toString().trim().toLowerCase();
+      if (status == 'scheduled' || status == 'called') {
+        m['status'] = 'Unscheduled';
+      }
+    }
+
+    void applyScheduleInfo(Map<String, dynamic> m, Map<String, dynamic> info) {
+      m['court'] = info['court'] ?? '';
+      m['time'] = info['time'] ?? '';
+      m['date'] = info['date'] ?? '';
+      m['venue'] = info['venue'] ?? m['venue'];
+      m['mdTime2'] = info['mdTime2'] ?? m['mdTime2'];
+      m['mdEnd2'] = info['mdEnd2'] ?? m['mdEnd2'];
+      m['mdTime3'] = info['mdTime3'] ?? m['mdTime3'];
+      m['mdEnd3'] = info['mdEnd3'] ?? m['mdEnd3'];
+      final currentStatus = m['status']?.toString().trim().toLowerCase() ?? '';
+      if ((m['time']?.toString().trim().isNotEmpty ?? false) &&
+          (currentStatus.isEmpty ||
+              currentStatus == 'scheduled' ||
+              currentStatus == 'called' ||
+              currentStatus == 'unscheduled')) {
+        m['status'] = 'Scheduled';
+      }
+    }
+
     void parseMatches(List<dynamic> list, String type, String catId, {String groupId = ''}) {
       for (var m in list) {
         if (m is Map<String, dynamic>) {
           m['type'] = type;
           m['categoryId'] = catId;
+          m['scoringFormat'] = TournamentMatch.normalizeScoringFormat(
+            m['scoringFormat']?.toString() ??
+                m['scoringType']?.toString() ??
+                categoryScoringTypes[catId],
+          );
           if (groupId.isNotEmpty) {
             m['groupId'] = groupId;
           }
@@ -503,10 +625,9 @@ class Tournament {
                     v['groupId'] = groupId;
                     final sId = 'rr-$catId-$groupId-$k';
                     if (scheduleMap.containsKey(sId)) {
-                      final info = scheduleMap[sId]!;
-                      v['court'] = info['court'];
-                      v['time'] = info['time'];
-                      v['date'] = info['date'];
+                      applyScheduleInfo(v, scheduleMap[sId]!);
+                    } else if (hasAuthoritativeSchedule) {
+                      clearScheduleFields(v);
                     }
                     var originalPlayers = g['originalPlayers'] as List?;
                     if (originalPlayers == null || originalPlayers.isEmpty) {
@@ -553,10 +674,9 @@ class Tournament {
                         final groupId = g['id']?.toString() ?? '';
                         final sId = 'rr-$catId-$groupId-$mk';
                         if (scheduleMap.containsKey(sId)) {
-                          final info = scheduleMap[sId]!;
-                          m['court'] = info['court'];
-                          m['time'] = info['time'];
-                          m['date'] = info['date'];
+                          applyScheduleInfo(m, scheduleMap[sId]!);
+                        } else if (hasAuthoritativeSchedule) {
+                          clearScheduleFields(m);
                         }
                         m['groupId'] = groupId;
                      }
@@ -585,14 +705,16 @@ class Tournament {
                   'elim-$catId-$i',
                   'elimgen-$catId-$i',
                 ];
+                bool matchedSchedule = false;
                 for (final k in candidates) {
                   if (scheduleMap.containsKey(k)) {
-                    final info = scheduleMap[k]!;
-                    m['court'] = info['court'];
-                    m['time'] = info['time'];
-                    m['date'] = info['date'];
+                    applyScheduleInfo(m, scheduleMap[k]!);
+                    matchedSchedule = true;
                     break;
                   }
+                }
+                if (!matchedSchedule && hasAuthoritativeSchedule) {
+                  clearScheduleFields(m);
                 }
                 // Provide a match label for elimination rounds
                 final title = m['title']?.toString();
@@ -628,6 +750,7 @@ class Tournament {
       categoryNames: categoryNames,
       categoryGamesPerMatch: categoryGPM,
       categoryScoringTypes: categoryScoringTypes,
+      preferredScheduleDate: preferredScheduleDate,
     );
   }
 }

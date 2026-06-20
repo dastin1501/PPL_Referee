@@ -8,6 +8,7 @@ import '../models.dart';
 class AppState extends ChangeNotifier {
   static const _storageTokenKey = 'referee_auth_token';
   static const _storageUserKey = 'referee_auth_user';
+  static const bool _useScheduledQueueEndpoint = false;
 
   final ApiService _api = ApiService();
 
@@ -20,12 +21,16 @@ class AppState extends ChangeNotifier {
   String? selectedDate;
   TournamentMatch? selectedGame;
   String? _scheduledQueueEtag;
+  int _submitSequenceCounter = 0;
+  final Map<String, int> _latestStartedSubmitSeqByMatch = {};
+  final Map<String, int> _inFlightSubmitSeqByMatch = {};
   bool loading = false;
   String? error;
   bool initialized = false;
   bool ongoingSyncing = false;
   Timer? _ongoingSyncTimer;
   Map<String, dynamic>? _pendingOngoingFields;
+  String? _pendingOngoingMatchKey;
 
   // Offline outbox for match updates
   static const _storageOutboxKey = 'referee_outbox_v1';
@@ -138,6 +143,7 @@ class AppState extends ChangeNotifier {
 
   Future<void> selectTournament(Tournament t) async {
     selectedTournament = t;
+    _scheduledQueueEtag = null;
     loading = true;
     notifyListeners();
     try {
@@ -160,6 +166,7 @@ class AppState extends ChangeNotifier {
 
   Future<void> selectCourt(String c) async {
     selectedCourt = c;
+    _scheduledQueueEtag = null;
     _autoPickSelectedDate();
     notifyListeners();
     await refreshSelectedTournament();
@@ -168,6 +175,7 @@ class AppState extends ChangeNotifier {
 
   Future<void> selectDate(String d) async {
     selectedDate = d.trim().isEmpty ? null : d.trim();
+    _scheduledQueueEtag = null;
     notifyListeners();
     await refreshSelectedTournament();
     await _refreshScheduledQueueForSelection();
@@ -240,7 +248,14 @@ class AppState extends ChangeNotifier {
       final fullTournament = await _api.getTournamentDetails(t.id);
       selectedTournament = fullTournament;
       courts = fullTournament.courts;
-      games = fullTournament.matches;
+      games = _mergeRefreshedMatchesWithLocalState(fullTournament.matches);
+      if (selectedGame != null) {
+        final selectedKey = _matchIdentityKey(selectedGame!);
+        final refreshedSelected = games.where((m) => _matchIdentityKey(m) == selectedKey).toList();
+        if (refreshedSelected.isNotEmpty) {
+          selectedGame = refreshedSelected.first;
+        }
+      }
       if (selectedCourt != null &&
           !courts.any((c) => _normalizeCourt(c) == _normalizeCourt(selectedCourt))) {
         selectedCourt = null;
@@ -298,20 +313,40 @@ class AppState extends ChangeNotifier {
         'court=${g.court}, date=${g.date}, selectedCourt=$selectedCourt, selectedDate=$selectedDate',
       );
     }
+    final matchIdentity = _matchIdentityKey(g);
+    if (matchIdentity.isEmpty) {
+      error = 'Missing stable match identifier for score sync.';
+      notifyListeners();
+      return;
+    }
+    final isOngoingStatus = status == 'Ongoing';
+    if (!isOngoingStatus && _inFlightSubmitSeqByMatch.containsKey(matchIdentity)) {
+      error = 'Submission already in progress for this match.';
+      notifyListeners();
+      throw StateError(error!);
+    }
 
-    // Optimistic local state first for responsive scoreboard.
-    final updated = _mergeMatchWithFields(g, payloadFields);
-    _replaceSelectedGame(updated, g);
-    notifyListeners();
+    final applyOptimistically = status == null || status.isEmpty || isOngoingStatus;
+    if (applyOptimistically) {
+      final updated = _mergeMatchWithFields(g, payloadFields);
+      _replaceSelectedGame(updated, g);
+      notifyListeners();
+    }
 
     if (status == 'Ongoing' && debounceOngoing) {
       _pendingOngoingFields = payloadFields;
+      _pendingOngoingMatchKey = matchIdentity;
       _ongoingSyncTimer?.cancel();
       _ongoingSyncTimer = Timer(const Duration(milliseconds: 900), () async {
         final pending = _pendingOngoingFields;
+        final pendingMatchKey = _pendingOngoingMatchKey;
         _pendingOngoingFields = null;
-        if (pending == null) return;
+        _pendingOngoingMatchKey = null;
+        if (pending == null || pendingMatchKey != matchIdentity) return;
         await _submitSelectedMatchPayload(
+          tournament: t,
+          match: _findMatchByIdentity(matchIdentity) ?? g,
+          matchIdentity: matchIdentity,
           fields: pending,
           retryOnce: true,
           throwOnFailure: false,
@@ -321,6 +356,9 @@ class AppState extends ChangeNotifier {
     }
 
     await _submitSelectedMatchPayload(
+      tournament: t,
+      match: _findMatchByIdentity(matchIdentity) ?? g,
+      matchIdentity: matchIdentity,
       fields: payloadFields,
       retryOnce: status == 'Ongoing',
       throwOnFailure: status != 'Ongoing',
@@ -396,10 +434,66 @@ class AppState extends ChangeNotifier {
           ? (payload['gameSignatures'] as List).map((e) => e?.toString()).toList()
           : g.gameSignatures,
       refereeNote: payload['refereeNote']?.toString() ?? g.refereeNote,
+      scoringFormat: g.scoringFormat,
     );
   }
 
+  List<TournamentMatch> _mergeRefreshedMatchesWithLocalState(List<TournamentMatch> refreshed) {
+    final existingByKey = <String, TournamentMatch>{};
+    for (final m in games) {
+      final key = _matchIdentityKey(m);
+      if (key.isNotEmpty) existingByKey[key] = m;
+    }
+    return refreshed.map((m) {
+      final matchIdentity = _matchIdentityKey(m);
+      final existing = existingByKey[matchIdentity];
+      if (existing == null) return m;
+      if (_inFlightSubmitSeqByMatch.containsKey(matchIdentity) &&
+          existing.status == 'Ongoing' &&
+          m.status == 'Scheduled') {
+        return _mergeMatchWithFields(m, {
+          'score1': existing.score1,
+          'score2': existing.score2,
+          'game1Player1': existing.game1Player1,
+          'game1Player2': existing.game1Player2,
+          'game2Player1': existing.game2Player1,
+          'game2Player2': existing.game2Player2,
+          'game3Player1': existing.game3Player1,
+          'game3Player2': existing.game3Player2,
+          'status': existing.status,
+          'winner': existing.winner,
+          'signatureData': existing.signatureData,
+          'gameSignatures': existing.gameSignatures,
+          'refereeNote': existing.refereeNote,
+        });
+      }
+      if (existing.status == 'Completed' && m.status != 'Completed') {
+        return _mergeMatchWithFields(m, {
+          'score1': existing.score1,
+          'score2': existing.score2,
+          'game1Player1': existing.game1Player1,
+          'game1Player2': existing.game1Player2,
+          'game2Player1': existing.game2Player1,
+          'game2Player2': existing.game2Player2,
+          'game3Player1': existing.game3Player1,
+          'game3Player2': existing.game3Player2,
+          'status': existing.status,
+          'winner': existing.winner,
+          'signatureData': existing.signatureData,
+          'gameSignatures': existing.gameSignatures,
+          'refereeNote': existing.refereeNote,
+        });
+      }
+      return m;
+    }).toList();
+  }
+
   void _replaceSelectedGame(TournamentMatch updated, TournamentMatch original) {
+    final matchIdentity = _matchIdentityKey(original);
+    if (matchIdentity.isNotEmpty) {
+      _replaceMatchByIdentity(matchIdentity, updated);
+      return;
+    }
     games = games.map((m) {
       final sameId = original.id.isNotEmpty && m.id == original.id;
       final sameComposite = m.categoryId == original.categoryId &&
@@ -411,59 +505,87 @@ class AppState extends ChangeNotifier {
   }
 
   Future<void> _submitSelectedMatchPayload({
+    required Tournament tournament,
+    required TournamentMatch match,
+    required String matchIdentity,
     required Map<String, dynamic> fields,
     required bool retryOnce,
     required bool throwOnFailure,
   }) async {
-    final t = selectedTournament;
-    final g = selectedGame;
-    if (t == null || g == null) return;
+    final activeMatch = _findMatchByIdentity(matchIdentity) ?? match;
+    final status = (fields['status']?.toString() ?? '').trim();
+    final isOngoingStatus = status == 'Ongoing';
+    if (isOngoingStatus && _inFlightSubmitSeqByMatch.containsKey(matchIdentity)) {
+      _pendingOngoingFields = fields;
+      _pendingOngoingMatchKey = matchIdentity;
+      return;
+    }
+    if (!isOngoingStatus && _inFlightSubmitSeqByMatch.containsKey(matchIdentity)) {
+      throw StateError('A save is already in progress for this match.');
+    }
+
+    final submitSeq = ++_submitSequenceCounter;
+    _latestStartedSubmitSeqByMatch[matchIdentity] = submitSeq;
+    _inFlightSubmitSeqByMatch[matchIdentity] = submitSeq;
 
     final selectedIndex = selectedGameNumber.clamp(1, 3);
-    final s1 = _fieldAsInt(fields, 'game${selectedIndex}Player1', _scoreForGame(g, selectedIndex, true)) ?? 0;
-    final s2 = _fieldAsInt(fields, 'game${selectedIndex}Player2', _scoreForGame(g, selectedIndex, false)) ?? 0;
+    final s1 = _fieldAsInt(
+          fields,
+          'game${selectedIndex}Player1',
+          _scoreForGame(activeMatch, selectedIndex, true),
+        ) ??
+        0;
+    final s2 = _fieldAsInt(
+          fields,
+          'game${selectedIndex}Player2',
+          _scoreForGame(activeMatch, selectedIndex, false),
+        ) ??
+        0;
     final gamesArray = List.generate(3, (i) {
       final idx = i + 1;
-      final a = _fieldAsInt(fields, 'game${idx}Player1', _scoreForGame(g, idx, true)) ?? 0;
-      final b = _fieldAsInt(fields, 'game${idx}Player2', _scoreForGame(g, idx, false)) ?? 0;
+      final a =
+          _fieldAsInt(fields, 'game${idx}Player1', _scoreForGame(activeMatch, idx, true)) ?? 0;
+      final b =
+          _fieldAsInt(fields, 'game${idx}Player2', _scoreForGame(activeMatch, idx, false)) ?? 0;
       return {'a': a, 'b': b};
     });
 
     final payload = <String, dynamic>{
-      'tournamentId': t.id,
-      'categoryId': g.categoryId,
-      'type': g.type,
+      'tournamentId': tournament.id,
+      'categoryId': activeMatch.categoryId,
+      'type': activeMatch.type,
       'selectedGame': selectedIndex,
       'game': {'a': s1, 'b': s2},
       'games': gamesArray,
       ...fields,
     };
-    if (g.type == 'group') {
-      payload['groupId'] = g.groupId;
-      payload['matchKey'] = g.matchKey;
+    if (activeMatch.type == 'group') {
+      payload['groupId'] = activeMatch.groupId;
+      payload['matchKey'] = activeMatch.matchKey;
     } else {
-      payload['matchId'] = g.id;
+      payload['matchId'] = activeMatch.id;
     }
 
-    final status = (payload['status']?.toString() ?? '').trim();
     if (kDebugMode) {
-      final matchRef = g.type == 'group'
-          ? 'groupId=${g.groupId}, matchKey=${g.matchKey}'
-          : 'matchId=${g.id}';
+      final matchRef = activeMatch.type == 'group'
+          ? 'groupId=${activeMatch.groupId}, matchKey=${activeMatch.matchKey}'
+          : 'matchId=${activeMatch.id}';
       debugPrint(
-        '[score-sync] OUT -> tournamentId=${t.id}, categoryId=${g.categoryId}, $matchRef, '
-        'selectedGame=$selectedIndex, status=$status, score=$s1-$s2, keys=${fields.keys.toList()}',
+        '[score-sync] OUT -> tournamentId=${tournament.id}, categoryId=${activeMatch.categoryId}, '
+        '$matchRef, selectedGame=$selectedIndex, status=$status, score=$s1-$s2, '
+        'keys=${fields.keys.toList()}, seq=$submitSeq',
       );
     }
 
-    Future<void> attemptSubmit() async {
-      ongoingSyncing = status == 'Ongoing';
+    Future<SubmitScoreResult> attemptSubmit() async {
+      ongoingSyncing = isOngoingStatus;
       if (ongoingSyncing) notifyListeners();
       try {
-        await _api.submitScore(payload);
+        final result = await _api.submitScore(payload);
         if (kDebugMode) {
-          debugPrint('[score-sync] IN <- submit-score success status=$status');
+          debugPrint('[score-sync] IN <- submit-score success status=$status seq=$submitSeq');
         }
+        return result;
       } finally {
         if (ongoingSyncing) {
           ongoingSyncing = false;
@@ -473,12 +595,26 @@ class AppState extends ChangeNotifier {
     }
 
     try {
-      await attemptSubmit();
+      final result = await attemptSubmit();
+      _applySubmitResult(
+        matchIdentity: matchIdentity,
+        fallbackMatch: activeMatch,
+        submitSeq: submitSeq,
+        requestFields: fields,
+        result: result,
+      );
     } catch (e) {
       if (retryOnce) {
         try {
           await Future<void>.delayed(const Duration(milliseconds: 350));
-          await attemptSubmit();
+          final result = await attemptSubmit();
+          _applySubmitResult(
+            matchIdentity: matchIdentity,
+            fallbackMatch: activeMatch,
+            submitSeq: submitSeq,
+            requestFields: fields,
+            result: result,
+          );
           return;
         } catch (_) {}
       }
@@ -488,7 +624,76 @@ class AppState extends ChangeNotifier {
       if (kDebugMode) {
         debugPrint('[score-sync] ongoing sync failed and skipped: $e');
       }
+    } finally {
+      if (_inFlightSubmitSeqByMatch[matchIdentity] == submitSeq) {
+        _inFlightSubmitSeqByMatch.remove(matchIdentity);
+      }
+      final pending = _pendingOngoingFields;
+      final pendingMatchKey = _pendingOngoingMatchKey;
+      if (isOngoingStatus && pending != null && pendingMatchKey == matchIdentity) {
+        _pendingOngoingFields = null;
+        _pendingOngoingMatchKey = null;
+        unawaited(_submitSelectedMatchPayload(
+          tournament: tournament,
+          match: _findMatchByIdentity(matchIdentity) ?? activeMatch,
+          matchIdentity: matchIdentity,
+          fields: pending,
+          retryOnce: true,
+          throwOnFailure: false,
+        ));
+      }
     }
+  }
+
+  void _applySubmitResult({
+    required String matchIdentity,
+    required TournamentMatch fallbackMatch,
+    required int submitSeq,
+    required Map<String, dynamic> requestFields,
+    required SubmitScoreResult result,
+  }) {
+    if (_latestStartedSubmitSeqByMatch[matchIdentity] != submitSeq) {
+      return;
+    }
+    final current = _findMatchByIdentity(matchIdentity) ?? fallbackMatch;
+    final authoritativeFields = _resolveAuthoritativeFields(
+      requestFields: requestFields,
+      serverMatch: result.savedMatch,
+    );
+    final updated = _mergeMatchWithFields(current, authoritativeFields);
+    _replaceMatchByIdentity(matchIdentity, updated);
+    notifyListeners();
+  }
+
+  Map<String, dynamic> _resolveAuthoritativeFields({
+    required Map<String, dynamic> requestFields,
+    Map<String, dynamic>? serverMatch,
+  }) {
+    if (serverMatch == null || serverMatch.isEmpty) {
+      return requestFields;
+    }
+    final authoritative = Map<String, dynamic>.from(requestFields);
+    const keys = [
+      'score1',
+      'score2',
+      'game1Player1',
+      'game1Player2',
+      'game2Player1',
+      'game2Player2',
+      'game3Player1',
+      'game3Player2',
+      'status',
+      'winner',
+      'signatureData',
+      'gameSignatures',
+      'refereeNote',
+    ];
+    for (final key in keys) {
+      if (serverMatch.containsKey(key) && serverMatch[key] != null) {
+        authoritative[key] = serverMatch[key];
+      }
+    }
+    return authoritative;
   }
 
   int? _scoreForGame(TournamentMatch g, int gameIndex, bool teamA) {
@@ -524,6 +729,11 @@ class AppState extends ChangeNotifier {
     final current = _normalizeDate(selectedDate);
     if (current != null && dates.contains(current)) {
       selectedDate = current;
+      return;
+    }
+    final preferred = _normalizeDate(selectedTournament?.preferredScheduleDate);
+    if (preferred != null && dates.contains(preferred)) {
+      selectedDate = preferred;
       return;
     }
     selectedDate = dates.first;
@@ -584,6 +794,7 @@ class AppState extends ChangeNotifier {
   }
 
   Future<void> _refreshScheduledQueueForSelection() async {
+    if (!_useScheduledQueueEndpoint) return;
     final t = selectedTournament;
     if (t == null || selectedCourt == null || selectedDate == null) return;
     try {
@@ -598,6 +809,52 @@ class AppState extends ChangeNotifier {
       if (response.notModified) return;
       _scheduledQueueEtag = response.etag ?? _scheduledQueueEtag;
       final incoming = response.matches;
+      final existingByKey = <String, TournamentMatch>{};
+      for (final m in games) {
+        final key = _matchIdentityKey(m);
+        if (key.isNotEmpty) existingByKey[key] = m;
+      }
+      final mergedIncoming = incoming.map((m) {
+        final existing = existingByKey[_matchIdentityKey(m)];
+        if (existing == null) return m;
+        if (m.scoringFormat != 'sideout' || existing.scoringFormat == 'sideout') {
+          return m;
+        }
+        return TournamentMatch(
+          id: m.id,
+          player1: m.player1,
+          player2: m.player2,
+          score1: m.score1,
+          score2: m.score2,
+          game1Player1: m.game1Player1,
+          game1Player2: m.game1Player2,
+          game2Player1: m.game2Player1,
+          game2Player2: m.game2Player2,
+          game3Player1: m.game3Player1,
+          game3Player2: m.game3Player2,
+          round: m.round,
+          court: m.court,
+          date: m.date,
+          time: m.time,
+          venue: m.venue,
+          mdTime2: m.mdTime2,
+          mdEnd2: m.mdEnd2,
+          mdTime3: m.mdTime3,
+          mdEnd3: m.mdEnd3,
+          status: m.status,
+          categoryId: m.categoryId,
+          matchKey: m.matchKey,
+          type: m.type,
+          seedLabel: m.seedLabel,
+          matchLabel: m.matchLabel,
+          groupId: m.groupId,
+          winner: m.winner,
+          signatureData: m.signatureData,
+          gameSignatures: m.gameSignatures,
+          refereeNote: m.refereeNote,
+          scoringFormat: existing.scoringFormat,
+        );
+      }).toList();
       final incomingIds = incoming
           .where((m) => m.id.isNotEmpty)
           .map((m) => m.id)
@@ -613,11 +870,42 @@ class AppState extends ChangeNotifier {
         }
         return true;
       }).toList();
-      games = [...keep, ...incoming];
+      games = [...keep, ...mergedIncoming];
       notifyListeners();
     } catch (_) {
       // Keep fallback behavior when endpoint is not available.
     }
+  }
+
+  TournamentMatch? _findMatchByIdentity(String matchIdentity) {
+    for (final match in games) {
+      if (_matchIdentityKey(match) == matchIdentity) {
+        return match;
+      }
+    }
+    return null;
+  }
+
+  void _replaceMatchByIdentity(String matchIdentity, TournamentMatch updated) {
+    games = games.map((m) {
+      return _matchIdentityKey(m) == matchIdentity ? updated : m;
+    }).toList();
+    if (selectedGame != null && _matchIdentityKey(selectedGame!) == matchIdentity) {
+      selectedGame = updated;
+    }
+  }
+
+  String _matchIdentityKey(TournamentMatch match) {
+    if (match.id.trim().isNotEmpty) {
+      return 'id:${match.id.trim()}';
+    }
+    if (match.type == 'group' &&
+        match.categoryId.trim().isNotEmpty &&
+        match.groupId.trim().isNotEmpty &&
+        match.matchKey.trim().isNotEmpty) {
+      return 'group:${match.categoryId.trim()}:${match.groupId.trim()}:${match.matchKey.trim()}';
+    }
+    return '';
   }
 
   int? _fieldAsInt(Map<String, dynamic> source, String key, int? fallback) {

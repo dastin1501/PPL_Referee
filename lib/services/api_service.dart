@@ -23,6 +23,18 @@ class MatchQueueResult {
   });
 }
 
+class SubmitScoreResult {
+  final Map<String, dynamic>? body;
+  final Map<String, dynamic>? savedMatch;
+  final String? freshnessToken;
+
+  const SubmitScoreResult({
+    this.body,
+    this.savedMatch,
+    this.freshnessToken,
+  });
+}
+
 class ApiService {
   String get baseUrl => dotenv.env['API_BASE_URL'] ?? 'http://localhost:5000';
   String? _token;
@@ -194,37 +206,13 @@ class ApiService {
     int limit = 50,
     String? ifNoneMatch,
   }) async {
-    final uri = Uri.parse('$baseUrl/api/tournaments/$tournamentId/referee/matches').replace(
-      queryParameters: {
-        'date': date,
-        'court': court,
-        'status': 'Scheduled',
-        'page': '$page',
-        'limit': '$limit',
-      },
-    );
-    final headers = Map<String, String>.from(_headers);
-    if (ifNoneMatch != null && ifNoneMatch.trim().isNotEmpty) {
-      headers['If-None-Match'] = ifNoneMatch.trim();
-    }
-    final res = await http.get(uri, headers: headers);
-    if (res.statusCode == 304) {
-      return MatchQueueResult(notModified: true, matches: const []);
-    }
-    if (res.statusCode != 200) {
-      throw Exception('Status ${res.statusCode}: ${res.body}');
-    }
-    final body = jsonDecode(res.body);
-    final raw = (body is Map<String, dynamic>) ? (body['matches'] ?? const []) : body;
-    final list = (raw as List).map((e) => TournamentMatch.fromJson(Map<String, dynamic>.from(e))).toList();
-    return MatchQueueResult(
-      notModified: false,
-      matches: list,
-      etag: res.headers['etag'],
-    );
+    // The current backend does not expose this filtered referee queue endpoint.
+    // Mobile already refreshes tournament details, which are the source of truth
+    // for schedule rendering, so we skip this call to avoid browser 404 noise.
+    return MatchQueueResult(notModified: true, matches: const []);
   }
 
-  Future<void> submitScore(Map<String, dynamic> payload) async {
+  Future<SubmitScoreResult> submitScore(Map<String, dynamic> payload) async {
     final scheduleKeys = <String>{
       'date',
       'time',
@@ -257,16 +245,99 @@ class ApiService {
         'status=${safePayload['status']} game=$game',
       );
     }
-    final res = await http.post(
-      Uri.parse('$baseUrl/api/referees/submit-score'),
-      headers: _headers,
-      body: jsonEncode(safePayload),
-    );
+    final res = await http
+        .post(
+          Uri.parse('$baseUrl/api/referees/submit-score'),
+          headers: _headers,
+          body: jsonEncode(safePayload),
+        )
+        .timeout(const Duration(seconds: 20));
     if (kDebugMode) {
       print('[score-sync][api] RESPONSE ${res.statusCode}: ${res.body}');
     }
     if (res.statusCode != 200 && res.statusCode != 201) {
       throw Exception('Status ${res.statusCode}: ${res.body}');
     }
+    Map<String, dynamic>? body;
+    try {
+      final decoded = jsonDecode(res.body);
+      if (decoded is Map<String, dynamic>) {
+        body = decoded;
+      } else if (decoded is Map) {
+        body = Map<String, dynamic>.from(decoded);
+      }
+    } catch (_) {
+      body = null;
+    }
+    final savedMatch = _extractSavedMatch(body);
+    return SubmitScoreResult(
+      body: body,
+      savedMatch: savedMatch,
+      freshnessToken: _extractFreshnessToken(body, savedMatch),
+    );
+  }
+
+  Map<String, dynamic>? _extractSavedMatch(Map<String, dynamic>? body) {
+    if (body == null) return null;
+    Map<String, dynamic>? asMatch(dynamic value) {
+      if (value is Map) {
+        final map = Map<String, dynamic>.from(value);
+        final hasMatchIdentity = map.containsKey('_id') ||
+            map.containsKey('id') ||
+            map.containsKey('matchKey');
+        final hasMatchState = map.containsKey('status') ||
+            map.containsKey('score1') ||
+            map.containsKey('score2') ||
+            map.containsKey('winner') ||
+            map.containsKey('game1Player1');
+        if (hasMatchIdentity && hasMatchState) {
+          return map;
+        }
+      }
+      return null;
+    }
+
+    final direct = asMatch(body);
+    if (direct != null) return direct;
+
+    const topLevelKeys = ['match', 'savedMatch', 'updatedMatch', 'result'];
+    for (final key in topLevelKeys) {
+      final candidate = asMatch(body[key]);
+      if (candidate != null) return candidate;
+    }
+
+    final data = body['data'];
+    if (data is Map) {
+      final map = Map<String, dynamic>.from(data);
+      final directData = asMatch(map);
+      if (directData != null) return directData;
+      for (final key in topLevelKeys) {
+        final candidate = asMatch(map[key]);
+        if (candidate != null) return candidate;
+      }
+    }
+    return null;
+  }
+
+  String? _extractFreshnessToken(
+    Map<String, dynamic>? body,
+    Map<String, dynamic>? savedMatch,
+  ) {
+    String? pick(Map<String, dynamic>? map) {
+      if (map == null) return null;
+      final candidates = [
+        map['updatedAt'],
+        map['savedAt'],
+        map['version'],
+        map['_v'],
+      ];
+      for (final value in candidates) {
+        final text = value?.toString().trim() ?? '';
+        if (text.isNotEmpty) return text;
+      }
+      return null;
+    }
+
+    return pick(savedMatch) ?? pick(body);
   }
 }
