@@ -74,8 +74,8 @@ class _CourtGamesScreenState extends State<CourtGamesScreen>
           ],
           bottom: TabBar(
             controller: _tabController,
-            indicatorColor: Color(0xFF22C55E),
-            labelColor: Color(0xFF22C55E),
+            indicatorColor: const Color(0xFF22C55E),
+            labelColor: const Color(0xFF22C55E),
             unselectedLabelColor: Colors.grey,
             tabs: const [
               Tab(text: 'Scheduled'),
@@ -497,9 +497,12 @@ Widget _buildGamesList(
 void _showCompletedSummaryDialog(BuildContext context, dynamic g) {
   final int s1 = g.score1;
   final int s2 = g.score2;
-  final String winnerName = (g.winner?.toString().isNotEmpty ?? false)
-      ? g.winner.toString()
-      : (s1 > s2 ? g.player1 : (s2 > s1 ? g.player2 : ''));
+  String winnerName = (s1 > s2 ? g.player1 : (s2 > s1 ? g.player2 : ''));
+  // If we have a winner from g.winner that's longer than 1 character, use it
+  final rawWinner = g.winner?.toString().trim() ?? '';
+  if (rawWinner.isNotEmpty && rawWinner.length > 1) {
+    winnerName = rawWinner;
+  }
   String? sig = g.signatureData;
   if ((sig == null || sig.isEmpty) && g.gameSignatures is List && g.gameSignatures.isNotEmpty) {
     final first = g.gameSignatures.first;
@@ -569,21 +572,7 @@ void _showCompletedSummaryDialog(BuildContext context, dynamic g) {
                       ),
                     ),
                   ],
-                  const SizedBox(height: 12),
-                  const Text('Signature', style: TextStyle(color: Colors.grey)),
-                  const SizedBox(height: 8),
-                  Container(
-                    width: double.infinity,
-                    height: 220,
-                    alignment: Alignment.center,
-                    decoration: BoxDecoration(
-                      border: Border.all(color: Colors.black12),
-                      borderRadius: BorderRadius.circular(6),
-                    ),
-                    child: bytes != null
-                        ? Image.memory(bytes, fit: BoxFit.contain, width: double.infinity, height: double.infinity)
-                        : const Text('No signature available'),
-                  ),
+
                   const SizedBox(height: 16),
                   Align(
                     alignment: Alignment.centerRight,

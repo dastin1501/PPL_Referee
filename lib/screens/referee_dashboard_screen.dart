@@ -387,7 +387,7 @@ class _RefereeDashboardScreenState extends State<RefereeDashboardScreen> {
     super.dispose();
   }
 
-  Widget _playerCell(String name, {Color color = const Color(0xFF0D9488), bool isServing = false, bool isBase = false}) {
+  Widget _playerCell(String name, {bool isServing = false, bool isBase = false, bool isRight = false}) {
     return InkWell(
       onTap: !_gameStarted
           ? () {
@@ -400,23 +400,31 @@ class _RefereeDashboardScreenState extends State<RefereeDashboardScreen> {
         padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
         child: Row(
           mainAxisSize: MainAxisSize.min,
+          mainAxisAlignment: isRight ? MainAxisAlignment.end : MainAxisAlignment.start,
           children: [
             if (isBase) ...[
               const _PickleballIcon(size: 14),
               const SizedBox(width: 4),
             ],
-            ConstrainedBox(
-              constraints: const BoxConstraints(maxWidth: 240),
-              child: Text(
-                name,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: const TextStyle(
-                  color: Colors.white,
-                  fontSize: 16,
-                  fontWeight: FontWeight.bold,
-                  shadows: [Shadow(blurRadius: 4, color: Colors.black54, offset: Offset(0, 1))],
-                ),
+            Flexible(
+              child: LayoutBuilder(
+                builder: (context, c) {
+                  final fontSize = c.maxWidth < 220 ? 13.0 : 15.0;
+                  return Text(
+                    name,
+                    maxLines: 2,
+                    textAlign: isRight ? TextAlign.right : TextAlign.left,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      color: Colors.white,
+                      fontSize: fontSize,
+                      fontWeight: FontWeight.bold,
+                      shadows: const [
+                        Shadow(blurRadius: 4, color: Colors.black54, offset: Offset(0, 1)),
+                      ],
+                    ),
+                  );
+                },
               ),
             ),
             if (isServing)
@@ -443,8 +451,7 @@ class _RefereeDashboardScreenState extends State<RefereeDashboardScreen> {
     final TournamentMatch? g = app.selectedGame;
     String timerText = '${_elapsed.inMinutes.remainder(60).toString().padLeft(2, '0')}:${_elapsed.inSeconds.remainder(60).toString().padLeft(2, '0')}';
     final bool isRallyScoring = g?.isRallyScoring ?? false;
-    final String scoringTypeLabel =
-        g == null ? 'Scoring Format: Side-Out' : _scoringFormatLabel(g);
+    final String scoringTypeLabel = g == null ? 'Side-Out' : (g.isRallyScoring ? 'Rally' : 'Side-Out');
 
     // Category-based theming
     Color primaryColor = const Color(0xFF0F766E);
@@ -529,6 +536,17 @@ class _RefereeDashboardScreenState extends State<RefereeDashboardScreen> {
                 ),
               ),
             ),
+          if (g != null)
+            Padding(
+              padding: const EdgeInsets.only(right: 8),
+              child: Center(
+                child: _ScoringFormatChip(
+                  label: scoringTypeLabel,
+                  isRally: isRallyScoring,
+                  dense: true,
+                ),
+              ),
+            ),
           if (_gameStarted && g != null)
             Padding(
               padding: const EdgeInsets.only(right: 8.0),
@@ -567,59 +585,6 @@ class _RefereeDashboardScreenState extends State<RefereeDashboardScreen> {
           ? const Center(child: Text('No game selected'))
           : Column(
               children: [
-                Padding(
-                  padding: const EdgeInsets.fromLTRB(12, 10, 12, 4),
-                  child: Row(
-                    children: [
-                      _ScoringFormatChip(
-                        label: scoringTypeLabel,
-                        isRally: isRallyScoring,
-                      ),
-                    ],
-                  ),
-                ),
-                Padding(
-                  padding: const EdgeInsets.fromLTRB(12, 0, 12, 8),
-                  child: Container(
-                    width: double.infinity,
-                    padding: const EdgeInsets.all(12),
-                    decoration: BoxDecoration(
-                      color: isRallyScoring ? const Color(0xFFFFF1F2) : const Color(0xFFF0FDF4),
-                      border: Border.all(
-                        color: isRallyScoring ? const Color(0xFFFB7185) : const Color(0xFF4ADE80),
-                      ),
-                      borderRadius: BorderRadius.circular(12),
-                    ),
-                    child: Text(
-                      isRallyScoring
-                          ? 'Rally scoring active. Every rally awards a point, and service moves to the rally winner.'
-                          : 'Side-Out scoring active. Only the serving side scores, and use the center control for second server or side out.',
-                      style: TextStyle(
-                        color: isRallyScoring ? const Color(0xFFBE123C) : const Color(0xFF166534),
-                        fontWeight: FontWeight.w600,
-                      ),
-                    ),
-                  ),
-                ),
-                Padding(
-                  padding: const EdgeInsets.fromLTRB(12, 0, 12, 6),
-                  child: Align(
-                    alignment: Alignment.centerLeft,
-                    child: Text(
-                      !_gameStarted && _servingPlayer == null
-                          ? 'Tap a player to choose the first server'
-                          : (!_gameStarted
-                              ? 'First server selected. Start the game when ready.'
-                              : (isRallyScoring
-                                  ? 'Use the left or right rally buttons to award each rally.'
-                                  : 'Use + for the serving side and the center control for second server or side out.')),
-                      style: const TextStyle(
-                        color: Colors.black87,
-                        fontWeight: FontWeight.w600,
-                      ),
-                    ),
-                  ),
-                ),
                 Expanded(
                   child: Padding(
                     padding: const EdgeInsets.symmetric(horizontal: 12),
@@ -725,7 +690,7 @@ class _RefereeDashboardScreenState extends State<RefereeDashboardScreen> {
                       final int bottomLeftAvail = _endsSwitched ? rightAvail : leftAvail;
                       final int bottomRightAvail = _endsSwitched ? leftAvail : rightAvail;
                       Widget dot(bool filled) {
-                        final color = const Color.fromARGB(255, 26, 161, 123);
+                        const color = Color.fromARGB(255, 26, 161, 123);
                         return Container(
                           width: 10,
                           height: 10,
@@ -744,7 +709,7 @@ class _RefereeDashboardScreenState extends State<RefereeDashboardScreen> {
                             borderRadius: BorderRadius.zero,
                             boxShadow: [
                               BoxShadow(
-                                color: Colors.black.withOpacity(0.15),
+                                color: Colors.black.withValues(alpha: 0.15),
                                 blurRadius: 16,
                                 spreadRadius: 1,
                                 offset: const Offset(0, 6),
@@ -811,18 +776,20 @@ class _RefereeDashboardScreenState extends State<RefereeDashboardScreen> {
                               ),
                             ),
                             Align(
-                            alignment: isSingles
-                                ? (leftSinglesTop ? Alignment.topLeft : Alignment.bottomLeft)
-                                : Alignment.topLeft,
-                              child: FractionallySizedBox(
-                                widthFactor: 0.5,
-                                heightFactor: 0.5,
-                                child: Padding(
-                                  padding: const EdgeInsets.all(8.0),
+                              alignment: isSingles
+                                  ? (leftSinglesTop ? Alignment.topLeft : Alignment.bottomLeft)
+                                  : Alignment.topLeft,
+                              child: Padding(
+                                padding: const EdgeInsets.all(8),
+                                child: ConstrainedBox(
+                                  constraints: BoxConstraints(
+                                    maxWidth: (c.maxWidth * 0.46).clamp(140, 520).toDouble(),
+                                  ),
                                   child: _playerCell(
                                     leftTop,
                                     isServing: _servingPlayer == leftTop,
                                     isBase: leftTop == displayLeftBase,
+                                    isRight: false,
                                   ),
                                 ),
                               ),
@@ -830,15 +797,17 @@ class _RefereeDashboardScreenState extends State<RefereeDashboardScreen> {
                             if (isDoubles && leftBottom.isNotEmpty)
                               Align(
                                 alignment: Alignment.bottomLeft,
-                                child: FractionallySizedBox(
-                                  widthFactor: 0.5,
-                                  heightFactor: 0.5,
-                                  child: Padding(
-                                    padding: const EdgeInsets.all(8.0),
+                                child: Padding(
+                                  padding: const EdgeInsets.all(8),
+                                  child: ConstrainedBox(
+                                    constraints: BoxConstraints(
+                                      maxWidth: (c.maxWidth * 0.46).clamp(140, 520).toDouble(),
+                                    ),
                                     child: _playerCell(
                                       leftBottom,
-                                    isServing: _servingPlayer == leftBottom,
-                                    isBase: leftBottom == displayLeftBase,
+                                      isServing: _servingPlayer == leftBottom,
+                                      isBase: leftBottom == displayLeftBase,
+                                      isRight: false,
                                     ),
                                   ),
                                 ),
@@ -847,18 +816,17 @@ class _RefereeDashboardScreenState extends State<RefereeDashboardScreen> {
                             alignment: isSingles
                                 ? (rightSinglesTop ? Alignment.topRight : Alignment.bottomRight)
                                 : Alignment.topRight,
-                              child: FractionallySizedBox(
-                                widthFactor: 0.5,
-                                heightFactor: 0.5,
-                                child: Align(
-                                  alignment: Alignment.centerRight,
-                                  child: Padding(
-                                    padding: const EdgeInsets.all(8.0),
-                                    child: _playerCell(
-                                      rightTop,
+                              child: Padding(
+                                padding: const EdgeInsets.all(8),
+                                child: ConstrainedBox(
+                                  constraints: BoxConstraints(
+                                    maxWidth: (c.maxWidth * 0.46).clamp(140, 520).toDouble(),
+                                  ),
+                                  child: _playerCell(
+                                    rightTop,
                                     isServing: _servingPlayer == rightTop,
                                     isBase: rightTop == displayRightBase,
-                                    ),
+                                    isRight: true,
                                   ),
                                 ),
                               ),
@@ -866,18 +834,17 @@ class _RefereeDashboardScreenState extends State<RefereeDashboardScreen> {
                             if (isDoubles && rightBottom.isNotEmpty)
                               Align(
                                 alignment: Alignment.bottomRight,
-                                child: FractionallySizedBox(
-                                  widthFactor: 0.5,
-                                  heightFactor: 0.5,
-                                  child: Align(
-                                    alignment: Alignment.centerRight,
-                                    child: Padding(
-                                      padding: const EdgeInsets.all(8.0),
-                                      child: _playerCell(
-                                        rightBottom,
-                                        isServing: _servingPlayer == rightBottom,
-                                        isBase: rightBottom == displayRightBase,
-                                      ),
+                                child: Padding(
+                                  padding: const EdgeInsets.all(8),
+                                  child: ConstrainedBox(
+                                    constraints: BoxConstraints(
+                                      maxWidth: (c.maxWidth * 0.46).clamp(140, 520).toDouble(),
+                                    ),
+                                    child: _playerCell(
+                                      rightBottom,
+                                      isServing: _servingPlayer == rightBottom,
+                                      isBase: rightBottom == displayRightBase,
+                                      isRight: true,
                                     ),
                                   ),
                                 ),
@@ -974,7 +941,7 @@ class _RefereeDashboardScreenState extends State<RefereeDashboardScreen> {
                   padding: const EdgeInsets.fromLTRB(12, 8, 12, 4),
                   child: Row(
                     children: [
-                      if (!_gameStarted && g != null) ...[
+                      if (!_gameStarted) ...[
                         Builder(builder: (_) {
                           final leftTeam = _splitTeam(g.player1);
                           final rightTeam = _splitTeam(g.player2);
@@ -999,7 +966,7 @@ class _RefereeDashboardScreenState extends State<RefereeDashboardScreen> {
                       IconButton(onPressed: _onTimeout, icon: const Icon(Icons.timer)),
                       IconButton(onPressed: _onMedicalTimeout, icon: const Icon(Icons.healing)),
                       const Spacer(),
-                      if (!_gameStarted && g != null) ...[
+                      if (!_gameStarted) ...[
                         Builder(builder: (_) {
                           final leftTeam = _splitTeam(g.player1);
                           final rightTeam = _splitTeam(g.player2);
@@ -1348,35 +1315,8 @@ class _RefereeDashboardScreenState extends State<RefereeDashboardScreen> {
                       ),
                       if (isSubmitting)
                         Positioned.fill(
-                          child: ColoredBox(
-                            color: Color(0xAAFFFFFF),
-                            child: Center(
-                              child: Container(
-                                padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 18),
-                                decoration: BoxDecoration(
-                                  color: Colors.white,
-                                  borderRadius: BorderRadius.circular(14),
-                                  boxShadow: const [
-                                    BoxShadow(
-                                      color: Colors.black12,
-                                      blurRadius: 12,
-                                      offset: Offset(0, 4),
-                                    ),
-                                  ],
-                                ),
-                                child: const Column(
-                                  mainAxisSize: MainAxisSize.min,
-                                  children: [
-                                    CircularProgressIndicator(),
-                                    SizedBox(height: 14),
-                                    Text(
-                                      'Submitting match, please wait...',
-                                      style: TextStyle(fontWeight: FontWeight.w600),
-                                    ),
-                                  ],
-                                ),
-                              ),
-                            ),
+                          child: const _SubmitLoadingOverlay(
+                            message: 'Submitting match, please wait...',
                           ),
                         ),
                     ],
@@ -1552,7 +1492,7 @@ class _SinglesCourtPainter extends CustomPainter {
       ..strokeWidth = 1;
     final w = size.width;
     final h = size.height;
-    final pad = 0.0;
+    const pad = 0.0;
     final rect = Rect.fromLTWH(pad, pad, w - pad * 2, h - pad * 2);
     final sideFill = Paint()
       ..color = const Color(0xFF0B2A5A)
@@ -1577,7 +1517,7 @@ class _SinglesCourtPainter extends CustomPainter {
     final leftRectBottom = Rect.fromLTWH(rect.left, midY, rect.width / 3, rect.height / 2);
     final rightRectTop = Rect.fromLTWH(x2, rect.top, rect.width / 3, rect.height / 2);
     final rightRectBottom = Rect.fromLTWH(x2, midY, rect.width / 3, rect.height / 2);
-    final hl = Paint()..color = Colors.yellow.withOpacity(0.15);
+    final hl = Paint()..color = Colors.yellow.withValues(alpha: 0.15);
     Rect toDraw;
     if (highlightRight) {
       toDraw = highlightTop ? rightRectTop : rightRectBottom;
@@ -1671,7 +1611,7 @@ class _CategoryBadge extends StatelessWidget {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
       decoration: BoxDecoration(
-        color: bg.withOpacity(0.9),
+        color: bg.withValues(alpha: 0.9),
         borderRadius: BorderRadius.circular(8),
         boxShadow: const [BoxShadow(color: Colors.black26, blurRadius: 4, offset: Offset(0, 2))],
       ),
@@ -1690,10 +1630,12 @@ class _CategoryBadge extends StatelessWidget {
 class _ScoringFormatChip extends StatelessWidget {
   final String label;
   final bool isRally;
+  final bool dense;
 
   const _ScoringFormatChip({
     required this.label,
     required this.isRally,
+    this.dense = false,
   });
 
   @override
@@ -1701,21 +1643,250 @@ class _ScoringFormatChip extends StatelessWidget {
     final background = isRally ? const Color(0xFFFFF1F2) : const Color(0xFFF0FDF4);
     final foreground = isRally ? const Color(0xFFE11D48) : const Color(0xFF15803D);
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+      padding: dense
+          ? const EdgeInsets.symmetric(horizontal: 10, vertical: 5)
+          : const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
       decoration: BoxDecoration(
         color: background,
         borderRadius: BorderRadius.circular(999),
-        border: Border.all(color: foreground.withOpacity(0.35)),
+        border: Border.all(color: foreground.withValues(alpha: 0.35)),
       ),
       child: Text(
         label,
         style: TextStyle(
           color: foreground,
           fontWeight: FontWeight.w700,
+          fontSize: dense ? 12 : null,
         ),
       ),
     );
   }
+}
+
+class _MatchHeaderBar extends StatelessWidget {
+  final String leftName;
+  final String rightName;
+  final String subtitle;
+
+  const _MatchHeaderBar({
+    required this.leftName,
+    required this.rightName,
+    required this.subtitle,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return SafeArea(
+      bottom: false,
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(12, 8, 12, 6),
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(14),
+            border: Border.all(color: Colors.black12),
+          ),
+          child: Row(
+            children: [
+              Expanded(
+                child: Text(
+                  leftName,
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  style: theme.textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w700),
+                ),
+              ),
+              const SizedBox(width: 10),
+              Text(
+                subtitle,
+                style: theme.textTheme.labelMedium
+                    ?.copyWith(color: Colors.black54, fontWeight: FontWeight.w700),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Text(
+                  rightName,
+                  textAlign: TextAlign.right,
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  style: theme.textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w700),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _SubmitLoadingOverlay extends StatefulWidget {
+  final String message;
+  const _SubmitLoadingOverlay({required this.message});
+
+  @override
+  State<_SubmitLoadingOverlay> createState() => _SubmitLoadingOverlayState();
+}
+
+class _SubmitLoadingOverlayState extends State<_SubmitLoadingOverlay>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _controller;
+  late final Animation<double> _scale;
+  late final Animation<double> _fade;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 900),
+    )..repeat(reverse: true);
+    _scale = Tween<double>(begin: 0.98, end: 1.02).animate(
+      CurvedAnimation(parent: _controller, curve: Curves.easeInOut),
+    );
+    _fade = Tween<double>(begin: 0.65, end: 1.0).animate(
+      CurvedAnimation(parent: _controller, curve: Curves.easeInOut),
+    );
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Stack(
+      children: [
+        Positioned.fill(
+          child: BackdropFilter(
+            filter: ui.ImageFilter.blur(sigmaX: 6, sigmaY: 6),
+            child: Container(
+              color: Colors.black.withValues(alpha: 0.20),
+            ),
+          ),
+        ),
+        Center(
+          child: AnimatedBuilder(
+            animation: _controller,
+            builder: (context, _) {
+              return Transform.scale(
+                scale: _scale.value,
+                child: Opacity(
+                  opacity: _fade.value,
+                  child: Container(
+                    constraints: const BoxConstraints(maxWidth: 360),
+                    padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 16),
+                    decoration: BoxDecoration(
+                      color: Colors.white,
+                      borderRadius: BorderRadius.circular(16),
+                      boxShadow: const [
+                        BoxShadow(
+                          color: Colors.black26,
+                          blurRadius: 18,
+                          offset: Offset(0, 10),
+                        ),
+                      ],
+                    ),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        const _SpinnerRing(size: 28),
+                        const SizedBox(width: 14),
+                        Flexible(
+                          child: Text(
+                            widget.message,
+                            maxLines: 2,
+                            overflow: TextOverflow.ellipsis,
+                            style: theme.textTheme.titleSmall
+                                ?.copyWith(fontWeight: FontWeight.w800),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              );
+            },
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _SpinnerRing extends StatefulWidget {
+  final double size;
+  const _SpinnerRing({required this.size});
+
+  @override
+  State<_SpinnerRing> createState() => _SpinnerRingState();
+}
+
+class _SpinnerRingState extends State<_SpinnerRing>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _controller;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = AnimationController(vsync: this, duration: const Duration(milliseconds: 900))
+      ..repeat();
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return RotationTransition(
+      turns: _controller,
+      child: SizedBox(
+        width: widget.size,
+        height: widget.size,
+        child: CustomPaint(
+          painter: _SpinnerRingPainter(),
+        ),
+      ),
+    );
+  }
+}
+
+class _SpinnerRingPainter extends CustomPainter {
+  @override
+  void paint(Canvas canvas, Size size) {
+    final rect = Offset.zero & size;
+    final stroke = size.shortestSide * 0.16;
+    final paint = Paint()
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = stroke
+      ..strokeCap = StrokeCap.round
+      ..shader = SweepGradient(
+        colors: [
+          const Color(0xFF22C55E).withValues(alpha: 0.15),
+          const Color(0xFF22C55E),
+          const Color(0xFF2563EB),
+          const Color(0xFF22C55E).withValues(alpha: 0.15),
+        ],
+      ).createShader(rect);
+    canvas.drawArc(
+      Rect.fromLTWH(stroke / 2, stroke / 2, size.width - stroke, size.height - stroke),
+      0,
+      5.1,
+      false,
+      paint,
+    );
+  }
+
+  @override
+  bool shouldRepaint(covariant CustomPainter oldDelegate) => false;
 }
 
 extension on _RefereeDashboardScreenState {
@@ -2002,8 +2173,8 @@ extension on _RefereeDashboardScreenState {
         final p2Disabled = _timeouts2 >= 1;
         return AlertDialog(
           shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-          title: Row(
-            children: const [
+          title: const Row(
+            children: [
               Icon(Icons.timer, color: Color.fromARGB(255, 26, 161, 123)),
               SizedBox(width: 8),
               Text('Timeout'),
@@ -2064,8 +2235,8 @@ extension on _RefereeDashboardScreenState {
       context: context,
       builder: (_) => AlertDialog(
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-        title: Row(
-          children: const [
+        title: const Row(
+          children: [
             Icon(Icons.timer_outlined, color: Color.fromARGB(255, 26, 161, 123)),
             SizedBox(width: 8),
             Text('Confirm Timeout'),
@@ -2125,8 +2296,8 @@ extension on _RefereeDashboardScreenState {
           });
           return AlertDialog(
             shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-            title: Row(
-              children: const [
+            title: const Row(
+              children: [
                 Icon(Icons.timer, color: Color.fromARGB(255, 26, 161, 123)),
                 SizedBox(width: 8),
                 Text('Timeout'),
@@ -2182,8 +2353,8 @@ extension on _RefereeDashboardScreenState {
         final p2Disabled = _medTimeouts2 >= 1;
         return AlertDialog(
           shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-          title: Row(
-            children: const [
+          title: const Row(
+            children: [
               Icon(Icons.medical_services_outlined, color: Color.fromARGB(255, 26, 161, 123)),
               SizedBox(width: 8),
               Text('Medical Timeout'),
@@ -2244,8 +2415,8 @@ extension on _RefereeDashboardScreenState {
       context: context,
       builder: (_) => AlertDialog(
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-        title: Row(
-          children: const [
+        title: const Row(
+          children: [
             Icon(Icons.medical_services_outlined, color: Color.fromARGB(255, 26, 161, 123)),
             SizedBox(width: 8),
             Text('Confirm Medical Timeout'),
@@ -2305,8 +2476,8 @@ extension on _RefereeDashboardScreenState {
           });
           return AlertDialog(
             shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-            title: Row(
-              children: const [
+            title: const Row(
+              children: [
                 Icon(Icons.medical_services_outlined, color: Color.fromARGB(255, 26, 161, 123)),
                 SizedBox(width: 8),
                 Text('Medical Timeout'),

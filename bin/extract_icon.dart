@@ -2,8 +2,8 @@ import 'dart:convert';
 import 'dart:io';
 
 void main() async {
-  final svgPath = 'assets/images/vite.svg';
-  final outPath = 'assets/images/app_icon.png';
+  const svgPath = 'assets/images/vite.svg';
+  const outPath = 'assets/images/app_icon.png';
   final svgFile = File(svgPath);
   if (!await svgFile.exists()) {
     stderr.writeln('SVG not found at $svgPath');
