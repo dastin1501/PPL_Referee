@@ -36,7 +36,8 @@ class SubmitScoreResult {
 }
 
 class ApiService {
-  String get baseUrl => dotenv.env['API_BASE_URL'] ?? 'http://localhost:5000';
+  String? _baseUrlOverride;
+  String get baseUrl => _baseUrlOverride ?? (dotenv.env['API_BASE_URL'] ?? 'http://localhost:5000');
   String? _token;
 
   Map<String, String> get _headers => {
@@ -48,6 +49,15 @@ class ApiService {
 
   void setToken(String token) {
     _token = token;
+  }
+
+  void setBaseUrl(String? url) {
+    final trimmed = (url ?? '').trim();
+    if (trimmed.isEmpty) {
+      _baseUrlOverride = null;
+      return;
+    }
+    _baseUrlOverride = trimmed.endsWith('/') ? trimmed.substring(0, trimmed.length - 1) : trimmed;
   }
 
   Future<ApiResult> signup({
@@ -62,7 +72,8 @@ class ApiService {
     required String gender,
   }) async {
     try {
-      final res = await http.post(
+      final res = await http
+          .post(
         Uri.parse('$baseUrl/api/auth/register'),
         headers: _headers,
         body: jsonEncode({
@@ -77,24 +88,27 @@ class ApiService {
           'birthDate': birthDate,
           'gender': gender,
         }),
-      );
+      )
+          .timeout(const Duration(seconds: 20));
       if (res.statusCode == 201 || res.statusCode == 200) {
         final data = jsonDecode(res.body);
         return ApiResult(ok: true, error: null, user: User.fromJson(data['user']), token: null);
       }
       return ApiResult(ok: false, error: 'Signup failed: ${res.body}', token: null);
     } catch (e) {
-      return ApiResult(ok: false, error: 'Network error: $e');
+      return ApiResult(ok: false, error: 'Network error (${baseUrl}): $e');
     }
   }
 
   Future<ApiResult> login(String email, String password) async {
     try {
-      final res = await http.post(
+      final res = await http
+          .post(
         Uri.parse('$baseUrl/api/auth/login'),
         headers: _headers,
         body: jsonEncode({'email': email, 'password': password}),
-      );
+      )
+          .timeout(const Duration(seconds: 20));
       if (res.statusCode == 200) {
         final data = jsonDecode(res.body);
         _token = data['token'];
@@ -104,7 +118,7 @@ class ApiService {
       final errorBody = jsonDecode(res.body);
       return ApiResult(ok: false, error: errorBody['message'] ?? 'Login failed: ${res.statusCode}', token: null);
     } catch (e) {
-      return ApiResult(ok: false, error: 'Network error: $e', token: null);
+      return ApiResult(ok: false, error: 'Network error (${baseUrl}): $e', token: null);
     }
   }
 

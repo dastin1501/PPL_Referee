@@ -8,11 +8,13 @@ import '../models.dart';
 class AppState extends ChangeNotifier {
   static const _storageTokenKey = 'referee_auth_token';
   static const _storageUserKey = 'referee_auth_user';
+  static const _storageApiBaseUrlKey = 'referee_api_base_url';
   static const bool _useScheduledQueueEndpoint = false;
 
   final ApiService _api = ApiService();
 
   User? currentUser;
+  String apiBaseUrl = '';
   List<Tournament> tournaments = [];
   List<String> courts = [];
   List<TournamentMatch> games = [];
@@ -45,6 +47,11 @@ class AppState extends ChangeNotifier {
 
   Future<void> init() async {
     final prefs = await SharedPreferences.getInstance();
+    final savedBaseUrl = prefs.getString(_storageApiBaseUrlKey);
+    if (savedBaseUrl != null && savedBaseUrl.trim().isNotEmpty) {
+      _api.setBaseUrl(savedBaseUrl);
+    }
+    apiBaseUrl = _api.baseUrl;
     final token = prefs.getString(_storageTokenKey);
     final userJson = prefs.getString(_storageUserKey);
     await _loadOutbox();
@@ -59,6 +66,23 @@ class AppState extends ChangeNotifier {
       }
     }
     initialized = true;
+    notifyListeners();
+  }
+
+  Future<void> setApiBaseUrl(String url) async {
+    final prefs = await SharedPreferences.getInstance();
+    final trimmed = url.trim();
+    if (trimmed.isEmpty) {
+      await prefs.remove(_storageApiBaseUrlKey);
+      _api.setBaseUrl(null);
+      apiBaseUrl = _api.baseUrl;
+      notifyListeners();
+      return;
+    }
+    final normalized = trimmed.endsWith('/') ? trimmed.substring(0, trimmed.length - 1) : trimmed;
+    await prefs.setString(_storageApiBaseUrlKey, normalized);
+    _api.setBaseUrl(normalized);
+    apiBaseUrl = _api.baseUrl;
     notifyListeners();
   }
 

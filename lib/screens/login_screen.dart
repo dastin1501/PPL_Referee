@@ -15,6 +15,64 @@ class _LoginScreenState extends State<LoginScreen> {
   final _passwordController = TextEditingController();
   bool _obscurePassword = true;
 
+  Future<void> _showServerDialog(AppState app) async {
+    final ctrl = TextEditingController(text: app.apiBaseUrl);
+    await showDialog<void>(
+      context: context,
+      builder: (_) {
+        return AlertDialog(
+          title: const Text('Server Settings'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text(
+                'API Base URL',
+                style: TextStyle(fontSize: 12, fontWeight: FontWeight.w700, color: Colors.black54),
+              ),
+              const SizedBox(height: 8),
+              TextField(
+                controller: ctrl,
+                decoration: InputDecoration(
+                  hintText: 'http://<server-ip>:5000',
+                  border: OutlineInputBorder(borderRadius: BorderRadius.circular(14)),
+                ),
+              ),
+              const SizedBox(height: 10),
+              Text(
+                'Tip: Kapag naka-phone, huwag gumamit ng localhost. Gamitin ang LAN IP ng PC/server (hal. http://192.168.1.10:5000).',
+                style: TextStyle(fontSize: 12, color: Colors.grey.shade700),
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(),
+              child: const Text('Cancel'),
+            ),
+            TextButton(
+              onPressed: () async {
+                await app.setApiBaseUrl('');
+                if (!context.mounted) return;
+                Navigator.of(context).pop();
+              },
+              child: const Text('Reset'),
+            ),
+            ElevatedButton(
+              onPressed: () async {
+                await app.setApiBaseUrl(ctrl.text);
+                if (!context.mounted) return;
+                Navigator.of(context).pop();
+              },
+              child: const Text('Save'),
+            ),
+          ],
+        );
+      },
+    );
+    ctrl.dispose();
+  }
+
   @override
   void dispose() {
     _emailController.dispose();
@@ -79,6 +137,27 @@ class _LoginScreenState extends State<LoginScreen> {
                           key: _formKey,
                           child: Column(
                             children: [
+                              Row(
+                                children: [
+                                  Expanded(
+                                    child: Text(
+                                      'Server: ${app.apiBaseUrl}',
+                                      maxLines: 1,
+                                      overflow: TextOverflow.ellipsis,
+                                      style: TextStyle(color: Colors.grey.shade700, fontSize: 12),
+                                    ),
+                                  ),
+                                  TextButton.icon(
+                                    onPressed: app.loading ? null : () => _showServerDialog(app),
+                                    icon: const Icon(Icons.settings, size: 18),
+                                    label: const Text('Server'),
+                                    style: TextButton.styleFrom(
+                                      foregroundColor: const Color.fromARGB(255, 26, 161, 123),
+                                    ),
+                                  ),
+                                ],
+                              ),
+                              const SizedBox(height: 10),
                               TextFormField(
                                 controller: _emailController,
                                 decoration: InputDecoration(
