@@ -7,6 +7,7 @@ import 'screens/signup_screen.dart';
 import 'screens/tournament_list_screen.dart';
 import 'screens/court_games_screen.dart';
 import 'screens/referee_dashboard_screen.dart';
+import 'screens/team_match_confirmation_screen.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();

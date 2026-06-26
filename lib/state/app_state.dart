@@ -225,12 +225,30 @@ class AppState extends ChangeNotifier {
     final targetDate = _normalizeDate(selectedDate);
     if (targetDate == null) return [];
 
+    bool hasAnyScheduledGameTime(TournamentMatch g) {
+      if (g.time.trim().isNotEmpty) return true;
+      if ((g.mdTime2?.toString().trim().isNotEmpty ?? false)) return true;
+      if ((g.mdTime3?.toString().trim().isNotEmpty ?? false)) return true;
+      return false;
+    }
+
+    bool hasAnyExplicitGameStatus(TournamentMatch g) {
+      final s1 = normalizeGameStatusKey(g.game1Status);
+      final s2 = normalizeGameStatusKey(g.game2Status);
+      final s3 = normalizeGameStatusKey(g.game3Status);
+      return s1 != 'unschedule' || s2 != 'unschedule' || s3 != 'unschedule';
+    }
+
     final filtered = games.where((g) {
       if (_normalizeCourt(g.court) != targetCourt) return false;
       final gameDate = _normalizeDate(g.date);
       if (gameDate == null || gameDate != targetDate) return false;
+      if (selectedTournament?.hasAuthoritativeSchedule == true &&
+          g.scheduleFromAssignments != true) {
+        return false;
+      }
       // Only show matches with valid schedule-to-court/date mapping.
-      if ((g.time).trim().isEmpty) return false;
+      if (!hasAnyScheduledGameTime(g) && !hasAnyExplicitGameStatus(g)) return false;
       return true;
     }).toList();
     final seen = <String>{};
@@ -249,6 +267,137 @@ class AppState extends ChangeNotifier {
           .compareTo('${b.matchLabel}-${b.matchKey}-${b.id}');
     });
     return unique;
+  }
+
+  String normalizeStatusKey(String? raw) {
+    final s = (raw ?? '').trim().toLowerCase();
+    if (s.isEmpty) return 'unschedule';
+    final compact = s.replaceAll(RegExp(r'[\s_-]+'), '');
+    if (compact == 'unschedule' || compact == 'unscheduled') return 'unschedule';
+    if (compact == 'scheduled') return 'scheduled';
+    if (compact == 'called') return 'called';
+    if (compact == 'ongoing') return 'ongoing';
+    if (compact == 'completed') return 'completed';
+    return s;
+  }
+
+  String normalizeGameStatusKey(String? raw) {
+    final s = (raw ?? '').trim().toLowerCase();
+    if (s.isEmpty) return 'unschedule';
+    final compact = s.replaceAll(RegExp(r'[\s_-]+'), '');
+    if (compact == 'unschedule' || compact == 'unscheduled') return 'unschedule';
+    if (compact == 'scheduled') return 'scheduled';
+    if (compact == 'ongoing') return 'ongoing';
+    if (compact == 'completed') return 'completed';
+    return s;
+  }
+
+  bool hasScheduleForGame(TournamentMatch match, int gameNo) {
+    if (match.court.trim().isEmpty) return false;
+    if (match.date.trim().isEmpty) return false;
+    if (selectedTournament?.hasAuthoritativeSchedule == true &&
+        match.scheduleFromAssignments != true) {
+      return false;
+    }
+    if (gameNo == 1) return match.time.trim().isNotEmpty;
+    if (gameNo == 2) return (match.mdTime2?.toString().trim().isNotEmpty ?? false);
+    if (gameNo == 3) return (match.mdTime3?.toString().trim().isNotEmpty ?? false);
+    return false;
+  }
+
+  String gameStatusKey(TournamentMatch match, int gameNo) {
+    String raw;
+    if (gameNo == 1) {
+      raw = match.game1Status;
+    } else if (gameNo == 2) {
+      raw = match.game2Status;
+    } else if (gameNo == 3) {
+      raw = match.game3Status;
+    } else {
+      raw = '';
+    }
+    if (raw.trim().isNotEmpty) {
+      return normalizeGameStatusKey(raw);
+    }
+
+    bool hasCompletedEvidence() {
+      final sigs = match.gameSignatures;
+      if (sigs != null && sigs.length >= gameNo) {
+        final sig = (sigs[gameNo - 1] ?? '').toString().trim();
+        if (sig.isNotEmpty) return true;
+      }
+      final a = _scoreForGame(match, gameNo, true) ?? 0;
+      final b = _scoreForGame(match, gameNo, false) ?? 0;
+      return (a + b) > 0;
+    }
+
+    if (hasCompletedEvidence()) return 'completed';
+    if (hasScheduleForGame(match, gameNo)) return 'scheduled';
+    return 'unschedule';
+  }
+
+  String gameStatusLabel(TournamentMatch match, int gameNo) {
+    switch (gameStatusKey(match, gameNo)) {
+      case 'scheduled':
+        return 'Scheduled';
+      case 'ongoing':
+        return 'Ongoing';
+      case 'completed':
+        return 'Completed';
+      default:
+        return 'Unscheduled';
+    }
+  }
+
+  bool isCallableMatchGame(TournamentMatch match, int gameNo) {
+    final statusKey = gameStatusKey(match, gameNo);
+    if (statusKey != 'scheduled') return false;
+    return hasScheduleForGame(match, gameNo);
+  }
+
+  bool isGameScheduled(TournamentMatch match, int gameNo) {
+    return isCallableMatchGame(match, gameNo);
+  }
+
+  List<int> scheduledGames(TournamentMatch match) {
+    final out = <int>[];
+    for (int i = 1; i <= 3; i++) {
+      final statusKey = gameStatusKey(match, i);
+      if (statusKey == 'unschedule') continue;
+      if (hasScheduleForGame(match, i) || statusKey == 'scheduled' || statusKey == 'ongoing') {
+        out.add(i);
+      }
+    }
+    return out;
+  }
+
+  int resolveBestScheduledGameNo(TournamentMatch match, {int? preferred}) {
+    final scheduled = scheduledGames(match);
+    if (preferred != null && scheduled.contains(preferred)) {
+      return preferred;
+    }
+    if (scheduled.isEmpty) return 1;
+
+    int s1For(int idx) {
+      if (idx == 1) return match.game1Player1 ?? 0;
+      if (idx == 2) return match.game2Player1 ?? 0;
+      if (idx == 3) return match.game3Player1 ?? 0;
+      return 0;
+    }
+
+    int s2For(int idx) {
+      if (idx == 1) return match.game1Player2 ?? 0;
+      if (idx == 2) return match.game2Player2 ?? 0;
+      if (idx == 3) return match.game3Player2 ?? 0;
+      return 0;
+    }
+
+    for (final idx in scheduled) {
+      if (gameStatusKey(match, idx) != 'completed' && (s1For(idx) + s2For(idx)) == 0) {
+        return idx;
+      }
+    }
+    return scheduled.first;
   }
 
   void openGame(TournamentMatch g) {
@@ -303,28 +452,32 @@ class AppState extends ChangeNotifier {
     final g = selectedGame;
     if (t == null || g == null) return;
     final payloadFields = _sanitizeMatchFields(fields);
+    final submitFields = Map<String, dynamic>.from(payloadFields);
     if (!payloadFields.containsKey('id') ||
         payloadFields['id'] == null ||
         payloadFields['id'].toString().isEmpty) {
       payloadFields['id'] = g.id;
+      submitFields['id'] = g.id;
     }
     final status = payloadFields['status']?.toString().trim();
+    String normalizeStatus(String raw) {
+      final v = raw.trim();
+      if (v.isEmpty) return '';
+      final low = v.toLowerCase();
+      if (low == 'unschedule' || low == 'unscheduled') return 'Unscheduled';
+      if (low == 'scheduled') return 'Scheduled';
+      if (low == 'ongoing') return 'Ongoing';
+      if (low == 'completed') return 'Completed';
+      if (low == 'called') return 'Called';
+      return v;
+    }
     if (status != null && status.isNotEmpty) {
-      final currentStatus = g.status.trim().isEmpty ? 'Scheduled' : g.status.trim();
-      if (status != currentStatus) {
-        final allowedNext = <String, Set<String>>{
-          'Scheduled': {'Called', 'Ongoing', 'Completed'},
-          'Called': {'Ongoing', 'Completed'},
-          'Ongoing': {'Completed'},
-          'Completed': <String>{},
-        };
-        final nextAllowed = allowedNext[currentStatus] ?? const <String>{};
-        if (!nextAllowed.contains(status)) {
-          error = 'Invalid status transition: $currentStatus -> $status.';
-          notifyListeners();
-          return;
-        }
-      }
+      final targetStatus = normalizeStatus(status);
+      final selectedIndex = selectedGameNumber.clamp(1, 3);
+      payloadFields['game${selectedIndex}Status'] = targetStatus;
+      submitFields['status'] = targetStatus;
+      submitFields['game${selectedIndex}Status'] = targetStatus;
+      payloadFields.remove('status');
     }
     if (!_hasStableIdentifiers(g)) {
       error = 'Missing stable match identifier for score sync.';
@@ -338,19 +491,24 @@ class AppState extends ChangeNotifier {
       );
     }
     final matchIdentity = _matchIdentityKey(g);
-    if (matchIdentity.isEmpty) {
+    final selectedIndex = selectedGameNumber.clamp(1, 3);
+    final gameIdentity = _matchGameIdentityKey(g, selectedIndex);
+    if (matchIdentity.isEmpty || gameIdentity.isEmpty) {
       error = 'Missing stable match identifier for score sync.';
       notifyListeners();
       return;
     }
     final isOngoingStatus = status == 'Ongoing';
-    if (!isOngoingStatus && _inFlightSubmitSeqByMatch.containsKey(matchIdentity)) {
+    if (!isOngoingStatus && _inFlightSubmitSeqByMatch.containsKey(gameIdentity)) {
       error = 'Submission already in progress for this match.';
       notifyListeners();
       throw StateError(error!);
     }
 
-    final applyOptimistically = status == null || status.isEmpty || isOngoingStatus;
+    final applyOptimistically = status == null ||
+        status.isEmpty ||
+        isOngoingStatus ||
+        (g.type != 'group' && status == 'Completed');
     if (applyOptimistically) {
       final updated = _mergeMatchWithFields(g, payloadFields);
       _replaceSelectedGame(updated, g);
@@ -358,19 +516,20 @@ class AppState extends ChangeNotifier {
     }
 
     if (status == 'Ongoing' && debounceOngoing) {
-      _pendingOngoingFields = payloadFields;
-      _pendingOngoingMatchKey = matchIdentity;
+      _pendingOngoingFields = submitFields;
+      _pendingOngoingMatchKey = gameIdentity;
       _ongoingSyncTimer?.cancel();
       _ongoingSyncTimer = Timer(const Duration(milliseconds: 900), () async {
         final pending = _pendingOngoingFields;
         final pendingMatchKey = _pendingOngoingMatchKey;
         _pendingOngoingFields = null;
         _pendingOngoingMatchKey = null;
-        if (pending == null || pendingMatchKey != matchIdentity) return;
+        if (pending == null || pendingMatchKey != gameIdentity) return;
         await _submitSelectedMatchPayload(
           tournament: t,
           match: _findMatchByIdentity(matchIdentity) ?? g,
           matchIdentity: matchIdentity,
+          gameIdentity: gameIdentity,
           fields: pending,
           retryOnce: true,
           throwOnFailure: false,
@@ -383,7 +542,8 @@ class AppState extends ChangeNotifier {
       tournament: t,
       match: _findMatchByIdentity(matchIdentity) ?? g,
       matchIdentity: matchIdentity,
-      fields: payloadFields,
+      gameIdentity: gameIdentity,
+      fields: submitFields,
       retryOnce: status == 'Ongoing',
       throwOnFailure: status != 'Ongoing',
     );
@@ -426,10 +586,17 @@ class AppState extends ChangeNotifier {
   TournamentMatch _mergeMatchWithFields(TournamentMatch g, Map<String, dynamic> payload) {
     return TournamentMatch(
       id: g.id,
+      documentId: g.documentId,
+      scheduleFromAssignments: g.scheduleFromAssignments,
       player1: g.player1,
       player2: g.player2,
+      player1Name: g.player1Name,
+      player2Name: g.player2Name,
       score1: _fieldAsInt(payload, 'score1', g.score1) ?? g.score1,
       score2: _fieldAsInt(payload, 'score2', g.score2) ?? g.score2,
+      game1Status: payload['game1Status']?.toString() ?? g.game1Status,
+      game2Status: payload['game2Status']?.toString() ?? g.game2Status,
+      game3Status: payload['game3Status']?.toString() ?? g.game3Status,
       game1Player1: _fieldAsInt(payload, 'game1Player1', g.game1Player1),
       game1Player2: _fieldAsInt(payload, 'game1Player2', g.game1Player2),
       game2Player1: _fieldAsInt(payload, 'game2Player1', g.game2Player1),
@@ -459,6 +626,18 @@ class AppState extends ChangeNotifier {
           : g.gameSignatures,
       refereeNote: payload['refereeNote']?.toString() ?? g.refereeNote,
       scoringFormat: g.scoringFormat,
+      game1Team1Player: payload['game1Team1Player']?.toString() ?? g.game1Team1Player,
+      game1Team1Player2: payload['game1Team1Player2']?.toString() ?? g.game1Team1Player2,
+      game1Team2Player: payload['game1Team2Player']?.toString() ?? g.game1Team2Player,
+      game1Team2Player2: payload['game1Team2Player2']?.toString() ?? g.game1Team2Player2,
+      game2Team1Player: payload['game2Team1Player']?.toString() ?? g.game2Team1Player,
+      game2Team1Player2: payload['game2Team1Player2']?.toString() ?? g.game2Team1Player2,
+      game2Team2Player: payload['game2Team2Player']?.toString() ?? g.game2Team2Player,
+      game2Team2Player2: payload['game2Team2Player2']?.toString() ?? g.game2Team2Player2,
+      game3Team1Player: payload['game3Team1Player']?.toString() ?? g.game3Team1Player,
+      game3Team1Player2: payload['game3Team1Player2']?.toString() ?? g.game3Team1Player2,
+      game3Team2Player: payload['game3Team2Player']?.toString() ?? g.game3Team2Player,
+      game3Team2Player2: payload['game3Team2Player2']?.toString() ?? g.game3Team2Player2,
     );
   }
 
@@ -468,47 +647,70 @@ class AppState extends ChangeNotifier {
       final key = _matchIdentityKey(m);
       if (key.isNotEmpty) existingByKey[key] = m;
     }
+    int keyRank(String key) {
+      switch (key) {
+        case 'unschedule':
+          return 0;
+        case 'scheduled':
+          return 1;
+        case 'ongoing':
+          return 2;
+        case 'completed':
+          return 3;
+        default:
+          return 1;
+      }
+    }
+
+    List<String?> mergeGameSignatures(List<String?>? existing, List<String?>? incoming) {
+      final out = List<String?>.filled(3, null);
+      for (int i = 0; i < 3; i++) {
+        final inc = (incoming != null && incoming.length > i) ? incoming[i] : null;
+        final ex = (existing != null && existing.length > i) ? existing[i] : null;
+        final incStr = (inc ?? '').toString().trim();
+        final exStr = (ex ?? '').toString().trim();
+        if (incStr.isNotEmpty) {
+          out[i] = incStr;
+        } else if (exStr.isNotEmpty) {
+          out[i] = exStr;
+        } else {
+          out[i] = null;
+        }
+      }
+      return out;
+    }
+
     return refreshed.map((m) {
       final matchIdentity = _matchIdentityKey(m);
       final existing = existingByKey[matchIdentity];
       if (existing == null) return m;
-      if (_inFlightSubmitSeqByMatch.containsKey(matchIdentity) &&
-          existing.status == 'Ongoing' &&
-          m.status == 'Scheduled') {
-        return _mergeMatchWithFields(m, {
-          'score1': existing.score1,
-          'score2': existing.score2,
-          'game1Player1': existing.game1Player1,
-          'game1Player2': existing.game1Player2,
-          'game2Player1': existing.game2Player1,
-          'game2Player2': existing.game2Player2,
-          'game3Player1': existing.game3Player1,
-          'game3Player2': existing.game3Player2,
-          'status': existing.status,
-          'winner': existing.winner,
-          'signatureData': existing.signatureData,
-          'gameSignatures': existing.gameSignatures,
-          'refereeNote': existing.refereeNote,
-        });
+
+      final overrides = <String, dynamic>{};
+      for (int n = 1; n <= 3; n++) {
+        final existingKey = gameStatusKey(existing, n);
+        final incomingKey = gameStatusKey(m, n);
+        if (keyRank(existingKey) > keyRank(incomingKey)) {
+          final explicitExistingStatus = (n == 1)
+              ? existing.game1Status
+              : (n == 2 ? existing.game2Status : existing.game3Status);
+          if (explicitExistingStatus.trim().isNotEmpty) {
+            overrides['game${n}Status'] = explicitExistingStatus;
+          }
+          overrides['game${n}Player1'] = _scoreForGame(existing, n, true);
+          overrides['game${n}Player2'] = _scoreForGame(existing, n, false);
+        }
       }
-      if (existing.status == 'Completed' && m.status != 'Completed') {
-        return _mergeMatchWithFields(m, {
-          'score1': existing.score1,
-          'score2': existing.score2,
-          'game1Player1': existing.game1Player1,
-          'game1Player2': existing.game1Player2,
-          'game2Player1': existing.game2Player1,
-          'game2Player2': existing.game2Player2,
-          'game3Player1': existing.game3Player1,
-          'game3Player2': existing.game3Player2,
-          'status': existing.status,
-          'winner': existing.winner,
-          'signatureData': existing.signatureData,
-          'gameSignatures': existing.gameSignatures,
-          'refereeNote': existing.refereeNote,
-        });
+
+      final mergedSigs = mergeGameSignatures(existing.gameSignatures, m.gameSignatures);
+      if (mergedSigs.any((s) => (s ?? '').toString().trim().isNotEmpty)) {
+        overrides['gameSignatures'] = mergedSigs;
       }
-      return m;
+      if ((existing.refereeNote?.toString().trim().isNotEmpty ?? false) &&
+          (m.refereeNote?.toString().trim().isEmpty ?? true)) {
+        overrides['refereeNote'] = existing.refereeNote;
+      }
+
+      return overrides.isEmpty ? m : _mergeMatchWithFields(m, overrides);
     }).toList();
   }
 
@@ -532,6 +734,7 @@ class AppState extends ChangeNotifier {
     required Tournament tournament,
     required TournamentMatch match,
     required String matchIdentity,
+    required String gameIdentity,
     required Map<String, dynamic> fields,
     required bool retryOnce,
     required bool throwOnFailure,
@@ -539,18 +742,18 @@ class AppState extends ChangeNotifier {
     final activeMatch = _findMatchByIdentity(matchIdentity) ?? match;
     final status = (fields['status']?.toString() ?? '').trim();
     final isOngoingStatus = status == 'Ongoing';
-    if (isOngoingStatus && _inFlightSubmitSeqByMatch.containsKey(matchIdentity)) {
+    if (isOngoingStatus && _inFlightSubmitSeqByMatch.containsKey(gameIdentity)) {
       _pendingOngoingFields = fields;
-      _pendingOngoingMatchKey = matchIdentity;
+      _pendingOngoingMatchKey = gameIdentity;
       return;
     }
-    if (!isOngoingStatus && _inFlightSubmitSeqByMatch.containsKey(matchIdentity)) {
+    if (!isOngoingStatus && _inFlightSubmitSeqByMatch.containsKey(gameIdentity)) {
       throw StateError('A save is already in progress for this match.');
     }
 
     final submitSeq = ++_submitSequenceCounter;
-    _latestStartedSubmitSeqByMatch[matchIdentity] = submitSeq;
-    _inFlightSubmitSeqByMatch[matchIdentity] = submitSeq;
+    _latestStartedSubmitSeqByMatch[gameIdentity] = submitSeq;
+    _inFlightSubmitSeqByMatch[gameIdentity] = submitSeq;
 
     final selectedIndex = selectedGameNumber.clamp(1, 3);
     final s1 = _fieldAsInt(
@@ -579,6 +782,8 @@ class AppState extends ChangeNotifier {
       'categoryId': activeMatch.categoryId,
       'type': activeMatch.type,
       'selectedGame': selectedIndex,
+      'assignedGame': selectedIndex,
+      'gameIndex': selectedIndex,
       'game': {'a': s1, 'b': s2},
       'games': gamesArray,
       ...fields,
@@ -588,6 +793,67 @@ class AppState extends ChangeNotifier {
       payload['matchKey'] = activeMatch.matchKey;
     } else {
       payload['matchId'] = activeMatch.id;
+      if (activeMatch.documentId.trim().isNotEmpty) {
+        payload['documentId'] = activeMatch.documentId;
+      }
+    }
+
+    final division = tournament.categoryDivisions[activeMatch.categoryId]?.toLowerCase() ?? '';
+    final isTeamCategory = division.contains('team');
+    if (isTeamCategory) {
+      String vFor(String key) {
+        switch (key) {
+          case 'game1Team1Player':
+            return activeMatch.game1Team1Player;
+          case 'game1Team1Player2':
+            return activeMatch.game1Team1Player2;
+          case 'game1Team2Player':
+            return activeMatch.game1Team2Player;
+          case 'game1Team2Player2':
+            return activeMatch.game1Team2Player2;
+          case 'game2Team1Player':
+            return activeMatch.game2Team1Player;
+          case 'game2Team1Player2':
+            return activeMatch.game2Team1Player2;
+          case 'game2Team2Player':
+            return activeMatch.game2Team2Player;
+          case 'game2Team2Player2':
+            return activeMatch.game2Team2Player2;
+          case 'game3Team1Player':
+            return activeMatch.game3Team1Player;
+          case 'game3Team1Player2':
+            return activeMatch.game3Team1Player2;
+          case 'game3Team2Player':
+            return activeMatch.game3Team2Player;
+          case 'game3Team2Player2':
+            return activeMatch.game3Team2Player2;
+          default:
+            return '';
+        }
+      }
+
+      final n = selectedIndex;
+      final teamKeys = <String>[
+        'game${n}Team1Player',
+        'game${n}Team1Player2',
+        'game${n}Team2Player',
+        'game${n}Team2Player2',
+      ];
+      final teamFields = <String, dynamic>{};
+      for (final k in teamKeys) {
+        final val = vFor(k);
+        if (val.trim().isNotEmpty) {
+          teamFields[k] = val.trim();
+        }
+      }
+      if (teamFields.isNotEmpty) {
+        final existingFields = payload['fields'];
+        if (existingFields is Map) {
+          payload['fields'] = {...Map<String, dynamic>.from(existingFields), ...teamFields};
+        } else {
+          payload['fields'] = teamFields;
+        }
+      }
     }
 
     if (kDebugMode) {
@@ -622,6 +888,7 @@ class AppState extends ChangeNotifier {
       final result = await attemptSubmit();
       _applySubmitResult(
         matchIdentity: matchIdentity,
+        gameIdentity: gameIdentity,
         fallbackMatch: activeMatch,
         submitSeq: submitSeq,
         requestFields: fields,
@@ -634,6 +901,7 @@ class AppState extends ChangeNotifier {
           final result = await attemptSubmit();
           _applySubmitResult(
             matchIdentity: matchIdentity,
+            gameIdentity: gameIdentity,
             fallbackMatch: activeMatch,
             submitSeq: submitSeq,
             requestFields: fields,
@@ -649,18 +917,19 @@ class AppState extends ChangeNotifier {
         debugPrint('[score-sync] ongoing sync failed and skipped: $e');
       }
     } finally {
-      if (_inFlightSubmitSeqByMatch[matchIdentity] == submitSeq) {
-        _inFlightSubmitSeqByMatch.remove(matchIdentity);
+      if (_inFlightSubmitSeqByMatch[gameIdentity] == submitSeq) {
+        _inFlightSubmitSeqByMatch.remove(gameIdentity);
       }
       final pending = _pendingOngoingFields;
       final pendingMatchKey = _pendingOngoingMatchKey;
-      if (isOngoingStatus && pending != null && pendingMatchKey == matchIdentity) {
+      if (isOngoingStatus && pending != null && pendingMatchKey == gameIdentity) {
         _pendingOngoingFields = null;
         _pendingOngoingMatchKey = null;
         unawaited(_submitSelectedMatchPayload(
           tournament: tournament,
           match: _findMatchByIdentity(matchIdentity) ?? activeMatch,
           matchIdentity: matchIdentity,
+          gameIdentity: gameIdentity,
           fields: pending,
           retryOnce: true,
           throwOnFailure: false,
@@ -671,12 +940,13 @@ class AppState extends ChangeNotifier {
 
   void _applySubmitResult({
     required String matchIdentity,
+    required String gameIdentity,
     required TournamentMatch fallbackMatch,
     required int submitSeq,
     required Map<String, dynamic> requestFields,
     required SubmitScoreResult result,
   }) {
-    if (_latestStartedSubmitSeqByMatch[matchIdentity] != submitSeq) {
+    if (_latestStartedSubmitSeqByMatch[gameIdentity] != submitSeq) {
       return;
     }
     final current = _findMatchByIdentity(matchIdentity) ?? fallbackMatch;
@@ -707,15 +977,67 @@ class AppState extends ChangeNotifier {
       'game3Player1',
       'game3Player2',
       'status',
+      'game1Status',
+      'game2Status',
+      'game3Status',
       'winner',
       'signatureData',
       'gameSignatures',
       'refereeNote',
     ];
-    for (final key in keys) {
-      if (serverMatch.containsKey(key) && serverMatch[key] != null) {
-        authoritative[key] = serverMatch[key];
+    int statusRank(String? raw) {
+      switch (normalizeStatusKey(raw)) {
+        case 'unschedule':
+          return 0;
+        case 'scheduled':
+          return 1;
+        case 'called':
+          return 2;
+        case 'ongoing':
+          return 3;
+        case 'completed':
+          return 4;
+        default:
+          return 1;
       }
+    }
+
+    final requestStatus = requestFields['status']?.toString();
+    final serverStatus = serverMatch['status']?.toString();
+    int gameStatusRank(String? raw) {
+      switch (normalizeGameStatusKey(raw)) {
+        case 'unschedule':
+          return 0;
+        case 'scheduled':
+          return 1;
+        case 'ongoing':
+          return 2;
+        case 'completed':
+          return 3;
+        default:
+          return 1;
+      }
+    }
+
+    for (final key in keys) {
+      if (!serverMatch.containsKey(key) || serverMatch[key] == null) continue;
+      if (key == 'status') {
+        final best = statusRank(serverStatus) >= statusRank(requestStatus) ? serverStatus : requestStatus;
+        if (best != null && best.trim().isNotEmpty) {
+          authoritative[key] = best;
+        }
+        continue;
+      }
+      if (key == 'game1Status' || key == 'game2Status' || key == 'game3Status') {
+        final req = requestFields[key]?.toString();
+        final srv = serverMatch[key]?.toString();
+        final best = gameStatusRank(srv) >= gameStatusRank(req) ? srv : req;
+        if (best != null && best.trim().isNotEmpty) {
+          authoritative[key] = best;
+        }
+        continue;
+      }
+      authoritative[key] = serverMatch[key];
     }
     return authoritative;
   }
@@ -740,7 +1062,7 @@ class AppState extends ChangeNotifier {
     final sc = _normalizeCourt(selectedCourt);
     final sd = _normalizeDate(selectedDate);
     if (d == null || sd == null) return false;
-    if (g.time.trim().isEmpty) return false;
+    if (!hasScheduleForGame(g, selectedGameNumber.clamp(1, 3))) return false;
     return c == sc && d == sd;
   }
 
@@ -846,10 +1168,15 @@ class AppState extends ChangeNotifier {
         }
         return TournamentMatch(
           id: m.id,
+          documentId: m.documentId,
+          scheduleFromAssignments: m.scheduleFromAssignments,
           player1: m.player1,
           player2: m.player2,
           score1: m.score1,
           score2: m.score2,
+          game1Status: m.game1Status,
+          game2Status: m.game2Status,
+          game3Status: m.game3Status,
           game1Player1: m.game1Player1,
           game1Player2: m.game1Player2,
           game2Player1: m.game2Player1,
@@ -919,7 +1246,19 @@ class AppState extends ChangeNotifier {
     }
   }
 
+  String _matchGameIdentityKey(TournamentMatch match, int gameIndex) {
+    final base = _matchIdentityKey(match);
+    if (base.isEmpty) return '';
+    final idx = gameIndex.clamp(1, 3);
+    return '$base:g$idx';
+  }
+
   String _matchIdentityKey(TournamentMatch match) {
+    if (match.type == 'elimination' &&
+        match.categoryId.trim().isNotEmpty &&
+        match.id.trim().isNotEmpty) {
+      return 'elim:${match.categoryId.trim()}:${match.id.trim()}';
+    }
     if (match.id.trim().isNotEmpty) {
       return 'id:${match.id.trim()}';
     }

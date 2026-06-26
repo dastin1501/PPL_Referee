@@ -48,62 +48,69 @@ class _CoinTossDialogState extends State<CoinTossDialog> with SingleTickerProvid
     super.dispose();
   }
 
+  Widget _coinFace(String asset) {
+    return ClipOval(
+      child: Image.asset(
+        asset,
+        fit: BoxFit.cover,
+        errorBuilder: (context, error, stackTrace) {
+          return const Center(
+            child: Icon(Icons.monetization_on, size: 56, color: Colors.amber),
+          );
+        },
+      ),
+    );
+  }
+
+  String get _frontCoinAsset => 'assets/images/front.png';
+  String get _backCoinAsset => 'assets/images/back.png';
+
+  String get _coinResultAsset {
+    return _result == 'Tails' ? _backCoinAsset : _frontCoinAsset;
+  }
+
   @override
   Widget build(BuildContext context) {
     return AlertDialog(
-      title: const Center(child: Text('Coin Toss')),
+      title: null,
       content: SingleChildScrollView(
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
+            Align(
+              alignment: Alignment.topRight,
+              child: IconButton(
+                icon: const Icon(Icons.close),
+                onPressed: () => Navigator.of(context).pop(),
+              ),
+            ),
             AnimatedBuilder(
               animation: _controller,
               builder: (context, child) {
                 final value = _controller.value;
                 final angle = value * pi * 10;
-                return Transform(
-                  transform: Matrix4.identity()
-                    ..setEntry(3, 2, 0.001)
-                    ..rotateX(angle),
-                  alignment: Alignment.center,
-                  child: Container(
-                    width: 100,
-                    height: 100,
-                    decoration: BoxDecoration(
-                      shape: BoxShape.circle,
-                      color: Colors.amber,
-                      border: Border.all(color: Colors.orange, width: 4),
-                      boxShadow: [
-                        BoxShadow(
-                          color: Colors.black.withValues(alpha: 0.3),
-                          blurRadius: 8,
-                          offset: const Offset(0, 4),
-                        ),
-                      ],
-                    ),
-                    child: Center(
-                      child: _isFlipping
-                          ? const Icon(Icons.loop, size: 40, color: Colors.white)
-                          : Text(
-                              _result ?? '?',
-                              style: const TextStyle(
-                                fontSize: 22,
-                                fontWeight: FontWeight.bold,
-                                color: Colors.white,
-                              ),
-                            ),
+                final showBack = (angle % (2 * pi)) > pi;
+                return GestureDetector(
+                  onTap: _isFlipping ? null : _flipCoin,
+                  child: Transform(
+                    transform: Matrix4.identity()
+                      ..setEntry(3, 2, 0.001)
+                      ..rotateY(angle),
+                    alignment: Alignment.center,
+                    child: SizedBox(
+                      width: 200,
+                      height: 200,
+                      child: ClipOval(
+                        child: _isFlipping
+                            ? _coinFace(showBack ? _backCoinAsset : _frontCoinAsset)
+                            : _coinFace(_result == null ? _frontCoinAsset : _coinResultAsset),
+                      ),
                     ),
                   ),
                 );
               },
             ),
             const SizedBox(height: 16),
-            if (!_isFlipping && _result == null)
-              ElevatedButton.icon(
-                onPressed: _flipCoin,
-                icon: const Icon(Icons.casino),
-                label: const Text('Flip Coin'),
-              ),
             if (_result != null) ...[
               Text(
                 'Result: $_result',
@@ -113,12 +120,7 @@ class _CoinTossDialogState extends State<CoinTossDialog> with SingleTickerProvid
           ],
         ),
       ),
-      actions: [
-        TextButton(
-          onPressed: () => Navigator.of(context).pop(),
-          child: const Text('Close'),
-        ),
-      ],
+      actions: [],
     );
   }
 }

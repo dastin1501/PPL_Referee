@@ -22,6 +22,7 @@ class _RefereeDashboardScreenState extends State<RefereeDashboardScreen> {
   String? _servingPlayer;
 
   bool _gameStarted = false;
+  bool _coinTossAutoShown = false;
   int _score1 = 0;
   int _score2 = 0;
   bool _serverTop = true;
@@ -48,6 +49,8 @@ class _RefereeDashboardScreenState extends State<RefereeDashboardScreen> {
   int _rightServeStage = 0;
   int _currentGame = 1;
   bool _endsSwitched = false;
+  final GlobalKey _appBarTitleKey = GlobalKey();
+  double? _appBarTitleWidth;
 
   String _fmt(int s) {
     final m = s ~/ 60;
@@ -75,7 +78,17 @@ class _RefereeDashboardScreenState extends State<RefereeDashboardScreen> {
 
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _checkCoinToss();
+      _measureAppBarTitle();
     });
+  }
+
+  void _measureAppBarTitle() {
+    if (_appBarTitleKey.currentContext != null) {
+      final renderBox = _appBarTitleKey.currentContext!.findRenderObject() as RenderBox;
+      setState(() {
+        _appBarTitleWidth = renderBox.size.width;
+      });
+    }
   }
 
   void _checkCoinToss() {
@@ -110,12 +123,14 @@ class _RefereeDashboardScreenState extends State<RefereeDashboardScreen> {
       _score1 = s1;
       _score2 = s2;
     }
-    if (g != null && _score1 == 0 && _score2 == 0 && _servingPlayer == null && !_gameStarted) {
+    if (g != null && _score1 == 0 && _score2 == 0 && _servingPlayer == null && !_gameStarted && !_coinTossAutoShown) {
+      _coinTossAutoShown = true;
       _showCoinTossDialog(g);
     }
     if (g != null) {
       _refereeNote = g.refereeNote?.toString() ?? _refereeNote;
-      if (g.status == 'Ongoing' && (_score1 > 0 || _score2 > 0)) {
+      final statusKey = app.gameStatusKey(g, _currentGame);
+      if (statusKey == 'ongoing' && (_score1 > 0 || _score2 > 0)) {
         setState(() {
           _gameStarted = true;
         });
@@ -351,17 +366,30 @@ class _RefereeDashboardScreenState extends State<RefereeDashboardScreen> {
     final ctrl = TextEditingController(text: _refereeNote);
     final ok = await showDialog<bool>(
       context: context,
-      builder: (_) => AlertDialog(
-        title: const Text('Referee Note'),
-        content: TextField(
-          controller: ctrl,
-          maxLines: 5,
-          decoration: const InputDecoration(hintText: 'Describe the dispute or note here'),
+      builder: (dialogContext) => Padding(
+        padding: EdgeInsets.only(bottom: MediaQuery.of(dialogContext).viewInsets.bottom),
+        child: AlertDialog(
+          title: const Text('Referee Note'),
+          content: SingleChildScrollView(
+            child: SizedBox(
+              height: 220,
+              child: TextField(
+                controller: ctrl,
+                maxLines: null,
+                expands: true,
+                textAlignVertical: TextAlignVertical.top,
+                decoration: const InputDecoration(
+                  hintText: 'Describe the dispute or note here',
+                  border: OutlineInputBorder(),
+                ),
+              ),
+            ),
+          ),
+          actions: [
+            TextButton(onPressed: () => Navigator.of(dialogContext).pop(false), child: const Text('Cancel')),
+            ElevatedButton(onPressed: () => Navigator.of(dialogContext).pop(true), child: const Text('Save')),
+          ],
         ),
-        actions: [
-          TextButton(onPressed: () => Navigator.of(context).pop(false), child: const Text('Cancel')),
-          ElevatedButton(onPressed: () => Navigator.of(context).pop(true), child: const Text('Save')),
-        ],
       ),
     );
     if (ok == true) {
@@ -486,656 +514,779 @@ class _RefereeDashboardScreenState extends State<RefereeDashboardScreen> {
         ? courtRaw
         : (courtRaw.isEmpty ? '' : 'Court $courtRaw');
 
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _measureAppBarTitle();
+    });
+
     return WillPopScope(
       onWillPop: () async => !_gameStarted,
       child: Scaffold(
-          appBar: AppBar(
-        backgroundColor: const Color.fromARGB(255, 26, 161, 123),
-        automaticallyImplyLeading: !_gameStarted,
-        title: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Text(
-              courtTitle,
-              style: const TextStyle(color: Colors.white),
-            ),
-            const SizedBox(width: 8),
-            IconButton(
-              padding: EdgeInsets.zero,
-              constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
-              onPressed: _switchCourt,
-              icon: const Icon(Icons.compare_arrows, color: Colors.white, size: 20),
-              tooltip: 'Switch Court',
-            ),
-          ],
-        ),
-        flexibleSpace: SafeArea(
-          child: Center(
-            child: Container(
-              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-              decoration: BoxDecoration(
-                color: const Color(0xFF0E7C6F),
-                borderRadius: BorderRadius.circular(8),
-                border: Border.all(color: Colors.white70, width: 1),
-              ),
-              child: Text(
-                timerText,
-                style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 18),
-              ),
-            ),
-          ),
-        ),
-        actions: [
-          if (app.ongoingSyncing)
-            const Padding(
-              padding: EdgeInsets.only(right: 8.0),
-              child: Center(
-                child: Text(
-                  'syncing...',
-                  style: TextStyle(color: Colors.white70, fontSize: 11),
-                ),
-              ),
-            ),
-          if (g != null)
-            Padding(
-              padding: const EdgeInsets.only(right: 8),
-              child: Center(
-                child: _ScoringFormatChip(
-                  label: scoringTypeLabel,
-                  isRally: isRallyScoring,
-                  dense: true,
-                ),
-              ),
-            ),
-          if (_gameStarted && g != null)
-            Padding(
-              padding: const EdgeInsets.only(right: 8.0),
-              child: TextButton.icon(
-                onPressed: () => _showSubmitDialog(g),
-                icon: const Icon(Icons.flag, color: Colors.white),
-                label: const Text('SUBMIT', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
-                style: TextButton.styleFrom(
-                  foregroundColor: Colors.white,
-                ),
-              ),
-            ),
-          IconButton(
-            onPressed: _undoLast,
-            icon: const Icon(Icons.replay),
-            tooltip: 'Undo',
-          ),
-          PopupMenuButton<String>(
-            onSelected: (v) async {
-              if (g == null) return;
-              if (v == 'coin') {
-                _showCoinTossDialog(g);
-              } else if (v == 'note') {
-                await _addRefereeNote(g);
-              }
-            },
-            itemBuilder: (_) => [
-              const PopupMenuItem(value: 'coin', child: Text('Coin Toss')),
-              const PopupMenuItem(value: 'note', child: Text('Referee Note')),
-            ],
-            icon: const Icon(Icons.settings),
-          ),
-        ],
-      ),
-      body: g == null
-          ? const Center(child: Text('No game selected'))
-          : Column(
+          backgroundColor: Colors.white,
+          appBar: PreferredSize(
+        preferredSize: const Size.fromHeight(kToolbarHeight),
+        child: Container(
+          color: const Color(0xFF1F2937),
+          child: SafeArea(
+            child: Stack(
               children: [
-                Expanded(
-                  child: Padding(
-                    padding: const EdgeInsets.symmetric(horizontal: 12),
-                    child: LayoutBuilder(builder: (_, c) {
-                      final String leftTeamName = g.player1;
-                      final String rightTeamName = g.player2;
-                      final leftTeam = _splitTeam(leftTeamName);
-                      final rightTeam = _splitTeam(rightTeamName);
-                      final bool isDoubles = leftTeam.length > 1 || rightTeam.length > 1;
-                      final bool isSingles = !isDoubles;
-                      var leftTop = _leftTopOverride.isNotEmpty
-                          ? _leftTopOverride
-                          : (leftTeam.isNotEmpty ? leftTeam[0] : leftTeamName);
-                      var leftBottom = _leftBottomOverride.isNotEmpty
-                          ? _leftBottomOverride
-                          : (leftTeam.length > 1 ? leftTeam[1] : '');
-                      var rightTop = _rightTopOverride.isNotEmpty
-                          ? _rightTopOverride
-                          : (rightTeam.length > 1 ? rightTeam[1] : rightTeam[0]);
-                      var rightBottom = _rightBottomOverride.isNotEmpty
-                          ? _rightBottomOverride
-                          : (rightTeam.length > 1 ? rightTeam[0] : '');
-                      final noServer = _servingPlayer == null;
-                      final serverOnLeft = _servingPlayer != null && leftTeam.contains(_servingPlayer);
-                      final serverOnRight = _servingPlayer != null && rightTeam.contains(_servingPlayer);
-                      // Apply end switch mapping for display
-                      if (_endsSwitched) {
-                        if (isDoubles) {
-                          final lt = leftTop;
-                          final lb = leftBottom;
-                          final rt = rightTop;
-                          final rb = rightBottom;
-                          leftTop = rb;
-                          leftBottom = rt;
-                          rightTop = lb;
-                          rightBottom = lt;
-                        } else {
-                          final lt = leftTop;
-                          leftTop = rightTop;
-                          rightTop = lt;
-                        }
-                      }
-                      final String displayLeftBase = _endsSwitched ? _rightBase : _leftBase;
-                      final String displayRightBase = _endsSwitched ? _leftBase : _rightBase;
-                      final displayServerOnLeft = _endsSwitched ? serverOnRight : serverOnLeft;
-                      final displayServerOnRight = _endsSwitched ? serverOnLeft : serverOnRight;
-                      final serverRight = displayServerOnRight;
-                      // Swap displayed left/right scores when ends are switched
-                      final int leftScore = _endsSwitched ? _score2 : _score1;
-                      final int rightScore = _endsSwitched ? _score1 : _score2;
-                      bool leftSinglesTop = false;
-                      bool rightSinglesTop = true;
-                      if (isSingles) {
-                        if (_servingPlayer != null) {
-                          final servingScore = displayServerOnLeft ? leftScore : rightScore;
-                          final isEven = (servingScore % 2 == 0);
-                          leftSinglesTop = !isEven;
-                          rightSinglesTop = isEven;
-                        } else {
-                          leftSinglesTop = false;
-                          rightSinglesTop = true;
-                        }
-                      }
-                      final serviceTop = isSingles
-                          ? (_servingPlayer != null
-                              ? (displayServerOnLeft ? leftSinglesTop : rightSinglesTop)
-                              : rightSinglesTop)
-                          : (_servingPlayer == null
-                              ? true
-                              : (displayServerOnLeft
-                                  ? (_servingPlayer == leftTop)
-                                  : (_servingPlayer == rightTop)));
-                      String centerScore;
-                      if (isRallyScoring) {
-                        centerScore = '$leftScore - $rightScore';
-                      } else if (isDoubles) {
-                        int sNum = 0;
-                        if (_servingPlayer != null) {
-                          if (serverOnLeft) {
-                            sNum = _leftServeStage <= 1 ? 1 : 2;
-                          } else if (serverOnRight) {
-                            sNum = _rightServeStage <= 1 ? 1 : 2;
-                          }
-                        }
-                        if (_servingPlayer != null) {
-                          if (displayServerOnLeft) {
-                            centerScore = '$leftScore - $rightScore - $sNum';
-                          } else {
-                            centerScore = '$rightScore - $leftScore - $sNum';
-                          }
-                        } else {
-                          centerScore = '$leftScore - $rightScore';
-                        }
-                      } else {
-                        if (_servingPlayer != null) {
-                          centerScore = displayServerOnLeft ? '$leftScore - $rightScore' : '$rightScore - $leftScore';
-                        } else {
-                          centerScore = '$leftScore - $rightScore';
-                        }
-                      }
-                      final int leftAvail = (2 - (_timeouts1 + _medTimeouts1)).clamp(0, 2);
-                      final int rightAvail = (2 - (_timeouts2 + _medTimeouts2)).clamp(0, 2);
-                      final int bottomLeftAvail = _endsSwitched ? rightAvail : leftAvail;
-                      final int bottomRightAvail = _endsSwitched ? leftAvail : rightAvail;
-                      Widget dot(bool filled) {
-                        const color = Color.fromARGB(255, 26, 161, 123);
-                        return Container(
-                          width: 10,
-                          height: 10,
-                          decoration: BoxDecoration(
-                            shape: BoxShape.circle,
-                            color: filled ? color : Colors.transparent,
-                            border: Border.all(color: filled ? color : Colors.grey.shade400, width: 1.5),
-                          ),
-                        );
-                      }
-                      return GestureDetector(
-                        behavior: HitTestBehavior.deferToChild,
-                        child: Container(
-                          decoration: BoxDecoration(
-                            color: Colors.white,
-                            borderRadius: BorderRadius.zero,
-                            boxShadow: [
-                              BoxShadow(
-                                color: Colors.black.withValues(alpha: 0.15),
-                                blurRadius: 16,
-                                spreadRadius: 1,
-                                offset: const Offset(0, 6),
-                              ),
-                            ],
-                          ),
-                        padding: const EdgeInsets.all(6),
-                        child: Stack(
-                          children: [
-                            Positioned(
-                              top: 8,
-                              left: 8,
-                              child: _CategoryBadge(kind: kind.isEmpty ? 'ref' : kind),
-                            ),
-                            Positioned.fill(
-                              child: ClipRRect(
-                                borderRadius: BorderRadius.zero,
-                                child: CustomPaint(
-                                  painter: _SinglesCourtPainter(
-                                    highlightRight: serverRight,
-                                    highlightTop: serviceTop,
-                                  ),
-                                ),
-                              ),
-                            ),
-                            Align(
-                              alignment: Alignment.center,
-                              child: Text(
-                                centerScore,
-                                overflow: TextOverflow.ellipsis,
-                                style: const TextStyle(
-                                  color: Colors.white,
-                                  fontSize: 48,
-                                  fontWeight: FontWeight.w900,
-                                ),
-                              ),
-                            ),
-                            Align(
-                              alignment: Alignment.bottomLeft,
-                              child: Padding(
-                                padding: const EdgeInsets.all(6),
-                                child: Row(
-                                  mainAxisSize: MainAxisSize.min,
-                                  children: [
-                                    dot(bottomLeftAvail >= 1),
-                                    const SizedBox(width: 6),
-                                    dot(bottomLeftAvail >= 2),
-                                  ],
-                                ),
-                              ),
-                            ),
-                            Align(
-                              alignment: Alignment.bottomRight,
-                              child: Padding(
-                                padding: const EdgeInsets.all(6),
-                                child: Row(
-                                  mainAxisSize: MainAxisSize.min,
-                                  children: [
-                                    dot(bottomRightAvail >= 2),
-                                    const SizedBox(width: 6),
-                                    dot(bottomRightAvail >= 1),
-                                  ],
-                                ),
-                              ),
-                            ),
-                            Align(
-                              alignment: isSingles
-                                  ? (leftSinglesTop ? Alignment.topLeft : Alignment.bottomLeft)
-                                  : Alignment.topLeft,
-                              child: Padding(
-                                padding: const EdgeInsets.all(8),
-                                child: ConstrainedBox(
-                                  constraints: BoxConstraints(
-                                    maxWidth: (c.maxWidth * 0.46).clamp(140, 520).toDouble(),
-                                  ),
-                                  child: _playerCell(
-                                    leftTop,
-                                    isServing: _servingPlayer == leftTop,
-                                    isBase: leftTop == displayLeftBase,
-                                    isRight: false,
-                                  ),
-                                ),
-                              ),
-                            ),
-                            if (isDoubles && leftBottom.isNotEmpty)
-                              Align(
-                                alignment: Alignment.bottomLeft,
-                                child: Padding(
-                                  padding: const EdgeInsets.all(8),
-                                  child: ConstrainedBox(
-                                    constraints: BoxConstraints(
-                                      maxWidth: (c.maxWidth * 0.46).clamp(140, 520).toDouble(),
-                                    ),
-                                    child: _playerCell(
-                                      leftBottom,
-                                      isServing: _servingPlayer == leftBottom,
-                                      isBase: leftBottom == displayLeftBase,
-                                      isRight: false,
-                                    ),
-                                  ),
-                                ),
-                              ),
-                            Align(
-                            alignment: isSingles
-                                ? (rightSinglesTop ? Alignment.topRight : Alignment.bottomRight)
-                                : Alignment.topRight,
-                              child: Padding(
-                                padding: const EdgeInsets.all(8),
-                                child: ConstrainedBox(
-                                  constraints: BoxConstraints(
-                                    maxWidth: (c.maxWidth * 0.46).clamp(140, 520).toDouble(),
-                                  ),
-                                  child: _playerCell(
-                                    rightTop,
-                                    isServing: _servingPlayer == rightTop,
-                                    isBase: rightTop == displayRightBase,
-                                    isRight: true,
-                                  ),
-                                ),
-                              ),
-                            ),
-                            if (isDoubles && rightBottom.isNotEmpty)
-                              Align(
-                                alignment: Alignment.bottomRight,
-                                child: Padding(
-                                  padding: const EdgeInsets.all(8),
-                                  child: ConstrainedBox(
-                                    constraints: BoxConstraints(
-                                      maxWidth: (c.maxWidth * 0.46).clamp(140, 520).toDouble(),
-                                    ),
-                                    child: _playerCell(
-                                      rightBottom,
-                                      isServing: _servingPlayer == rightBottom,
-                                      isBase: rightBottom == displayRightBase,
-                                      isRight: true,
-                                    ),
-                                  ),
-                                ),
-                              ),
-                            if (!_gameStarted)
-                              Positioned.fill(
-                                child: Material(
-                                  color: Colors.transparent,
-                                  child: isDoubles
-                                      ? Row(
-                                          children: [
-                                            Expanded(
-                                              child: Column(
-                                                children: [
-                                                  Expanded(
-                                                    child: InkWell(
-                                                      onTap: () => setState(() {
-                                                        _servingPlayer = leftTop;
-                                                        _applyDoublesInitialServerLayout(g);
-                                                      }),
-                                                      splashColor: Colors.white10,
-                                                    ),
-                                                  ),
-                                                  Expanded(
-                                                    child: InkWell(
-                                                      onTap: () => setState(() {
-                                                        _servingPlayer = leftBottom.isNotEmpty ? leftBottom : leftTop;
-                                                        _applyDoublesInitialServerLayout(g);
-                                                      }),
-                                                      splashColor: Colors.white10,
-                                                    ),
-                                                  ),
-                                                ],
-                                              ),
-                                            ),
-                                            Expanded(
-                                              child: Column(
-                                                children: [
-                                                  Expanded(
-                                                    child: InkWell(
-                                                      onTap: () => setState(() {
-                                                        _servingPlayer = rightTop;
-                                                        _applyDoublesInitialServerLayout(g);
-                                                      }),
-                                                      splashColor: Colors.white10,
-                                                    ),
-                                                  ),
-                                                  Expanded(
-                                                    child: InkWell(
-                                                      onTap: () => setState(() {
-                                                        _servingPlayer = rightBottom.isNotEmpty ? rightBottom : rightTop;
-                                                        _applyDoublesInitialServerLayout(g);
-                                                      }),
-                                                      splashColor: Colors.white10,
-                                                    ),
-                                                  ),
-                                                ],
-                                              ),
-                                            ),
-                                          ],
-                                        )
-                                      : Row(
-                                          children: [
-                                            Expanded(
-                                              child: InkWell(
-                                                onTap: () => setState(() {
-                                                  _servingPlayer = leftTop;
-                                                  _serverTop = false;
-                                                }),
-                                                splashColor: Colors.white10,
-                                              ),
-                                            ),
-                                            Expanded(
-                                              child: InkWell(
-                                                onTap: () => setState(() {
-                                                  _servingPlayer = rightTop;
-                                                  _serverTop = true;
-                                                }),
-                                                splashColor: Colors.white10,
-                                              ),
-                                            ),
-                                          ],
-                                        ),
-                                ),
-                              ),
-                          ],
-                        ),
-                        ),
-                      );
-                    }),
+                if (!_gameStarted)
+                  Positioned(
+                    left: 0,
+                    top: 0,
+                    bottom: 0,
+                    child: IconButton(
+                      icon: const Icon(Icons.arrow_back, color: Colors.white),
+                      onPressed: () => Navigator.of(context).pop(),
+                    ),
                   ),
-                ),
-                Padding(
-                  padding: const EdgeInsets.fromLTRB(12, 8, 12, 4),
+                Positioned(
+                  left: _gameStarted ? 8 : 56,
+                  top: 0,
+                  bottom: 0,
                   child: Row(
+                    mainAxisSize: MainAxisSize.min,
                     children: [
-                      if (!_gameStarted) ...[
-                        Builder(builder: (_) {
-                          final leftTeam = _splitTeam(g.player1);
-                          final rightTeam = _splitTeam(g.player2);
-                          final isDoubles = leftTeam.length > 1 || rightTeam.length > 1;
-                          final leftServing = _servingPlayer != null && leftTeam.contains(_servingPlayer);
-                          final rightServing = _servingPlayer != null && rightTeam.contains(_servingPlayer);
-                          if (!isDoubles) return const SizedBox.shrink();
-                          final displayLeftServing = _endsSwitched ? rightServing : leftServing;
-                          final VoidCallback leftHandler = _endsSwitched ? () => _toggleRightReceiver(g) : () => _toggleLeftReceiver(g);
-                          return Row(
-                            children: [
-                              IconButton(
-                                tooltip: 'Swap left receiver',
-                                onPressed: displayLeftServing ? null : leftHandler,
-                                icon: const Icon(Icons.swap_vert),
-                              ),
-                              const SizedBox(width: 8),
-                            ],
-                          );
-                        }),
-                      ],
-                      IconButton(onPressed: _onTimeout, icon: const Icon(Icons.timer)),
-                      IconButton(onPressed: _onMedicalTimeout, icon: const Icon(Icons.healing)),
-                      const Spacer(),
-                      if (!_gameStarted) ...[
-                        Builder(builder: (_) {
-                          final leftTeam = _splitTeam(g.player1);
-                          final rightTeam = _splitTeam(g.player2);
-                          final isDoubles = leftTeam.length > 1 || rightTeam.length > 1;
-                          final leftServing = _servingPlayer != null && leftTeam.contains(_servingPlayer);
-                          final rightServing = _servingPlayer != null && rightTeam.contains(_servingPlayer);
-                          if (!isDoubles) return const SizedBox.shrink();
-                          final displayRightServing = _endsSwitched ? leftServing : rightServing;
-                          final VoidCallback rightHandler = _endsSwitched ? () => _toggleLeftReceiver(g) : () => _toggleRightReceiver(g);
-                          return Row(
-                            children: [
-                              IconButton(
-                                tooltip: 'Swap right receiver',
-                                onPressed: displayRightServing ? null : rightHandler,
-                                icon: const Icon(Icons.swap_vert),
-                              ),
-                            ],
-                          );
-                        }),
-                      ],
+                      SizedBox(
+                        key: _appBarTitleKey,
+                        child: Text(
+                          courtTitle,
+                          style: const TextStyle(color: Colors.white, fontSize: 20),
+                        ),
+                      ),
+                      if (_gameStarted) const SizedBox(width: 8),
+                      if (_gameStarted)
+                        IconButton(
+                          padding: EdgeInsets.zero,
+                          constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
+                          onPressed: _switchCourt,
+                          icon: const Icon(Icons.compare_arrows, color: Colors.white, size: 20),
+                          tooltip: 'Switch Court',
+                        ),
+                      const SizedBox(width: 4),
+                      IconButton(
+                        padding: EdgeInsets.zero,
+                        constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
+                        onPressed: _onTimeout,
+                        icon: const Icon(Icons.timer, color: Colors.white),
+                        tooltip: 'Timeout',
+                      ),
+                      IconButton(
+                        padding: EdgeInsets.zero,
+                        constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
+                        onPressed: _onMedicalTimeout,
+                        icon: const Icon(Icons.healing, color: Colors.white),
+                        tooltip: 'Medical Timeout',
+                      ),
                     ],
                   ),
                 ),
-                if (!_gameStarted)
-                  Container(
-                    color: const Color.fromARGB(255, 26, 161, 123),
-                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-                    child: Row(
-                      children: [
-                        Expanded(
-                          child: SizedBox(
-                            height: 44,
-                            child: ElevatedButton.icon(
-                              onPressed: _servingPlayer != null ? _startGame : null,
-                              style: ElevatedButton.styleFrom(
-                                backgroundColor: const Color.fromARGB(255, 26, 161, 123),
-                                disabledBackgroundColor: Colors.grey[700],
-                                foregroundColor: Colors.white,
-                              ),
-                              icon: const Icon(Icons.play_arrow, size: 22),
-                              label: const Text('START GAME', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+                // Center(
+                //   child: Container(
+                //     padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                //     decoration: BoxDecoration(
+                //       color: const Color(0xFF374151),
+                //       borderRadius: BorderRadius.circular(8),
+                //       border: Border.all(color: Colors.white24, width: 1),
+                //     ),
+                //     child: Text(
+                //       timerText,
+                //       style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 18),
+                //     ),
+                //   ),
+                // ),
+                Positioned(
+                  left: 0,
+                  right: 0,
+                  top: 0,
+                  bottom: 0,
+                  child: Row(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      if (g != null)
+                        _ScoringFormatChip(
+                          label: scoringTypeLabel,
+                          isRally: isRallyScoring,
+                          dense: true,
+                        ),
+                    ],
+                  ),
+                ),
+                Positioned(
+                  right: 0,
+                  top: 0,
+                  bottom: 0,
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      if (app.ongoingSyncing)
+                        const Padding(
+                          padding: EdgeInsets.only(right: 8.0),
+                          child: Center(
+                            child: Text(
+                              'syncing...',
+                              style: TextStyle(color: Colors.white70, fontSize: 11),
                             ),
                           ),
                         ),
-                      ],
-                    ),
-                  )
-                else
-                  Container(
-                    color: Colors.white10,
-                    padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
-                    child: isRallyScoring
-                        ? Row(
-                            children: [
-                              Expanded(
-                                child: SizedBox(
-                                  height: 56,
-                                  child: ElevatedButton(
-                                    onPressed: _awardRallyPointLeft,
-                                    style: ElevatedButton.styleFrom(
-                                      backgroundColor: const Color(0xFF0F766E),
-                                      foregroundColor: Colors.white,
-                                    ),
-                                    child: Text(
-                                      '${g.player1}\nPOINT',
-                                      textAlign: TextAlign.center,
-                                      style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
-                                    ),
-                                  ),
-                                ),
-                              ),
-                              const SizedBox(width: 12),
-                              Container(
-                                padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-                                decoration: BoxDecoration(
-                                  color: const Color(0xFFECFDF5),
-                                  borderRadius: BorderRadius.circular(14),
-                                  border: Border.all(color: const Color(0xFF34D399)),
-                                ),
-                                child: Text(
-                                  _servingPlayer == null ? 'No server' : 'Server: $_servingPlayer',
-                                  textAlign: TextAlign.center,
-                                  style: const TextStyle(
-                                    color: Color(0xFF065F46),
-                                    fontWeight: FontWeight.w700,
-                                  ),
-                                ),
-                              ),
-                              const SizedBox(width: 12),
-                              Expanded(
-                                child: SizedBox(
-                                  height: 56,
-                                  child: ElevatedButton(
-                                    onPressed: _awardRallyPointRight,
-                                    style: ElevatedButton.styleFrom(
-                                      backgroundColor: const Color(0xFF0F766E),
-                                      foregroundColor: Colors.white,
-                                    ),
-                                    child: Text(
-                                      '${g.player2}\nPOINT',
-                                      textAlign: TextAlign.center,
-                                      style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
-                                    ),
-                                  ),
-                                ),
-                              ),
-                            ],
-                          )
-                        : Row(
-                            mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-                            children: [
-                              SizedBox(
-                                width: 120,
-                                height: 56,
-                                child: ElevatedButton(
-                                  onPressed: _decrementPoint,
-                                  style: ElevatedButton.styleFrom(backgroundColor: const Color.fromARGB(255, 26, 161, 123), foregroundColor: Colors.white),
-                                  child: const Text('-', style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold)),
-                                ),
-                              ),
-                              SizedBox(
-                                width: 200,
-                                height: 56,
-                                child: ElevatedButton(
-                                  onPressed: _sideOut,
-                                  style: ElevatedButton.styleFrom(backgroundColor: const Color.fromARGB(255, 26, 161, 123), foregroundColor: Colors.white),
-                                  child: Builder(builder: (_) {
-                                    final app = context.read<AppState>();
-                                    final g = app.selectedGame;
-                                    var label = 'SIDE OUT';
-                                    if (g != null) {
-                                      final leftTeam = _splitTeam(g.player1);
-                                      final rightTeam = _splitTeam(g.player2);
-                                      final isDoubles = leftTeam.length > 1 || rightTeam.length > 1;
-                                      if (isDoubles && _servingPlayer != null) {
-                                        final onLeft = leftTeam.contains(_servingPlayer);
-                                        final onRight = rightTeam.contains(_servingPlayer);
-                                        final isFirstOnTeam = (onLeft && _servingPlayer == _leftBase) || (onRight && _servingPlayer == _rightBase);
-                                        label = isFirstOnTeam ? 'SECOND SERVER' : 'SIDE OUT';
-                                      }
-                                    }
-                                    if (g != null && _servingPlayer != null) {
-                                      final leftTeam = _splitTeam(g.player1);
-                                      final rightTeam = _splitTeam(g.player2);
-                                      final isDoubles = leftTeam.length > 1 || rightTeam.length > 1;
-                                      if (isDoubles) {
-                                        if (leftTeam.contains(_servingPlayer)) {
-                                          label = _leftServeStage <= 1 ? 'SECOND SERVER' : 'SIDE OUT';
-                                        } else if (rightTeam.contains(_servingPlayer)) {
-                                          label = _rightServeStage <= 1 ? 'SECOND SERVER' : 'SIDE OUT';
-                                        }
-                                      }
-                                    }
-                                    return Text(label, style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold));
-                                  }),
-                                ),
-                              ),
-                              SizedBox(
-                                width: 120,
-                                height: 56,
-                                child: ElevatedButton(
-                                  onPressed: _incrementPoint,
-                                  style: ElevatedButton.styleFrom(backgroundColor: const Color.fromARGB(255, 26, 161, 123), foregroundColor: Colors.white),
-                                  child: const Text('+', style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold)),
-                                ),
-                              ),
-                            ],
+                      IconButton(
+                        onPressed: _undoLast,
+                        icon: const Icon(Icons.replay, color: Colors.white),
+                        tooltip: 'Undo',
+                      ),
+                      PopupMenuButton<String>(
+                        onSelected: (v) async {
+                          if (g == null) return;
+                          if (v == 'coin') {
+                            _showCoinTossDialog(g);
+                          } else if (v == 'note') {
+                            await _addRefereeNote(g);
+                          }
+                        },
+                        itemBuilder: (_) => [
+                          const PopupMenuItem(value: 'coin', child: Text('Coin Toss')),
+                          const PopupMenuItem(value: 'note', child: Text('Referee Note')),
+                        ],
+                        icon: const Icon(Icons.settings, color: Colors.white),
+                      ),
+                      if (_gameStarted && g != null)
+                        Padding(
+                          padding: const EdgeInsets.only(right: 8.0, left: 4.0),
+                          child: TextButton.icon(
+                            onPressed: () => _showSubmitDialog(g),
+                            icon: const Icon(Icons.flag, color: Colors.white),
+                            label: const Text('SUBMIT', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+                            style: TextButton.styleFrom(
+                              foregroundColor: Colors.white,
+                            ),
                           ),
+                        ),
+                    ],
                   ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+      body: g == null
+          ? const Center(child: Text('No game selected'))
+          : Stack(
+              children: [
+                Column(
+                  children: [
+                    Expanded(
+                      child: Padding(
+                        padding: const EdgeInsets.symmetric(horizontal: 12),
+                        child: LayoutBuilder(builder: (_, c) {
+                          final String leftTeamName = g.player1;
+                          final String rightTeamName = g.player2;
+                          final leftTeam = _splitTeam(leftTeamName);
+                          final rightTeam = _splitTeam(rightTeamName);
+                          final bool isDoubles = leftTeam.length > 1 || rightTeam.length > 1;
+                          final bool isSingles = !isDoubles;
+                          var leftTop = _leftTopOverride.isNotEmpty
+                              ? _leftTopOverride
+                              : (leftTeam.isNotEmpty ? leftTeam[0] : leftTeamName);
+                          var leftBottom = _leftBottomOverride.isNotEmpty
+                              ? _leftBottomOverride
+                              : (leftTeam.length > 1 ? leftTeam[1] : '');
+                          var rightTop = _rightTopOverride.isNotEmpty
+                              ? _rightTopOverride
+                              : (rightTeam.length > 1 ? rightTeam[1] : rightTeam[0]);
+                          var rightBottom = _rightBottomOverride.isNotEmpty
+                              ? _rightBottomOverride
+                              : (rightTeam.length > 1 ? rightTeam[0] : '');
+                          final noServer = _servingPlayer == null;
+                          final serverOnLeft = _servingPlayer != null && leftTeam.contains(_servingPlayer);
+                          final serverOnRight = _servingPlayer != null && rightTeam.contains(_servingPlayer);
+                          // Apply end switch mapping for display
+                          if (_endsSwitched) {
+                            if (isDoubles) {
+                              final lt = leftTop;
+                              final lb = leftBottom;
+                              final rt = rightTop;
+                              final rb = rightBottom;
+                              leftTop = rb;
+                              leftBottom = rt;
+                              rightTop = lb;
+                              rightBottom = lt;
+                            } else {
+                              final lt = leftTop;
+                              leftTop = rightTop;
+                              rightTop = lt;
+                            }
+                          }
+                          final String displayLeftBase = _endsSwitched ? _rightBase : _leftBase;
+                          final String displayRightBase = _endsSwitched ? _leftBase : _rightBase;
+                          final displayServerOnLeft = _endsSwitched ? serverOnRight : serverOnLeft;
+                          final displayServerOnRight = _endsSwitched ? serverOnLeft : serverOnRight;
+                          final serverRight = displayServerOnRight;
+                          // Swap displayed left/right scores when ends are switched
+                          final int leftScore = _endsSwitched ? _score2 : _score1;
+                          final int rightScore = _endsSwitched ? _score1 : _score2;
+                          bool leftSinglesTop = false;
+                          bool rightSinglesTop = true;
+                          if (isSingles) {
+                            if (_servingPlayer != null) {
+                              final servingScore = displayServerOnLeft ? leftScore : rightScore;
+                              final isEven = (servingScore % 2 == 0);
+                              leftSinglesTop = !isEven;
+                              rightSinglesTop = isEven;
+                            } else {
+                              leftSinglesTop = false;
+                              rightSinglesTop = true;
+                            }
+                          }
+                          final serviceTop = isSingles
+                              ? (_servingPlayer != null
+                                  ? (displayServerOnLeft ? leftSinglesTop : rightSinglesTop)
+                                  : rightSinglesTop)
+                              : (_servingPlayer == null
+                                  ? true
+                                  : (displayServerOnLeft
+                                      ? (_servingPlayer == leftTop)
+                                      : (_servingPlayer == rightTop)));
+                          String centerScore;
+                          if (isRallyScoring) {
+                            centerScore = '$leftScore - $rightScore';
+                          } else if (isDoubles) {
+                            int sNum = 0;
+                            if (_servingPlayer != null) {
+                              if (serverOnLeft) {
+                                sNum = _leftServeStage <= 1 ? 1 : 2;
+                              } else if (serverOnRight) {
+                                sNum = _rightServeStage <= 1 ? 1 : 2;
+                              }
+                            }
+                            if (_servingPlayer != null) {
+                              if (displayServerOnLeft) {
+                                centerScore = '$leftScore - $rightScore - $sNum';
+                              } else {
+                                centerScore = '$rightScore - $leftScore - $sNum';
+                              }
+                            } else {
+                              centerScore = '$leftScore - $rightScore';
+                            }
+                          } else {
+                            if (_servingPlayer != null) {
+                              centerScore = displayServerOnLeft ? '$leftScore - $rightScore' : '$rightScore - $leftScore';
+                            } else {
+                              centerScore = '$leftScore - $rightScore';
+                            }
+                          }
+                          return GestureDetector(
+                            behavior: HitTestBehavior.deferToChild,
+                            child: Container(
+                              decoration: BoxDecoration(
+                                color: Colors.white,
+                                borderRadius: BorderRadius.zero,
+                                boxShadow: [
+                                  BoxShadow(
+                                    color: Colors.black.withValues(alpha: 0.15),
+                                    blurRadius: 16,
+                                    spreadRadius: 1,
+                                    offset: const Offset(0, 6),
+                                  ),
+                                ],
+                              ),
+                            padding: const EdgeInsets.all(6),
+                            child: Stack(
+                              children: [
+                                Positioned(
+                                  top: 8,
+                                  left: 8,
+                                  child: _CategoryBadge(kind: kind.isEmpty ? 'ref' : kind),
+                                ),
+                                Positioned.fill(
+                                  child: ClipRRect(
+                                    borderRadius: BorderRadius.zero,
+                                    child: CustomPaint(
+                                      painter: _SinglesCourtPainter(
+                                        highlightRight: serverRight,
+                                        highlightTop: serviceTop,
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                                Align(
+                                  alignment: isSingles
+                                      ? (leftSinglesTop ? Alignment.topLeft : Alignment.bottomLeft)
+                                      : Alignment.topLeft,
+                                  child: Padding(
+                                    padding: const EdgeInsets.all(8),
+                                    child: ConstrainedBox(
+                                      constraints: BoxConstraints(
+                                        maxWidth: (c.maxWidth * 0.46).clamp(140, 520).toDouble(),
+                                      ),
+                                      child: _playerCell(
+                                        leftTop,
+                                        isServing: _servingPlayer == leftTop,
+                                        isBase: leftTop == displayLeftBase,
+                                        isRight: false,
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                                if (isDoubles && leftBottom.isNotEmpty)
+                                  Align(
+                                    alignment: Alignment.bottomLeft,
+                                    child: Padding(
+                                      padding: const EdgeInsets.all(8),
+                                      child: ConstrainedBox(
+                                        constraints: BoxConstraints(
+                                          maxWidth: (c.maxWidth * 0.46).clamp(140, 520).toDouble(),
+                                        ),
+                                        child: _playerCell(
+                                          leftBottom,
+                                          isServing: _servingPlayer == leftBottom,
+                                          isBase: leftBottom == displayLeftBase,
+                                          isRight: false,
+                                        ),
+                                      ),
+                                    ),
+                                  ),
+                                Align(
+                                alignment: isSingles
+                                    ? (rightSinglesTop ? Alignment.topRight : Alignment.bottomRight)
+                                    : Alignment.topRight,
+                                  child: Padding(
+                                    padding: const EdgeInsets.all(8),
+                                    child: ConstrainedBox(
+                                      constraints: BoxConstraints(
+                                        maxWidth: (c.maxWidth * 0.46).clamp(140, 520).toDouble(),
+                                      ),
+                                      child: _playerCell(
+                                        rightTop,
+                                        isServing: _servingPlayer == rightTop,
+                                        isBase: rightTop == displayRightBase,
+                                        isRight: true,
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                                if (isDoubles && rightBottom.isNotEmpty)
+                                  Align(
+                                    alignment: Alignment.bottomRight,
+                                    child: Padding(
+                                      padding: const EdgeInsets.all(8),
+                                      child: ConstrainedBox(
+                                        constraints: BoxConstraints(
+                                          maxWidth: (c.maxWidth * 0.46).clamp(140, 520).toDouble(),
+                                        ),
+                                        child: _playerCell(
+                                          rightBottom,
+                                          isServing: _servingPlayer == rightBottom,
+                                          isBase: rightBottom == displayRightBase,
+                                          isRight: true,
+                                        ),
+                                      ),
+                                    ),
+                                  ),
+                                if (!_gameStarted)
+                                  Positioned.fill(
+                                    child: Material(
+                                      color: Colors.transparent,
+                                      child: isDoubles
+                                          ? Row(
+                                              children: [
+                                                Expanded(
+                                                  child: Column(
+                                                    children: [
+                                                      Expanded(
+                                                        child: InkWell(
+                                                          onTap: () => setState(() {
+                                                            _servingPlayer = leftTop;
+                                                            _applyDoublesInitialServerLayout(g);
+                                                          }),
+                                                          splashColor: Colors.white10,
+                                                        ),
+                                                      ),
+                                                      Expanded(
+                                                        child: InkWell(
+                                                          onTap: () => setState(() {
+                                                            _servingPlayer = leftBottom.isNotEmpty ? leftBottom : leftTop;
+                                                            _applyDoublesInitialServerLayout(g);
+                                                          }),
+                                                          splashColor: Colors.white10,
+                                                        ),
+                                                      ),
+                                                    ],
+                                                  ),
+                                                ),
+                                                Expanded(
+                                                  child: Column(
+                                                    children: [
+                                                      Expanded(
+                                                        child: InkWell(
+                                                          onTap: () => setState(() {
+                                                            _servingPlayer = rightTop;
+                                                            _applyDoublesInitialServerLayout(g);
+                                                          }),
+                                                          splashColor: Colors.white10,
+                                                        ),
+                                                      ),
+                                                      Expanded(
+                                                        child: InkWell(
+                                                          onTap: () => setState(() {
+                                                            _servingPlayer = rightBottom.isNotEmpty ? rightBottom : rightTop;
+                                                            _applyDoublesInitialServerLayout(g);
+                                                          }),
+                                                          splashColor: Colors.white10,
+                                                        ),
+                                                      ),
+                                                    ],
+                                                  ),
+                                                ),
+                                              ],
+                                            )
+                                          : Row(
+                                              children: [
+                                                Expanded(
+                                                  child: InkWell(
+                                                    onTap: () => setState(() {
+                                                      _servingPlayer = leftTop;
+                                                      _serverTop = false;
+                                                    }),
+                                                    splashColor: Colors.white10,
+                                                  ),
+                                                ),
+                                                Expanded(
+                                                  child: InkWell(
+                                                    onTap: () => setState(() {
+                                                      _servingPlayer = rightTop;
+                                                      _serverTop = true;
+                                                    }),
+                                                    splashColor: Colors.white10,
+                                                  ),
+                                                ),
+                                              ],
+                                            ),
+                                    ),
+                                  ),
+                                Align(
+                                  alignment: Alignment.center,
+                                  child: AnimatedSwitcher(
+                                    duration: const Duration(milliseconds: 300),
+                                    transitionBuilder: (child, animation) {
+                                      return FadeTransition(opacity: animation, child: child);
+                                    },
+                                    child: _gameStarted
+                                        ? Text(
+                                            key: const ValueKey('score'),
+                                            centerScore,
+                                            overflow: TextOverflow.ellipsis,
+                                            style: const TextStyle(
+                                              color: Colors.white,
+                                              fontSize: 48,
+                                              fontWeight: FontWeight.w900,
+                                            ),
+                                          )
+                                        : InkWell(
+                                            key: const ValueKey('switch-icon'),
+                                            onTap: _switchCourt,
+                                            child: const Icon(Icons.swap_horiz, size: 80, color: Colors.white),
+                                          ),
+                                  ),
+                                ),
+                              ],
+                            ),
+                            ),
+                          );
+                        }),
+                      ),
+                    ),
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(12, 8, 12, 4),
+                      child: Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        children: [
+                          Builder(builder: (_) {
+                            final int leftAvail = (2 - (_timeouts1 + _medTimeouts1)).clamp(0, 2);
+                            final int rightAvail = (2 - (_timeouts2 + _medTimeouts2)).clamp(0, 2);
+                            final int bottomLeftAvail = _endsSwitched ? rightAvail : leftAvail;
+                            Widget dot(bool filled) {
+                              const color = Color(0xFF3B82F6);
+                              return Container(
+                                width: 10,
+                                height: 10,
+                                decoration: BoxDecoration(
+                                  shape: BoxShape.circle,
+                                  color: filled ? color : Colors.transparent,
+                                  border: Border.all(color: filled ? color : Colors.grey.shade400, width: 1.5),
+                                ),
+                              );
+                            }
+                            return Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                dot(bottomLeftAvail >= 1),
+                                const SizedBox(width: 6),
+                                dot(bottomLeftAvail >= 2),
+                              ],
+                            );
+                          }),
+                          Builder(builder: (_) {
+                            final int leftAvail = (2 - (_timeouts1 + _medTimeouts1)).clamp(0, 2);
+                            final int rightAvail = (2 - (_timeouts2 + _medTimeouts2)).clamp(0, 2);
+                            final int bottomRightAvail = _endsSwitched ? leftAvail : rightAvail;
+                            Widget dot(bool filled) {
+                              const color = Color(0xFF3B82F6);
+                              return Container(
+                                width: 10,
+                                height: 10,
+                                decoration: BoxDecoration(
+                                  shape: BoxShape.circle,
+                                  color: filled ? color : Colors.transparent,
+                                  border: Border.all(color: filled ? color : Colors.grey.shade400, width: 1.5),
+                                ),
+                              );
+                            }
+                            return Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                dot(bottomRightAvail >= 2),
+                                const SizedBox(width: 6),
+                                dot(bottomRightAvail >= 1),
+                              ],
+                            );
+                          }),
+                        ],
+                      ),
+                    ),
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(12, 8, 12, 4),
+                      child: Row(
+                        children: [
+                          if (!_gameStarted) ...[
+                            Builder(builder: (_) {
+                              final leftTeam = _splitTeam(g.player1);
+                              final rightTeam = _splitTeam(g.player2);
+                              final isDoubles = leftTeam.length > 1 || rightTeam.length > 1;
+                              final leftServing = _servingPlayer != null && leftTeam.contains(_servingPlayer);
+                              final rightServing = _servingPlayer != null && rightTeam.contains(_servingPlayer);
+                              if (!isDoubles) return const SizedBox.shrink();
+                              final displayLeftServing = _endsSwitched ? rightServing : leftServing;
+                              final VoidCallback leftHandler = _endsSwitched ? () => _toggleRightReceiver(g) : () => _toggleLeftReceiver(g);
+                              return Row(
+                                children: [
+                                  IconButton(
+                                    tooltip: 'Swap left receiver',
+                                    onPressed: displayLeftServing ? null : leftHandler,
+                                    icon: const Icon(Icons.swap_vert),
+                                  ),
+                                  const SizedBox(width: 8),
+                                ],
+                              );
+                            }),
+                          ],
+                          const Spacer(),
+                          if (!_gameStarted) ...[
+                            Builder(builder: (_) {
+                              final leftTeam = _splitTeam(g.player1);
+                              final rightTeam = _splitTeam(g.player2);
+                              final isDoubles = leftTeam.length > 1 || rightTeam.length > 1;
+                              final leftServing = _servingPlayer != null && leftTeam.contains(_servingPlayer);
+                              final rightServing = _servingPlayer != null && rightTeam.contains(_servingPlayer);
+                              if (!isDoubles) return const SizedBox.shrink();
+                              final displayRightServing = _endsSwitched ? leftServing : rightServing;
+                              final VoidCallback rightHandler = _endsSwitched ? () => _toggleLeftReceiver(g) : () => _toggleRightReceiver(g);
+                              return Row(
+                                children: [
+                                  IconButton(
+                                    tooltip: 'Swap right receiver',
+                                    onPressed: displayRightServing ? null : rightHandler,
+                                    icon: const Icon(Icons.swap_vert),
+                                  ),
+                                ],
+                              );
+                            }),
+                          ],
+                        ],
+                      ),
+                    ),
+                    if (!_gameStarted)
+                      Container(
+                        color: Colors.white,
+                        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                        child: Row(
+                          children: [
+                            Expanded(
+                              child: SizedBox(
+                                height: 44,
+                                child: ElevatedButton.icon(
+                                  onPressed: _servingPlayer != null ? _startGame : null,
+                                  style: ElevatedButton.styleFrom(
+                                    backgroundColor: const Color(0xFF111827),
+                                    disabledBackgroundColor: Colors.grey[400],
+                                    foregroundColor: Colors.white,
+                                    shape: RoundedRectangleBorder(
+                                      borderRadius: BorderRadius.circular(20),
+                                    ),
+                                  ),
+                                  icon: const Icon(Icons.play_arrow, size: 22),
+                                  label: const Text('START GAME', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                      )
+                    else
+                      Padding(
+                        padding: const EdgeInsets.fromLTRB(18, 8, 18, 24),
+                        child: isRallyScoring
+                            ? Row(
+                                children: [
+                                  Expanded(
+                                    child: SizedBox(
+                                      height: 56,
+                                      child: ElevatedButton(
+                                        onPressed: _awardRallyPointLeft,
+                                        style: ElevatedButton.styleFrom(
+                                          backgroundColor: const Color(0xFF3B82F6),
+                                          foregroundColor: Colors.white,
+                                          shape: RoundedRectangleBorder(
+                                            borderRadius: BorderRadius.circular(20),
+                                          ),
+                                        ),
+                                        child: Text(
+                                          '${g.player1}\nPOINT',
+                                          textAlign: TextAlign.center,
+                                          style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+                                        ),
+                                      ),
+                                    ),
+                                  ),
+                                  const SizedBox(width: 12),
+                                  Container(
+                                    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                                    decoration: BoxDecoration(
+                                      color: Colors.white,
+                                      borderRadius: BorderRadius.circular(20),
+                                      border: Border.all(color: const Color(0xFFD1D5DB)),
+                                    ),
+                                    child: Text(
+                                      _servingPlayer == null ? 'No server' : 'Server: $_servingPlayer',
+                                      textAlign: TextAlign.center,
+                                      style: const TextStyle(
+                                        color: Color(0xFF1F2937),
+                                        fontWeight: FontWeight.w700,
+                                      ),
+                                    ),
+                                  ),
+                                  const SizedBox(width: 12),
+                                  Expanded(
+                                    child: SizedBox(
+                                      height: 56,
+                                      child: ElevatedButton(
+                                        onPressed: _awardRallyPointRight,
+                                        style: ElevatedButton.styleFrom(
+                                          backgroundColor: const Color(0xFF8B5CF6),
+                                          foregroundColor: Colors.white,
+                                          shape: RoundedRectangleBorder(
+                                            borderRadius: BorderRadius.circular(20),
+                                          ),
+                                        ),
+                                        child: Text(
+                                          '${g.player2}\nPOINT',
+                                          textAlign: TextAlign.center,
+                                          style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+                                        ),
+                                      ),
+                                    ),
+                                  ),
+                                ],
+                              )
+                            : Row(
+                                mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                                children: [
+                                  SizedBox(
+                                    width: 120,
+                                    height: 56,
+                                    child: ElevatedButton(
+                                      onPressed: _confirmDecrementPoint,
+                                      style: ElevatedButton.styleFrom(
+                                        elevation: 4,
+                                        shadowColor: Colors.black26,
+                                        backgroundColor: const Color(0xFF7F1D1D),
+                                        foregroundColor: Colors.white,
+                                        shape: RoundedRectangleBorder(
+                                          borderRadius: BorderRadius.circular(24),
+                                        ),
+                                      ),
+                                      child: const Text('-', style: TextStyle(fontSize: 28, fontWeight: FontWeight.w700, height: 1)),
+                                    ),
+                                  ),
+                                  SizedBox(
+                                    width: 200,
+                                    height: 56,
+                                    child: ElevatedButton(
+                                      onPressed: _sideOut,
+                                      style: ElevatedButton.styleFrom(
+                                        elevation: 4,
+                                        shadowColor: Colors.black26,
+                                        backgroundColor: const Color(0xFF1F2937),
+                                        foregroundColor: Colors.white,
+                                        shape: RoundedRectangleBorder(
+                                          borderRadius: BorderRadius.circular(24),
+                                        ),
+                                      ),
+                                      child: Builder(builder: (_) {
+                                        final app = context.read<AppState>();
+                                        final g = app.selectedGame;
+                                        var label = 'SIDE OUT';
+                                        if (g != null) {
+                                          final leftTeam = _splitTeam(g.player1);
+                                          final rightTeam = _splitTeam(g.player2);
+                                          final isDoubles = leftTeam.length > 1 || rightTeam.length > 1;
+                                          if (isDoubles && _servingPlayer != null) {
+                                            final onLeft = leftTeam.contains(_servingPlayer);
+                                            final onRight = rightTeam.contains(_servingPlayer);
+                                            final isFirstOnTeam = (onLeft && _servingPlayer == _leftBase) || (onRight && _servingPlayer == _rightBase);
+                                            label = isFirstOnTeam ? 'SECOND SERVER' : 'SIDE OUT';
+                                          }
+                                        }
+                                        if (g != null && _servingPlayer != null) {
+                                          final leftTeam = _splitTeam(g.player1);
+                                          final rightTeam = _splitTeam(g.player2);
+                                          final isDoubles = leftTeam.length > 1 || rightTeam.length > 1;
+                                          if (isDoubles) {
+                                            if (leftTeam.contains(_servingPlayer)) {
+                                              label = _leftServeStage <= 1 ? 'SECOND SERVER' : 'SIDE OUT';
+                                            } else if (rightTeam.contains(_servingPlayer)) {
+                                              label = _rightServeStage <= 1 ? 'SECOND SERVER' : 'SIDE OUT';
+                                            }
+                                          }
+                                        }
+                                        return Text(
+                                          label,
+                                          style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w700, letterSpacing: 0.3),
+                                        );
+                                      }),
+                                    ),
+                                  ),
+                                  SizedBox(
+                                    width: 120,
+                                    height: 56,
+                                    child: ElevatedButton(
+                                      onPressed: _incrementPoint,
+                                      style: ElevatedButton.styleFrom(
+                                        elevation: 4,
+                                        shadowColor: Colors.black26,
+                                        backgroundColor: const Color(0xFF064E3B),
+                                        foregroundColor: Colors.white,
+                                        shape: RoundedRectangleBorder(
+                                          borderRadius: BorderRadius.circular(24),
+                                        ),
+                                      ),
+                                      child: const Text('+', style: TextStyle(fontSize: 28, fontWeight: FontWeight.w700, height: 1)),
+                                    ),
+                                  ),
+                                ],
+                              ),
+                      ),
+                  ],
+                ),
               ],
             ),
       ),
@@ -1422,24 +1573,32 @@ class _RefereeDashboardScreenState extends State<RefereeDashboardScreen> {
     final gKey2 = 'game${_currentGame}Player2';
     fields[gKey1] = _score1;
     fields[gKey2] = _score2;
+    fields['status'] = 'Completed';
+    if (signatureData != null) {
+      final base = List<String?>.filled(3, null);
+      final existing = g.gameSignatures;
+      if (existing != null) {
+        for (int i = 0; i < existing.length && i < 3; i++) {
+          final v = (existing[i] ?? '').toString().trim();
+          if (v.isNotEmpty) base[i] = v;
+        }
+      }
+      if (_currentGame >= 1 && _currentGame <= 3) {
+        base[_currentGame - 1] = signatureData;
+      }
+      fields['gameSignatures'] = base;
+    }
     // Only finalize the match when the last scheduled game is submitted
     if (lastGame) {
       fields['score1'] = _score1;
       fields['score2'] = _score2;
       fields['finalScorePlayer1'] = _score1;
       fields['finalScorePlayer2'] = _score2;
-      fields['status'] = 'Completed';
       if (winnerName.isNotEmpty) {
         fields['winner'] = winnerName;
       }
       if (signatureData != null) {
         fields['signatureData'] = signatureData;
-        fields['gameSignatures'] = List<String?>.generate(3, (i) => i == (_currentGame - 1) ? signatureData : null);
-      }
-    } else {
-      fields['status'] = 'Ongoing';
-      if (signatureData != null) {
-        fields['gameSignatures'] = List<String?>.generate(3, (i) => i == (_currentGame - 1) ? signatureData : null);
       }
     }
     if (includeNote && _refereeNote.trim().isNotEmpty) {
@@ -2057,6 +2216,47 @@ extension on _RefereeDashboardScreenState {
       _serverTop = !_serverTop;
     });
     _syncLiveScoreTick();
+  }
+
+  Future<void> _confirmDecrementPoint() async {
+    final g = context.read<AppState>().selectedGame;
+    if (!_gameStarted || g == null || _servingPlayer == null) return;
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (_) => AlertDialog(
+        title: Row(
+          children: [
+            const Icon(Icons.remove_circle, color: Color(0xFFB91C1C), size: 26),
+            const SizedBox(width: 10),
+            Text(
+              'Confirm Deduction',
+              style: TextStyle(color: Color(0xFFB91C1C), fontWeight: FontWeight.bold),
+            ),
+          ],
+        ),
+        content: Text(
+          'Are you sure you want to deduct one point from the serving side?\n\n'
+          'Current server: $_servingPlayer',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: const Text('Cancel'),
+          ),
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(
+              backgroundColor: const Color(0xFFB91C1C),
+              foregroundColor: Colors.white,
+            ),
+            onPressed: () => Navigator.of(context).pop(true),
+            child: const Text('Deduct'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed == true) {
+      _decrementPoint();
+    }
   }
 
   void _sideOut() {

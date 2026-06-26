@@ -88,10 +88,17 @@ class User {
 
 class TournamentMatch {
   final String id;
+  final String documentId;
+  final bool scheduleFromAssignments;
   final String player1;
   final String player2;
+  final String player1Name;
+  final String player2Name;
   final int score1;
   final int score2;
+  final String game1Status;
+  final String game2Status;
+  final String game3Status;
   final int? game1Player1;
   final int? game1Player2;
   final int? game2Player1;
@@ -120,13 +127,32 @@ class TournamentMatch {
   final List<String?>? gameSignatures;
   final String? refereeNote;
   final String scoringFormat;
+  final String game1Team1Player;
+  final String game1Team1Player2;
+  final String game1Team2Player;
+  final String game1Team2Player2;
+  final String game2Team1Player;
+  final String game2Team1Player2;
+  final String game2Team2Player;
+  final String game2Team2Player2;
+  final String game3Team1Player;
+  final String game3Team1Player2;
+  final String game3Team2Player;
+  final String game3Team2Player2;
 
   TournamentMatch({
     required this.id,
+    this.documentId = '',
+    this.scheduleFromAssignments = false,
     required this.player1,
     required this.player2,
+    this.player1Name = '',
+    this.player2Name = '',
     required this.score1,
     required this.score2,
+    this.game1Status = '',
+    this.game2Status = '',
+    this.game3Status = '',
     this.game1Player1,
     this.game1Player2,
     this.game2Player1,
@@ -154,6 +180,18 @@ class TournamentMatch {
     this.gameSignatures,
     this.refereeNote,
     this.scoringFormat = 'sideout',
+    this.game1Team1Player = '',
+    this.game1Team1Player2 = '',
+    this.game1Team2Player = '',
+    this.game1Team2Player2 = '',
+    this.game2Team1Player = '',
+    this.game2Team1Player2 = '',
+    this.game2Team2Player = '',
+    this.game2Team2Player2 = '',
+    this.game3Team1Player = '',
+    this.game3Team1Player2 = '',
+    this.game3Team2Player = '',
+    this.game3Team2Player2 = '',
   });
 
   static String normalizeScoringFormat(String? raw) {
@@ -182,26 +220,83 @@ class TournamentMatch {
       }
       return s;
     }
+    String pickFirstNonEmpty(List<dynamic> values) {
+      for (final v in values) {
+        final s = (v?.toString() ?? '').trim();
+        if (s.isNotEmpty) return s;
+      }
+      return '';
+    }
+    String normalizeStatus(String raw) {
+      final v = raw.trim();
+      if (v.isEmpty) return '';
+      final low = v.toLowerCase();
+      if (low == 'unschedule' || low == 'unscheduled') return 'Unscheduled';
+      if (low == 'scheduled') return 'Scheduled';
+      if (low == 'ongoing') return 'Ongoing';
+      if (low == 'completed') return 'Completed';
+      if (low == 'called') return 'Called';
+      return v;
+    }
+
+    final resolvedDate = pickFirstNonEmpty([
+      j['date'],
+      j['mdDate'],
+      j['wdDate'],
+      j['xdDate'],
+    ]);
+    final resolvedTime = pickFirstNonEmpty([
+      j['time'],
+      j['mdTime'],
+      j['wdTime'],
+      j['xdTime'],
+    ]);
+    final resolvedCourt = pickFirstNonEmpty([
+      j['court'],
+      j['mdCourt'],
+      j['wdCourt'],
+      j['xdCourt'],
+    ]);
+    final resolvedVenue = pickFirstNonEmpty([
+      j['venue'],
+      j['mdVenue'],
+      j['wdVenue'],
+      j['xdVenue'],
+    ]);
+    final scheduleFromAssignments = j['_scheduleFromAssignments'] == true;
+
     final explicitStatus = j['status']?.toString();
     final hasWinner = j['winner'] != null && j['winner'].toString().trim().isNotEmpty;
-    final hasSchedule = (j['time']?.toString().trim().isNotEmpty ?? false) &&
-        (j['court']?.toString().trim().isNotEmpty ?? false) &&
-        (j['date']?.toString().trim().isNotEmpty ?? false);
+    final hasSchedule =
+        resolvedTime.isNotEmpty && resolvedCourt.isNotEmpty && resolvedDate.isNotEmpty;
     final derivedStatus = hasWinner
         ? 'Completed'
         : (hasSchedule ? 'Scheduled' : 'Unscheduled');
-    final resolvedStatus = (explicitStatus != null && explicitStatus.isNotEmpty) ? explicitStatus : derivedStatus;
+    final normalizedExplicit = normalizeStatus(explicitStatus ?? '');
+    final resolvedStatus =
+        normalizedExplicit.isNotEmpty ? normalizedExplicit : derivedStatus;
+
+    final normalizedGame1Status = normalizeStatus(j['game1Status']?.toString() ?? '');
+    final normalizedGame2Status = normalizeStatus(j['game2Status']?.toString() ?? '');
+    final normalizedGame3Status = normalizeStatus(j['game3Status']?.toString() ?? '');
     List<String?>? sigs;
     final gs = j['gameSignatures'];
     if (gs is List) {
       sigs = gs.map((e) => e?.toString()).toList();
     }
     return TournamentMatch(
-      id: j['_id']?.toString() ?? j['id']?.toString() ?? '',
+      id: j['id']?.toString() ?? j['matchId']?.toString() ?? j['matchKey']?.toString() ?? j['_id']?.toString() ?? '',
+      documentId: j['_id']?.toString() ?? '',
+      scheduleFromAssignments: scheduleFromAssignments,
       player1: j['player1']?.toString() ?? 'TBD',
       player2: j['player2']?.toString() ?? 'TBD',
+      player1Name: j['player1Name']?.toString() ?? '',
+      player2Name: j['player2Name']?.toString() ?? '',
       score1: int.tryParse(j['score1']?.toString() ?? '0') ?? 0,
       score2: int.tryParse(j['score2']?.toString() ?? '0') ?? 0,
+      game1Status: normalizedGame1Status,
+      game2Status: normalizedGame2Status,
+      game3Status: normalizedGame3Status,
       game1Player1: int.tryParse(j['game1Player1']?.toString() ?? ''),
       game1Player2: int.tryParse(j['game1Player2']?.toString() ?? ''),
       game2Player1: int.tryParse(j['game2Player1']?.toString() ?? ''),
@@ -209,10 +304,10 @@ class TournamentMatch {
       game3Player1: int.tryParse(j['game3Player1']?.toString() ?? ''),
       game3Player2: int.tryParse(j['game3Player2']?.toString() ?? ''),
       round: j['round']?.toString() ?? '',
-      court: normalizeCourt(j['court']?.toString() ?? ''),
-      date: j['date']?.toString() ?? '',
-      time: j['time']?.toString() ?? '',
-      venue: j['venue']?.toString(),
+      court: normalizeCourt(resolvedCourt),
+      date: resolvedDate,
+      time: resolvedTime,
+      venue: resolvedVenue.isNotEmpty ? resolvedVenue : null,
       mdTime2: j['mdTime2']?.toString(),
       mdEnd2: j['mdEnd2']?.toString(),
       mdTime3: j['mdTime3']?.toString(),
@@ -231,6 +326,18 @@ class TournamentMatch {
       scoringFormat: normalizeScoringFormat(
         j['scoringFormat']?.toString() ?? j['scoringType']?.toString(),
       ),
+      game1Team1Player: j['game1Team1Player']?.toString() ?? '',
+      game1Team1Player2: j['game1Team1Player2']?.toString() ?? '',
+      game1Team2Player: j['game1Team2Player']?.toString() ?? '',
+      game1Team2Player2: j['game1Team2Player2']?.toString() ?? '',
+      game2Team1Player: j['game2Team1Player']?.toString() ?? '',
+      game2Team1Player2: j['game2Team1Player2']?.toString() ?? '',
+      game2Team2Player: j['game2Team2Player']?.toString() ?? '',
+      game2Team2Player2: j['game2Team2Player2']?.toString() ?? '',
+      game3Team1Player: j['game3Team1Player']?.toString() ?? '',
+      game3Team1Player2: j['game3Team1Player2']?.toString() ?? '',
+      game3Team2Player: j['game3Team2Player']?.toString() ?? '',
+      game3Team2Player2: j['game3Team2Player2']?.toString() ?? '',
     );
   }
 }
@@ -244,7 +351,13 @@ class Tournament {
   final Map<String, String> categoryNames;
   final Map<String, int> categoryGamesPerMatch;
   final Map<String, String> categoryScoringTypes;
+  final Map<String, String> categoryDivisions;
+  final bool hasAuthoritativeSchedule;
   final String? preferredScheduleDate;
+  final Map<String, List<TeamRegistration>> categoryTeamRegistrations;
+  final Map<String, List<String>> teamRosterBySlot;
+  final Map<String, List<TeamMemberInfo>> teamRosterMembersBySlot;
+  final Map<String, List<String>> teamRosterSourceCategories;
 
   Tournament({
     required this.id,
@@ -255,7 +368,13 @@ class Tournament {
     this.categoryNames = const {},
     this.categoryGamesPerMatch = const {},
     this.categoryScoringTypes = const {},
+    this.categoryDivisions = const {},
+    this.hasAuthoritativeSchedule = false,
     this.preferredScheduleDate,
+    this.categoryTeamRegistrations = const {},
+    this.teamRosterBySlot = const {},
+    this.teamRosterMembersBySlot = const {},
+    this.teamRosterSourceCategories = const {},
   });
 
   factory Tournament.fromJson(Map<String, dynamic> j) {
@@ -264,7 +383,12 @@ class Tournament {
     final categoryNames = <String, String>{};
     final categoryGPM = <String, int>{};
     final categoryScoringTypes = <String, String>{};
+    final categoryDivisions = <String, String>{};
     final idToDisplay = <String, String>{};
+    final categoryTeamRegistrations = <String, List<TeamRegistration>>{};
+    final teamRosterBySlot = <String, List<String>>{};
+    final teamRosterMembersBySlot = <String, List<TeamMemberInfo>>{};
+    final teamRosterSourceCategories = <String, List<String>>{};
     final hasRootCourtAssignments = j['courtAssignments'] is Map<String, dynamic>;
     final hasCourtAssignmentsByDate = j['courtAssignmentsByDate'] is Map<String, dynamic>;
     final hasAuthoritativeSchedule = hasRootCourtAssignments || hasCourtAssignmentsByDate;
@@ -308,6 +432,21 @@ class Tournament {
       final timeSlots = source['timeSlots'] as List?;
       final courtCount = int.tryParse(source['courtCount']?.toString() ?? '');
 
+      String normalizeBracketCode(String raw) {
+        final text = raw.trim();
+        if (text.isEmpty) return '';
+        final m = RegExp(r'([A-D])', caseSensitive: false).allMatches(text).toList();
+        if (m.isNotEmpty) {
+          return (m.last.group(1) ?? '').toLowerCase();
+        }
+        final compact = text.toLowerCase().replaceAll(RegExp(r'[^a-z0-9]+'), '');
+        final m2 = RegExp(r'([a-d])').allMatches(compact).toList();
+        if (m2.isNotEmpty) {
+          return (m2.last.group(1) ?? '').toLowerCase();
+        }
+        return '';
+      }
+
       if (courtCount != null && courtCount > 0) {
         for (int i = 1; i <= courtCount; i++) {
           courts.add('Court $i');
@@ -337,8 +476,20 @@ class Tournament {
           if (cell is Map) {
             final id = cell['id']?.toString();
             if (id == null || id.isEmpty) continue;
+            final suffixMatch = RegExp(r'(-g\d+)$', caseSensitive: false).firstMatch(id);
+            final gameSuffix = suffixMatch?.group(1) ?? '';
+            final catId = cell['categoryId']?.toString().trim() ?? '';
+            final bracketRaw = cell['bracket']?.toString().trim() ?? '';
+            final matchKey = (cell['matchKey'] ?? cell['key'])?.toString().trim() ?? '';
+            final bracketCode = normalizeBracketCode(bracketRaw);
+
+            String? scheduleKey;
+            if (catId.isNotEmpty && matchKey.isNotEmpty && bracketCode.isNotEmpty) {
+              final groupId = 'group-$bracketCode';
+              scheduleKey = 'rr-$catId-$groupId-$matchKey$gameSuffix';
+            }
             mergeScheduleCell(
-              id: id,
+              id: scheduleKey ?? id,
               date: resolvedDate,
               time: startTime,
               endTime: endTime,
@@ -381,66 +532,51 @@ class Tournament {
       });
     }
 
-    // 1. Build ID to Name map from registrations
-    try {
-      final regs = j['registrations'] as List?;
-      if (regs != null) {
-        for (var r in regs) {
-          if (r is Map<String, dynamic>) {
-             // Check status
-             final status = r['status']?.toString().toLowerCase() ?? '';
-             if (status != 'approved') continue;
-
-             String getName(Map<String, dynamic>? p) {
-               if (p == null) return '';
-               final fn = p['firstName']?.toString() ?? '';
-               final ln = p['lastName']?.toString() ?? '';
-               final name = p['name']?.toString() ?? '';
-               if (fn.isNotEmpty || ln.isNotEmpty) {
-                 return '$fn $ln'.trim();
-               }
-               return name;
-             }
-
-             // Player / Primary Player
-             final p = r['player'] ?? r['primaryPlayer'];
-             if (p is Map<String, dynamic>) {
-               final id = p['_id']?.toString() ?? p['id']?.toString();
-               if (id != null) idToDisplay[id] = getName(p);
-             } else if (p is String) {
-               final nm = r['playerName']?.toString().trim();
-               if (nm != null && nm.isNotEmpty) idToDisplay[p] = nm;
-             }
-
-             // Partner
-             final partner = r['partner'];
-             if (partner is Map<String, dynamic>) {
-               final id = partner['_id']?.toString() ?? partner['id']?.toString();
-               if (id != null) idToDisplay[id] = getName(partner);
-             } else if (partner is String) {
-               final nm = r['partnerName']?.toString().trim();
-               if (nm != null && nm.isNotEmpty) idToDisplay[partner] = nm;
-             }
-             
-             // Team Members
-             final teamName = r['teamName']?.toString();
-             final members = r['teamMembers'] as List?;
-             if (teamName != null && members != null) {
-               for (var m in members) {
-                  String? mid;
-                  if (m is Map) mid = m['_id']?.toString() ?? m['id']?.toString();
-                  if (m is String) mid = m;
-                  if (mid != null) idToDisplay[mid] = teamName;
-               }
-             }
-          }
-        }
+    // Helper functions (declared first)
+    String _normalizeBracketCode(String raw) {
+      final text = raw.trim();
+      if (text.isEmpty) return '';
+      final m = RegExp(r'([A-D])', caseSensitive: false).allMatches(text).toList();
+      if (m.isNotEmpty) {
+        return (m.last.group(1) ?? '').toLowerCase();
       }
-    } catch (e) {
-      debugPrint('Error parsing registrations: $e');
+      final compact = text.toLowerCase().replaceAll(RegExp(r'[^a-z0-9]+'), '');
+      final m2 = RegExp(r'([a-d])').allMatches(compact).toList();
+      if (m2.isNotEmpty) {
+        return (m2.last.group(1) ?? '').toLowerCase();
+      }
+      return '';
     }
 
-    // Helper to resolve name from string ID or name
+    String _normalizeGroupId(String raw, String groupName) {
+      final trimmed = raw.trim();
+      if (trimmed.isEmpty) {
+        final code = _normalizeBracketCode(groupName);
+        return code.isNotEmpty ? 'group-$code' : '';
+      }
+      final low = trimmed.toLowerCase();
+      if (low.startsWith('group-')) return low;
+      final codeFromRaw = _normalizeBracketCode(trimmed);
+      if (codeFromRaw.isNotEmpty) return 'group-$codeFromRaw';
+      final codeFromName = _normalizeBracketCode(groupName);
+      if (codeFromName.isNotEmpty) return 'group-$codeFromName';
+      return trimmed;
+    }
+
+    String getName(dynamic p) {
+      if (p == null) return '';
+      if (p is Map<String, dynamic>) {
+        final fn = p['firstName']?.toString() ?? '';
+        final ln = p['lastName']?.toString() ?? '';
+        final name = p['name']?.toString() ?? '';
+        if (fn.isNotEmpty || ln.isNotEmpty) {
+          return '$fn $ln'.trim();
+        }
+        return name;
+      }
+      return '';
+    }
+
     String resolveName(dynamic val) {
       if (val == null) return 'TBD';
       String s = val.toString();
@@ -455,7 +591,6 @@ class Tournament {
       return s;
     }
 
-    // Helper to extract name from object or string
     String extract(dynamic p) {
       if (p is Map) {
         final fn = p['firstName']?.toString() ?? '';
@@ -467,6 +602,265 @@ class Tournament {
       return resolveName(p);
     }
 
+    String extractGender(dynamic p) {
+      if (p is Map) {
+        final raw = p['gender']?.toString().trim() ?? '';
+        if (raw.isEmpty) return '';
+        final low = raw.toLowerCase();
+        if (low.startsWith('m')) return 'Male';
+        if (low.startsWith('f')) return 'Female';
+        return raw;
+      }
+      return '';
+    }
+    
+    String normalizeTeamKey(String key) {
+      var normalized = key.replaceAll(RegExp(r'\s*/\s*'), ' / ');
+      normalized = normalized.replaceAll(RegExp(r'\s+'), ' ').trim().toLowerCase();
+      return normalized;
+    }
+
+    void addUniqueNormalized(List<String> target, String value) {
+      final trimmed = value.trim();
+      if (trimmed.isEmpty || trimmed.toLowerCase() == 'tbd') return;
+      final normalized = normalizeTeamKey(trimmed);
+      final exists = target.any((item) => normalizeTeamKey(item) == normalized);
+      if (!exists) {
+        target.add(trimmed);
+      }
+    }
+
+    void addOrMergeTeamMember(
+      List<TeamMemberInfo> target,
+      TeamMemberInfo candidate,
+    ) {
+      final normalizedName = normalizeTeamKey(candidate.name);
+      final index = target.indexWhere(
+        (item) => normalizeTeamKey(item.name) == normalizedName,
+      );
+      if (index < 0) {
+        target.add(candidate);
+        return;
+      }
+      final existing = target[index];
+      target[index] = TeamMemberInfo(
+        name: existing.name,
+        gender: existing.gender.isNotEmpty ? existing.gender : candidate.gender,
+        isSub: existing.isSub || candidate.isSub,
+      );
+    }
+
+    List<String> extractRosterFromRegistration(Map<String, dynamic> reg) {
+      final roster = <String>[];
+      final teamMembers = reg['teamMembers'] as List?;
+
+      if (teamMembers != null && teamMembers.isNotEmpty) {
+        for (final member in teamMembers) {
+          addUniqueNormalized(roster, extract(member));
+        }
+      }
+
+      if (roster.isEmpty) {
+        addUniqueNormalized(roster, extract(reg['player'] ?? reg['primaryPlayer']));
+        addUniqueNormalized(roster, extract(reg['partner']));
+      }
+
+      return roster;
+    }
+
+    List<TeamMemberInfo> extractRosterMembersFromRegistration(Map<String, dynamic> reg) {
+      final members = <TeamMemberInfo>[];
+      final teamMembers = reg['teamMembers'] as List?;
+
+      if (teamMembers != null && teamMembers.isNotEmpty) {
+        int maleCount = 0;
+        int femaleCount = 0;
+        for (int i = 0; i < teamMembers.length; i++) {
+          final member = teamMembers[i];
+          final name = extract(member).trim();
+          if (name.isEmpty || name.toLowerCase() == 'tbd') continue;
+          final gender = extractGender(member);
+          bool isSub = false;
+          if (gender == 'Male') {
+            maleCount += 1;
+            isSub = maleCount > 2;
+          } else if (gender == 'Female') {
+            femaleCount += 1;
+            isSub = femaleCount > 2;
+          }
+          addOrMergeTeamMember(
+            members,
+            TeamMemberInfo(
+              name: name,
+              gender: gender,
+              isSub: isSub,
+            ),
+          );
+        }
+      }
+
+      if (members.isEmpty) {
+        final primary = reg['player'] ?? reg['primaryPlayer'];
+        final partner = reg['partner'];
+        final primaryName = extract(primary).trim();
+        final partnerName = extract(partner).trim();
+        if (primaryName.isNotEmpty && primaryName.toLowerCase() != 'tbd') {
+          addOrMergeTeamMember(
+            members,
+            TeamMemberInfo(
+              name: primaryName,
+              gender: extractGender(primary),
+              isSub: false,
+            ),
+          );
+        }
+        if (partnerName.isNotEmpty && partnerName.toLowerCase() != 'tbd') {
+          addOrMergeTeamMember(
+            members,
+            TeamMemberInfo(
+              name: partnerName,
+              gender: extractGender(partner),
+              isSub: false,
+            ),
+          );
+        }
+      }
+
+      return members;
+    }
+
+    List<String> buildRosterSlotKeys(Map<String, dynamic> reg, List<String> roster) {
+      final keys = <String>[];
+
+      void addKey(dynamic value) {
+        final raw = value?.toString() ?? '';
+        final trimmed = raw.trim();
+        if (trimmed.isEmpty) return;
+        final exists = keys.any((item) => normalizeTeamKey(item) == normalizeTeamKey(trimmed));
+        if (!exists) {
+          keys.add(trimmed);
+        }
+      }
+
+      final player = reg['player'] ?? reg['primaryPlayer'];
+      addKey(reg['teamName']);
+      if (player is Map<String, dynamic>) {
+        addKey(player['teamName']);
+      }
+      addKey(reg['playerName']);
+      if (roster.length >= 2) {
+        addKey('${roster[0]} / ${roster[1]}');
+      }
+      for (final member in roster) {
+        addKey(member);
+      }
+
+      return keys;
+    }
+
+    // 1. Build ID to Name map from registrations and category team registrations
+    try {
+      final regs = j['registrations'] as List?;
+      if (regs != null) {
+        for (var r in regs) {
+          if (r is Map<String, dynamic>) {
+            final status = r['status']?.toString().toLowerCase() ?? '';
+            if (status != 'approved') continue;
+
+            final p = r['player'] ?? r['primaryPlayer'];
+            if (p is Map<String, dynamic>) {
+              final id = p['_id']?.toString() ?? p['id']?.toString();
+              if (id != null) idToDisplay[id] = getName(p);
+            } else if (p is String) {
+              final nm = r['playerName']?.toString().trim();
+              if (nm != null && nm.isNotEmpty) idToDisplay[p] = nm;
+            }
+
+            final partner = r['partner'];
+            if (partner is Map<String, dynamic>) {
+              final id = partner['_id']?.toString() ?? partner['id']?.toString();
+              if (id != null) idToDisplay[id] = getName(partner);
+            } else if (partner is String) {
+              final nm = r['partnerName']?.toString().trim();
+              if (nm != null && nm.isNotEmpty) idToDisplay[partner] = nm;
+            }
+
+            final teamMembers = r['teamMembers'] as List?;
+            if (teamMembers != null) {
+              for (final member in teamMembers) {
+                if (member is Map<String, dynamic>) {
+                  final id = member['_id']?.toString() ?? member['id']?.toString();
+                  final name = getName(member);
+                  if (id != null && name.isNotEmpty) {
+                    idToDisplay[id] = name;
+                  }
+                }
+              }
+            }
+
+            final rosterMembers = extractRosterMembersFromRegistration(r);
+            final roster = rosterMembers.map((member) => member.name).toList();
+            if (roster.isEmpty) continue;
+
+            final regCategory = r['categoryId']?.toString() ?? r['category']?.toString() ?? '';
+            if (regCategory.isNotEmpty) {
+              categoryTeamRegistrations.putIfAbsent(regCategory, () => []);
+            }
+
+            final slotKeys = buildRosterSlotKeys(r, roster);
+            if (slotKeys.isEmpty) continue;
+
+            if (regCategory.isNotEmpty) {
+              for (final slot in slotKeys) {
+                final existingIndex = categoryTeamRegistrations[regCategory]!.indexWhere(
+                  (entry) => normalizeTeamKey(entry.teamName) == normalizeTeamKey(slot),
+                );
+                if (existingIndex >= 0) {
+                  for (final member in roster) {
+                    addUniqueNormalized(
+                      categoryTeamRegistrations[regCategory]![existingIndex].members,
+                      member,
+                    );
+                  }
+                } else {
+                  categoryTeamRegistrations[regCategory]!.add(
+                    TeamRegistration(
+                      teamName: slot,
+                      members: List<String>.from(roster),
+                    ),
+                  );
+                }
+              }
+            }
+
+            for (final slot in slotKeys) {
+              final normalizedKey = normalizeTeamKey(slot);
+              final bucket = teamRosterBySlot.putIfAbsent(normalizedKey, () => []);
+              for (final member in roster) {
+                addUniqueNormalized(bucket, member);
+              }
+              final memberBucket = teamRosterMembersBySlot.putIfAbsent(
+                normalizedKey,
+                () => [],
+              );
+              for (final member in rosterMembers) {
+                addOrMergeTeamMember(memberBucket, member);
+              }
+              final sourceCategories = teamRosterSourceCategories.putIfAbsent(
+                normalizedKey,
+                () => [],
+              );
+              if (regCategory.isNotEmpty && !sourceCategories.contains(regCategory)) {
+                sourceCategories.add(regCategory);
+              }
+            }
+          }
+        }
+      }
+    } catch (e) {
+      debugPrint('Error parsing registrations: $e');
+    }
+
     void clearScheduleFields(Map<String, dynamic> m) {
       m['court'] = '';
       m['time'] = '';
@@ -476,8 +870,9 @@ class Tournament {
       m['mdEnd2'] = '';
       m['mdTime3'] = '';
       m['mdEnd3'] = '';
+      m['_scheduleFromAssignments'] = false;
       final status = m['status']?.toString().trim().toLowerCase();
-      if (status == 'scheduled' || status == 'called') {
+      if (status == 'scheduled' || status == 'called' || status == 'unschedule' || status == 'unscheduled') {
         m['status'] = 'Unscheduled';
       }
     }
@@ -491,11 +886,13 @@ class Tournament {
       m['mdEnd2'] = info['mdEnd2'] ?? m['mdEnd2'];
       m['mdTime3'] = info['mdTime3'] ?? m['mdTime3'];
       m['mdEnd3'] = info['mdEnd3'] ?? m['mdEnd3'];
+      m['_scheduleFromAssignments'] = true;
       final currentStatus = m['status']?.toString().trim().toLowerCase() ?? '';
       if ((m['time']?.toString().trim().isNotEmpty ?? false) &&
           (currentStatus.isEmpty ||
               currentStatus == 'scheduled' ||
               currentStatus == 'called' ||
+              currentStatus == 'unschedule' ||
               currentStatus == 'unscheduled')) {
         m['status'] = 'Scheduled';
       }
@@ -591,8 +988,12 @@ class Tournament {
 
     // Parse categories
     final categories = j['tournamentCategories'] as List?;
+    if (kDebugMode) {
+      debugPrint('Parsing tournament categories: count=${categories?.length ?? 0}');
+    }
     if (categories != null) {
-      for (var c in categories) {
+      for (int i=0; i<categories.length; i++) {
+        var c = categories[i];
         final catId = c['_id']?.toString() ?? '';
         
         // Construct category name
@@ -602,6 +1003,7 @@ class Tournament {
         final catName = [division, age, skill].where((s) => s.isNotEmpty).join(' ');
         if (catId.isNotEmpty) {
           categoryNames[catId] = catName;
+          categoryDivisions[catId] = division;
           final gpm = int.tryParse(c['gamesPerMatch']?.toString() ?? '') ?? 1;
           categoryGPM[catId] = gpm.clamp(1, 3);
           final scoringType = c['scoringType']?.toString().trim();
@@ -620,7 +1022,10 @@ class Tournament {
               if (groupMatches is Map) {
                 groupMatches.forEach((k, v) {
                   if (v is Map<String, dynamic>) {
-                    final groupId = g['id']?.toString() ?? '';
+                    final groupId = _normalizeGroupId(
+                      g['id']?.toString() ?? '',
+                      g['name']?.toString() ?? '',
+                    );
                     v['matchKey'] = k;
                     v['groupId'] = groupId;
                     final sId = 'rr-$catId-$groupId-$k';
@@ -647,6 +1052,8 @@ class Tournament {
                           if (idx1 < originalPlayers.length && idx2 < originalPlayers.length) {
                             dynamic op1 = originalPlayers[idx1];
                             dynamic op2 = originalPlayers[idx2];
+                            v['player1Name'] = extract(op1);
+                            v['player2Name'] = extract(op2);
                             if (v['player1'] == null || v['player1'] == 'TBD') {
                               v['player1'] = extract(op1);
                             }
@@ -671,7 +1078,10 @@ class Tournament {
                    if (m is Map<String, dynamic>) {
                      final mk = m['matchKey']?.toString();
                      if (mk != null) {
-                        final groupId = g['id']?.toString() ?? '';
+                        final groupId = _normalizeGroupId(
+                          g['id']?.toString() ?? '',
+                          g['name']?.toString() ?? '',
+                        );
                         final sId = 'rr-$catId-$groupId-$mk';
                         if (scheduleMap.containsKey(sId)) {
                           applyScheduleInfo(m, scheduleMap[sId]!);
@@ -750,8 +1160,48 @@ class Tournament {
       categoryNames: categoryNames,
       categoryGamesPerMatch: categoryGPM,
       categoryScoringTypes: categoryScoringTypes,
+      categoryDivisions: categoryDivisions,
+      hasAuthoritativeSchedule: hasAuthoritativeSchedule,
       preferredScheduleDate: preferredScheduleDate,
+      categoryTeamRegistrations: categoryTeamRegistrations,
+      teamRosterBySlot: teamRosterBySlot,
+      teamRosterMembersBySlot: teamRosterMembersBySlot,
+      teamRosterSourceCategories: teamRosterSourceCategories,
     );
+  }
+}
+
+class TeamRegistration {
+  final String teamName;
+  final List<String> members;
+
+  TeamRegistration({
+    required this.teamName,
+    required this.members,
+  });
+}
+
+class TeamMemberInfo {
+  final String name;
+  final String gender;
+  final bool isSub;
+
+  TeamMemberInfo({
+    required this.name,
+    this.gender = '',
+    this.isSub = false,
+  });
+
+  String get displayLabel {
+    final parts = <String>[];
+    if (gender.isNotEmpty) {
+      parts.add(gender);
+    }
+    if (isSub) {
+      parts.add('Sub');
+    }
+    if (parts.isEmpty) return name;
+    return '$name (${parts.join(', ')})';
   }
 }
 

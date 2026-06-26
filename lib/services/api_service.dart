@@ -126,12 +126,16 @@ class ApiService {
     try {
       final ts = DateTime.now().millisecondsSinceEpoch;
       final url = '$baseUrl/api/tournaments?_ts=$ts';
-      print('GET $url');
+      if (kDebugMode) {
+        debugPrint('GET $url');
+      }
       final res = await http.get(
         Uri.parse(url),
         headers: _headers,
       );
-      print('Response (${res.statusCode}): ${res.body}');
+      if (kDebugMode) {
+        debugPrint('GET /api/tournaments -> ${res.statusCode}');
+      }
       if (res.statusCode == 200) {
         final List<dynamic> jsonList = jsonDecode(res.body);
         final list = jsonList.map((e) => Tournament.fromJson(e)).toList();
@@ -139,7 +143,9 @@ class ApiService {
       }
       throw Exception('Status ${res.statusCode}: ${res.body}');
     } catch (e) {
-      print('Error fetching tournaments: $e');
+      if (kDebugMode) {
+        debugPrint('Error fetching tournaments: $e');
+      }
       rethrow;
     }
   }
@@ -147,22 +153,64 @@ class ApiService {
   Future<Tournament> getTournamentDetails(String id) async {
     try {
       final ts = DateTime.now().millisecondsSinceEpoch;
-      final url = '$baseUrl/api/tournaments/$id?_ts=$ts';
-      print('GET $url');
-      final res = await http.get(
-        Uri.parse(url),
-        headers: _headers,
-      );
-      if (res.statusCode == 200) {
+      final allRegistrations = <dynamic>[];
+      Map<String, dynamic>? tournamentData;
+      int page = 1;
+
+      while (true) {
+        final url =
+            '$baseUrl/api/tournaments/$id'
+            '?includeRegistrations=true'
+            '&includeAssets=false'
+            '&includeComputed=true'
+            '&regPage=$page'
+            '&regLimit=200'
+            '&_ts=$ts';
+        if (kDebugMode) {
+          debugPrint('GET tournament details page=$page');
+        }
+        final res = await http.get(
+          Uri.parse(url),
+          headers: _headers,
+        );
+        if (res.statusCode != 200) {
+          throw Exception('Status ${res.statusCode}: ${res.body}');
+        }
+
         final json = jsonDecode(res.body);
-        // The API might return { tournament: { ... } } or just { ... }
-        // Based on Brackets.jsx line 195: res?.data?.tournament || res?.data
-        final data = json['tournament'] ?? json;
-        return Tournament.fromJson(data);
+        final data = Map<String, dynamic>.from(json['tournament'] ?? json);
+        tournamentData ??= data;
+
+        final regs = data['registrations'] as List? ?? const [];
+        allRegistrations.addAll(regs);
+
+        final pagination = data['registrationPagination'] as Map?;
+        final total = int.tryParse(pagination?['total']?.toString() ?? '') ?? 0;
+        final limit = int.tryParse(pagination?['limit']?.toString() ?? '') ?? 200;
+        final hasMore = total > 0 ? allRegistrations.length < total : regs.length >= limit;
+        if (kDebugMode) {
+          debugPrint(
+            'Tournament details page=$page status=${res.statusCode} '
+            'regsLoaded=${allRegistrations.length} total=$total hasMore=$hasMore',
+          );
+        }
+        if (!hasMore) {
+          break;
+        }
+
+        page += 1;
+        if (page > 200) {
+          break;
+        }
       }
-      throw Exception('Status ${res.statusCode}: ${res.body}');
+
+      final merged = Map<String, dynamic>.from(tournamentData ?? <String, dynamic>{});
+      merged['registrations'] = allRegistrations;
+      return Tournament.fromJson(merged);
     } catch (e) {
-      print('Error fetching tournament details: $e');
+      if (kDebugMode) {
+        debugPrint('Error fetching tournament details: $e');
+      }
       rethrow;
     }
   }
@@ -191,14 +239,16 @@ class ApiService {
           matchKey: safeFields,
         },
       };
-      try {
-        final preview = jsonEncode({
-          'url': url,
-          'matchKey': matchKey,
-          'fields': safeFields.keys.toList(),
-        });
-        print('PUT updateGroupMatch -> $preview');
-      } catch (_) {}
+      if (kDebugMode) {
+        try {
+          final preview = jsonEncode({
+            'url': url,
+            'matchKey': matchKey,
+            'fields': safeFields.keys.toList(),
+          });
+          debugPrint('PUT updateGroupMatch -> $preview');
+        } catch (_) {}
+      }
       final res = await http.put(
         Uri.parse(url),
         headers: _headers,
@@ -300,6 +350,9 @@ class ApiService {
             map.containsKey('id') ||
             map.containsKey('matchKey');
         final hasMatchState = map.containsKey('status') ||
+            map.containsKey('game1Status') ||
+            map.containsKey('game2Status') ||
+            map.containsKey('game3Status') ||
             map.containsKey('score1') ||
             map.containsKey('score2') ||
             map.containsKey('winner') ||

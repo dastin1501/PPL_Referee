@@ -1,9 +1,11 @@
 import 'dart:convert';
 import 'dart:typed_data';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../models.dart';
 import '../state/app_state.dart';
+import 'team_match_confirmation_screen.dart';
 
 class CourtGamesScreen extends StatefulWidget {
   const CourtGamesScreen({super.key});
@@ -23,13 +25,68 @@ class _CourtGamesScreenState extends State<CourtGamesScreen>
   }
 
   void _openDashboardForGame(TournamentMatch g, int gameNo) {
-    context.read<AppState>().openGameWithNumber(g, gameNo);
-    Navigator.of(context).pushNamed('/dashboard').then((result) {
-      if (!mounted) return;
-      if (result == 'completed') {
-        _tabController.animateTo(1);
-      }
-    });
+    final app = context.read<AppState>();
+    final division = app.selectedTournament?.categoryDivisions[g.categoryId]?.toLowerCase() ?? '';
+    final isTeamCategory = division.contains('team');
+
+    final resolvedGameNo = app.resolveBestScheduledGameNo(g, preferred: gameNo);
+    if (kDebugMode) {
+      final ref = g.type == 'group'
+          ? 'groupId=${g.groupId} matchKey=${g.matchKey}'
+          : 'matchId=${g.id} docId=${g.documentId}';
+      final start = resolvedGameNo == 1
+          ? g.time
+          : (resolvedGameNo == 2 ? (g.mdTime2 ?? '') : (g.mdTime3 ?? ''));
+      final s1 = resolvedGameNo == 1
+          ? (g.game1Player1 ?? 0)
+          : (resolvedGameNo == 2 ? (g.game2Player1 ?? 0) : (g.game3Player1 ?? 0));
+      final s2 = resolvedGameNo == 1
+          ? (g.game1Player2 ?? 0)
+          : (resolvedGameNo == 2 ? (g.game2Player2 ?? 0) : (g.game3Player2 ?? 0));
+      debugPrint(
+        '[call-match] type=${g.type} categoryId=${g.categoryId} $ref '
+        'resolvedGame=$resolvedGameNo date=${g.date} time=$start court=${g.court} '
+        'status=${app.gameStatusLabel(g, resolvedGameNo)} score=$s1-$s2',
+      );
+    }
+    final statusKey = app.gameStatusKey(g, resolvedGameNo);
+    final hasSchedule = app.hasScheduleForGame(g, resolvedGameNo);
+    if (statusKey == 'unschedule') {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Match is not scheduled yet.')),
+      );
+      return;
+    }
+    if (statusKey == 'scheduled' && !hasSchedule) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Game has no schedule assignment yet.')),
+      );
+      return;
+    }
+    
+    if (isTeamCategory) {
+      Navigator.of(context).push(
+        MaterialPageRoute(
+          builder: (_) => TeamMatchConfirmationScreen(
+            match: g,
+            gameNo: resolvedGameNo,
+          ),
+        ),
+      ).then((result) {
+        if (!mounted) return;
+        if (result == 'completed') {
+          _tabController.animateTo(1);
+        }
+      });
+    } else {
+      app.openGameWithNumber(g, resolvedGameNo);
+      Navigator.of(context).pushNamed('/dashboard').then((result) {
+        if (!mounted) return;
+        if (result == 'completed') {
+          _tabController.animateTo(1);
+        }
+      });
+    }
   }
 
   @override
@@ -236,34 +293,48 @@ Widget _buildGamesList(
     if (label.isEmpty) label = 'GA';
 
     void addItem(int n, String? start, String? end) {
+      final hasSchedule = app.hasScheduleForGame(g, n);
+      final statusKey = app.gameStatusKey(g, n);
       items.add({
         'g': g,
         'n': n,
-        'scheduled': (start != null && start.toString().trim().isNotEmpty),
+        'hasSchedule': hasSchedule,
+        'statusKey': statusKey,
         'start': start?.toString() ?? '',
         'end': end?.toString() ?? '',
         'taskId': '${g.type == 'group' ? g.categoryId : (g.id.isNotEmpty ? g.id : g.matchKey)}:g$n',
       });
     }
 
-    if (gpm >= 1 && (g.time.toString().trim().isNotEmpty ?? false)) {
-      addItem(1, g.time.toString(), null);
+    if (gpm >= 1) {
+      final s = g.time.toString().trim();
+      final include = app.hasScheduleForGame(g, 1) || app.gameStatusKey(g, 1) != 'unschedule';
+      if (include) addItem(1, s, null);
     }
-    if (gpm >= 2 && (g.mdTime2?.toString().trim().isNotEmpty ?? false)) {
-      addItem(2, g.mdTime2?.toString(), g.mdEnd2?.toString());
+    if (gpm >= 2) {
+      final s = (g.mdTime2?.toString() ?? '').trim();
+      final include = app.hasScheduleForGame(g, 2) || app.gameStatusKey(g, 2) != 'unschedule';
+      if (include) addItem(2, s, g.mdEnd2?.toString());
     }
-    if (gpm >= 3 && (g.mdTime3?.toString().trim().isNotEmpty ?? false)) {
-      addItem(3, g.mdTime3?.toString(), g.mdEnd3?.toString());
+    if (gpm >= 3) {
+      final s = (g.mdTime3?.toString() ?? '').trim();
+      final include = app.hasScheduleForGame(g, 3) || app.gameStatusKey(g, 3) != 'unschedule';
+      if (include) addItem(3, s, g.mdEnd3?.toString());
     }
   }
 
   // Filter by tab: scheduled vs completed
   if (showScheduled) {
-    items.removeWhere((it) => !(it['scheduled'] as bool));
-    items.removeWhere((it) => (it['g'].status == 'Completed'));
+    items.removeWhere((it) {
+      final hasSchedule = it['hasSchedule'] as bool? ?? false;
+      final statusKey = it['statusKey'] as String? ?? 'unschedule';
+      if (statusKey == 'completed') return true;
+      if (statusKey == 'scheduled' || statusKey == 'ongoing') return false;
+      if (hasSchedule) return false;
+      return true;
+    });
   } else {
-    items.removeWhere((it) => !(it['scheduled'] as bool));
-    items.removeWhere((it) => (it['g'].status != 'Completed'));
+    items.removeWhere((it) => (it['statusKey'] as String? ?? 'unschedule') != 'completed');
   }
 
   // If nothing remains, show empty
@@ -317,7 +388,8 @@ Widget _buildGamesList(
         final n = it['n'] as int;
         final start = (it['start'] as String?) ?? '';
         final end = (it['end'] as String?) ?? '';
-        final scheduled = it['scheduled'] as bool;
+        final hasSchedule = it['hasSchedule'] as bool? ?? false;
+        final statusKey = it['statusKey'] as String? ?? 'unschedule';
       final category = app.selectedTournament?.categoryNames[g.categoryId] ?? '';
       String displayCategory = category;
       if (displayCategory.isNotEmpty) {
@@ -331,18 +403,10 @@ Widget _buildGamesList(
             .replaceAll(RegExp(r"mixed\s+doubles", caseSensitive: false), 'MxD');
         displayCategory = displayCategory.replaceAll(RegExp(r'\s{2,}'), ' ').trim();
       }
-      final isCompleted = g.status == 'Completed';
-      final isOngoing = g.status == 'Ongoing';
-      final bool disabled = showScheduled && isOngoing;
-      String displayStatus;
-      if (g.status.toString().isNotEmpty) {
-        displayStatus = g.status.toString();
-      } else {
-        final hasSchedule = (n == 1)
-            ? ((start.trim().isNotEmpty) && (g.court.toString().trim().isNotEmpty))
-            : ((start.trim().isNotEmpty) && (g.court.toString().trim().isNotEmpty));
-        displayStatus = hasSchedule ? 'Scheduled' : 'Unscheduled';
-      }
+      final isCompleted = statusKey == 'completed';
+      final isOngoing = statusKey == 'ongoing';
+      final bool disabled = showScheduled && !hasSchedule && statusKey == 'scheduled';
+      final displayStatus = app.gameStatusLabel(g, n);
         // Determine accent color by category (women=pink, men=blue, mixed=green)
         final catText = category.toLowerCase();
         final isMixed = catText.contains('mixed');
@@ -366,7 +430,7 @@ Widget _buildGamesList(
               ? null
               : () {
                   if (!showScheduled) {
-                    _showCompletedSummaryDialog(context, g);
+                    _showCompletedSummaryDialog(context, g, n);
                   } else {
                     onOpenGame(g, n);
                   }
@@ -445,13 +509,13 @@ Widget _buildGamesList(
                         text: TextSpan(
                           style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w500, color: Colors.black87),
                           children: [
-                            TextSpan(text: g.player1),
+                            TextSpan(text: (g.player1Name.trim().isNotEmpty ? g.player1Name : g.player1)),
                             const TextSpan(text: ' vs ', style: TextStyle(color: Colors.red)),
-                            TextSpan(text: g.player2),
+                            TextSpan(text: (g.player2Name.trim().isNotEmpty ? g.player2Name : g.player2)),
                           ],
                         ),
                       ),
-                      if (scheduled)
+                      if (hasSchedule)
                         Text(end.isNotEmpty ? 'Time: $start – $end' : 'Time: $start', style: const TextStyle(fontSize: 12, color: Colors.grey))
                       else
                         const Text('Unscheduled', style: TextStyle(fontSize: 12, color: Colors.grey)),
@@ -479,7 +543,7 @@ Widget _buildGamesList(
                       s2 ??= 0;
                       return Text('$s1 - $s2', style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16));
                     }(),
-                    Text(disabled ? 'Ongoing' : displayStatus, style: const TextStyle(fontSize: 10, color: Colors.grey)),
+                    Text(displayStatus, style: const TextStyle(fontSize: 10, color: Colors.grey)),
                     if (app.pendingForMatch(g.categoryId, g.groupId, g.matchKey))
                       const Text('Pending Sync', style: TextStyle(fontSize: 10, color: Colors.orange)),
                   ],
@@ -494,19 +558,24 @@ Widget _buildGamesList(
   );
 }
 
-void _showCompletedSummaryDialog(BuildContext context, dynamic g) {
-  final int s1 = g.score1;
-  final int s2 = g.score2;
+void _showCompletedSummaryDialog(BuildContext context, TournamentMatch g, int gameNo) {
+  final int s1 = (gameNo == 1 ? (g.game1Player1 ?? 0) : (gameNo == 2 ? (g.game2Player1 ?? 0) : (g.game3Player1 ?? 0)));
+  final int s2 = (gameNo == 1 ? (g.game1Player2 ?? 0) : (gameNo == 2 ? (g.game2Player2 ?? 0) : (g.game3Player2 ?? 0)));
   String winnerName = (s1 > s2 ? g.player1 : (s2 > s1 ? g.player2 : ''));
   // If we have a winner from g.winner that's longer than 1 character, use it
   final rawWinner = g.winner?.toString().trim() ?? '';
   if (rawWinner.isNotEmpty && rawWinner.length > 1) {
     winnerName = rawWinner;
   }
-  String? sig = g.signatureData;
-  if ((sig == null || sig.isEmpty) && g.gameSignatures is List && g.gameSignatures.isNotEmpty) {
-    final first = g.gameSignatures.first;
-    if (first is String && first.isNotEmpty) sig = first;
+  String? sig;
+  final sigs = g.gameSignatures;
+  if (sigs != null && sigs.length >= gameNo) {
+    final v = (sigs[gameNo - 1] ?? '').toString().trim();
+    if (v.isNotEmpty) sig = v;
+  }
+  sig ??= g.signatureData;
+  if (sig != null && sig.isNotEmpty && sig.trim().isEmpty) {
+    sig = null;
   }
   Uint8List? bytes;
   if (sig != null && sig.isNotEmpty) {
@@ -550,7 +619,7 @@ void _showCompletedSummaryDialog(BuildContext context, dynamic g) {
                     softWrap: true,
                   ),
                   const SizedBox(height: 10),
-                  Text('Final Score: $s1 - $s2', style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 15)),
+                  Text('Game $gameNo Score: $s1 - $s2', style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 15)),
                   if (winnerName.isNotEmpty) ...[
                     const SizedBox(height: 6),
                     Text('Winner: $winnerName', style: const TextStyle(fontSize: 14)),
