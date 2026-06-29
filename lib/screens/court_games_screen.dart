@@ -405,7 +405,7 @@ Widget _buildGamesList(
       }
       final isCompleted = statusKey == 'completed';
       final isOngoing = statusKey == 'ongoing';
-      final bool disabled = showScheduled && !hasSchedule && statusKey == 'scheduled';
+      final bool disabled = showScheduled && (isOngoing || (!hasSchedule && statusKey == 'scheduled'));
       final displayStatus = app.gameStatusLabel(g, n);
         // Determine accent color by category (women=pink, men=blue, mixed=green)
         final catText = category.toLowerCase();
@@ -420,10 +420,15 @@ Widget _buildGamesList(
                 : isMixed
                     ? mixedGreen
                     : mixedGreen;
-        final Color bgColor = accentColor.withValues(alpha: 0.15);
+        final Color effectiveAccent = disabled ? Colors.grey : accentColor;
+        final Color bgColor = disabled ? Colors.grey.shade200 : accentColor.withValues(alpha: 0.15);
         final bool isRallyScoring = g.isRallyScoring;
-        final Color scoringBg = isRallyScoring ? const Color(0xFFFFF1F2) : const Color(0xFFF0FDF4);
-        final Color scoringBorder = isRallyScoring ? const Color(0xFFFB7185) : const Color(0xFF22C55E);
+        final Color scoringBg = disabled
+            ? const Color(0xFFF3F4F6)
+            : (isRallyScoring ? const Color(0xFFFFF1F2) : const Color(0xFFF0FDF4));
+        final Color scoringBorder = disabled
+            ? Colors.grey.shade400
+            : (isRallyScoring ? const Color(0xFFFB7185) : const Color(0xFF22C55E));
         final String scoringLabel = isRallyScoring ? 'Rally' : 'Side-Out';
         return InkWell(
           onTap: disabled
@@ -437,7 +442,7 @@ Widget _buildGamesList(
                 },
           borderRadius: BorderRadius.circular(16),
           child: Opacity(
-            opacity: disabled ? 0.55 : 1,
+            opacity: disabled ? 0.45 : 1,
             child: Container(
             margin: const EdgeInsets.symmetric(vertical: 6, horizontal: 4),
             padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
@@ -449,10 +454,10 @@ Widget _buildGamesList(
             child: Row(
               children: [
                 CircleAvatar(
-                  backgroundColor: disabled ? Colors.grey.shade200 : bgColor,
+                  backgroundColor: bgColor,
                   child: Icon(
                     isCompleted ? Icons.check : (disabled ? Icons.lock_clock : Icons.schedule),
-                    color: disabled ? Colors.grey : accentColor,
+                    color: disabled ? Colors.grey : effectiveAccent,
                     size: 20,
                   ),
                 ),
@@ -470,10 +475,10 @@ Widget _buildGamesList(
                               Container(
                                 padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
                                 decoration: BoxDecoration(
-                                  border: Border.all(color: accentColor),
+                                  border: Border.all(color: effectiveAccent),
                                   borderRadius: BorderRadius.circular(8),
                                 ),
-                                child: Text(displayCategory, style: TextStyle(fontSize: 12, color: accentColor)),
+                                child: Text(displayCategory, style: TextStyle(fontSize: 12, color: effectiveAccent)),
                               ),
                             Container(
                               padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
@@ -507,10 +512,17 @@ Widget _buildGamesList(
                       ),
                       RichText(
                         text: TextSpan(
-                          style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w500, color: Colors.black87),
+                          style: TextStyle(
+                            fontSize: 15,
+                            fontWeight: FontWeight.w500,
+                            color: disabled ? Colors.black54 : Colors.black87,
+                          ),
                           children: [
                             TextSpan(text: (g.player1Name.trim().isNotEmpty ? g.player1Name : g.player1)),
-                            const TextSpan(text: ' vs ', style: TextStyle(color: Colors.red)),
+                            TextSpan(
+                              text: ' vs ',
+                              style: TextStyle(color: disabled ? Colors.black38 : Colors.red),
+                            ),
                             TextSpan(text: (g.player2Name.trim().isNotEmpty ? g.player2Name : g.player2)),
                           ],
                         ),
@@ -541,7 +553,14 @@ Widget _buildGamesList(
                       }
                       s1 ??= 0;
                       s2 ??= 0;
-                      return Text('$s1 - $s2', style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16));
+                      return Text(
+                        '$s1 - $s2',
+                        style: TextStyle(
+                          fontWeight: FontWeight.bold,
+                          fontSize: 16,
+                          color: disabled ? Colors.black54 : Colors.black87,
+                        ),
+                      );
                     }(),
                     Text(displayStatus, style: const TextStyle(fontSize: 10, color: Colors.grey)),
                     if (app.pendingForMatch(g.categoryId, g.groupId, g.matchKey))
