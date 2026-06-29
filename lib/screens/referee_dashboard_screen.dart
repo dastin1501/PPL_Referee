@@ -1575,6 +1575,7 @@ class _RefereeDashboardScreenState extends State<RefereeDashboardScreen> {
     fields[gKey2] = _score2;
     fields['status'] = 'Completed';
     if (signatureData != null) {
+      fields['signatureData'] = signatureData;
       final base = List<String?>.filled(3, null);
       final existing = g.gameSignatures;
       if (existing != null) {
@@ -1596,9 +1597,6 @@ class _RefereeDashboardScreenState extends State<RefereeDashboardScreen> {
       fields['finalScorePlayer2'] = _score2;
       if (winnerName.isNotEmpty) {
         fields['winner'] = winnerName;
-      }
-      if (signatureData != null) {
-        fields['signatureData'] = signatureData;
       }
     }
     if (includeNote && _refereeNote.trim().isNotEmpty) {

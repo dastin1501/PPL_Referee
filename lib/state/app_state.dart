@@ -453,6 +453,26 @@ class AppState extends ChangeNotifier {
     if (t == null || g == null) return;
     final payloadFields = _sanitizeMatchFields(fields);
     final submitFields = Map<String, dynamic>.from(payloadFields);
+
+    int inferSelectedIndex(Map<String, dynamic> payload) {
+      final keys = payload.keys.toList();
+      int? found;
+      for (final key in keys) {
+        final m = RegExp(r'^game([1-3])', caseSensitive: false).firstMatch(key);
+        if (m != null) {
+          final n = int.tryParse(m.group(1) ?? '');
+          if (n != null) {
+            found = (found == null) ? n : (n > found ? n : found);
+          }
+        }
+      }
+      return (found ?? selectedGameNumber).clamp(1, 3);
+    }
+
+    final inferredIndex = inferSelectedIndex(payloadFields);
+    if (selectedGameNumber != inferredIndex) {
+      selectedGameNumber = inferredIndex;
+    }
     if (!payloadFields.containsKey('id') ||
         payloadFields['id'] == null ||
         payloadFields['id'].toString().isEmpty) {
@@ -473,7 +493,7 @@ class AppState extends ChangeNotifier {
     }
     if (status != null && status.isNotEmpty) {
       final targetStatus = normalizeStatus(status);
-      final selectedIndex = selectedGameNumber.clamp(1, 3);
+      final selectedIndex = inferredIndex.clamp(1, 3);
       payloadFields['game${selectedIndex}Status'] = targetStatus;
       submitFields['status'] = targetStatus;
       submitFields['game${selectedIndex}Status'] = targetStatus;
@@ -491,7 +511,7 @@ class AppState extends ChangeNotifier {
       );
     }
     final matchIdentity = _matchIdentityKey(g);
-    final selectedIndex = selectedGameNumber.clamp(1, 3);
+    final selectedIndex = inferredIndex.clamp(1, 3);
     final gameIdentity = _matchGameIdentityKey(g, selectedIndex);
     if (matchIdentity.isEmpty || gameIdentity.isEmpty) {
       error = 'Missing stable match identifier for score sync.';
@@ -860,10 +880,16 @@ class AppState extends ChangeNotifier {
       final matchRef = activeMatch.type == 'group'
           ? 'groupId=${activeMatch.groupId}, matchKey=${activeMatch.matchKey}'
           : 'matchId=${activeMatch.id}';
+      final sig = payload['signatureData']?.toString() ?? '';
+      final sigPrefix = sig.startsWith('data:image') ? 'data:image' : (sig.isNotEmpty ? 'base64' : 'none');
+      final sigLen = sig.length;
+      final hasGameSignatures = payload['gameSignatures'] is List || (payload['fields'] is Map && (payload['fields'] as Map).containsKey('gameSignatures'));
+      final hasFieldsSig = payload['fields'] is Map && (payload['fields'] as Map).containsKey('signatureData');
+      final used = sig.isNotEmpty ? 'signatureData' : (hasFieldsSig ? 'fields.signatureData' : (hasGameSignatures ? 'gameSignatures[idx]' : 'none'));
       debugPrint(
         '[score-sync] OUT -> tournamentId=${tournament.id}, categoryId=${activeMatch.categoryId}, '
         '$matchRef, selectedGame=$selectedIndex, status=$status, score=$s1-$s2, '
-        'keys=${fields.keys.toList()}, seq=$submitSeq',
+        'sig=$sigPrefix len=$sigLen via=$used keys=${fields.keys.toList()}, seq=$submitSeq',
       );
     }
 
