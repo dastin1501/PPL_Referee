@@ -821,7 +821,7 @@ class _RefereeDashboardScreenState extends State<RefereeDashboardScreen> {
                                       child: _playerCell(
                                         leftTop,
                                         isServing: _servingPlayer == leftTop,
-                                        isBase: !isRallyScoring && leftTop == displayLeftBase,
+                                        isBase: leftTop == displayLeftBase,
                                         isRight: false,
                                       ),
                                     ),
@@ -839,7 +839,7 @@ class _RefereeDashboardScreenState extends State<RefereeDashboardScreen> {
                                         child: _playerCell(
                                           leftBottom,
                                           isServing: _servingPlayer == leftBottom,
-                                          isBase: !isRallyScoring && leftBottom == displayLeftBase,
+                                          isBase: leftBottom == displayLeftBase,
                                           isRight: false,
                                         ),
                                       ),
@@ -858,7 +858,7 @@ class _RefereeDashboardScreenState extends State<RefereeDashboardScreen> {
                                       child: _playerCell(
                                         rightTop,
                                         isServing: _servingPlayer == rightTop,
-                                        isBase: !isRallyScoring && rightTop == displayRightBase,
+                                        isBase: rightTop == displayRightBase,
                                         isRight: true,
                                       ),
                                     ),
@@ -876,7 +876,7 @@ class _RefereeDashboardScreenState extends State<RefereeDashboardScreen> {
                                         child: _playerCell(
                                           rightBottom,
                                           isServing: _servingPlayer == rightBottom,
-                                          isBase: !isRallyScoring && rightBottom == displayRightBase,
+                                          isBase: rightBottom == displayRightBase,
                                           isRight: true,
                                         ),
                                       ),
