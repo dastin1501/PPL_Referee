@@ -1,5 +1,6 @@
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 import '../models.dart';
 import '../state/app_state.dart';
@@ -331,11 +332,24 @@ class _TeamMatchConfirmationScreenState extends State<TeamMatchConfirmationScree
   @override
   void initState() {
     super.initState();
+    SystemChrome.setPreferredOrientations([
+      DeviceOrientation.landscapeLeft,
+      DeviceOrientation.landscapeRight,
+    ]);
     _selectedTeam1Player1 = null;
     _selectedTeam1Player2 = null;
     _selectedTeam2Player1 = null;
     _selectedTeam2Player2 = null;
     _applySavedSelections();
+  }
+
+  @override
+  void dispose() {
+    SystemChrome.setPreferredOrientations([
+      DeviceOrientation.portraitUp,
+      DeviceOrientation.portraitDown,
+    ]);
+    super.dispose();
   }
 
   @override
@@ -553,8 +567,18 @@ class _TeamMatchConfirmationScreenState extends State<TeamMatchConfirmationScree
                 setState(() {
                   if (label == 'Team 1') {
                     _selectedTeam1Player1 = value;
+                    if (_selectedTeam1Player2 != null &&
+                        _normalizeTeamKey(_selectedTeam1Player2!) ==
+                            _normalizeTeamKey(value ?? '')) {
+                      _selectedTeam1Player2 = null;
+                    }
                   } else {
                     _selectedTeam2Player1 = value;
+                    if (_selectedTeam2Player2 != null &&
+                        _normalizeTeamKey(_selectedTeam2Player2!) ==
+                            _normalizeTeamKey(value ?? '')) {
+                      _selectedTeam2Player2 = null;
+                    }
                   }
                 });
               },
@@ -571,8 +595,18 @@ class _TeamMatchConfirmationScreenState extends State<TeamMatchConfirmationScree
                 setState(() {
                   if (label == 'Team 1') {
                     _selectedTeam1Player2 = value;
+                    if (_selectedTeam1Player1 != null &&
+                        _normalizeTeamKey(_selectedTeam1Player1!) ==
+                            _normalizeTeamKey(value ?? '')) {
+                      _selectedTeam1Player1 = null;
+                    }
                   } else {
                     _selectedTeam2Player2 = value;
+                    if (_selectedTeam2Player1 != null &&
+                        _normalizeTeamKey(_selectedTeam2Player1!) ==
+                            _normalizeTeamKey(value ?? '')) {
+                      _selectedTeam2Player1 = null;
+                    }
                   }
                 });
               },
@@ -595,6 +629,23 @@ class _TeamMatchConfirmationScreenState extends State<TeamMatchConfirmationScree
     if (effectiveValue != null &&
         !options.any((option) => _normalizeTeamKey(option.name) == _normalizeTeamKey(effectiveValue!))) {
       effectiveValue = options.isNotEmpty ? options.first.name : null;
+    }
+
+    final blockedKeys = <String>{};
+    final selections = <String?>[
+      _selectedTeam1Player1,
+      _selectedTeam1Player2,
+      _selectedTeam2Player1,
+      _selectedTeam2Player2,
+    ];
+    for (final s in selections) {
+      final trimmed = (s ?? '').trim();
+      if (trimmed.isEmpty) continue;
+      blockedKeys.add(_normalizeTeamKey(trimmed));
+    }
+    final selfKey = _normalizeTeamKey((effectiveValue ?? '').trim());
+    if (selfKey.isNotEmpty) {
+      blockedKeys.remove(selfKey);
     }
     
     return Column(
@@ -655,14 +706,16 @@ class _TeamMatchConfirmationScreenState extends State<TeamMatchConfirmationScree
                 }).toList();
               },
               items: options.map<DropdownMenuItem<String>>((TeamMemberInfo option) {
+                final disabled = blockedKeys.contains(_normalizeTeamKey(option.name));
                 return DropdownMenuItem<String>(
                   value: option.name,
+                  enabled: !disabled,
                   child: Text(
                     option.displayLabel,
                     overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(
+                    style: TextStyle(
                       fontSize: 14,
-                      color: Color(0xFF111827),
+                      color: disabled ? const Color(0xFF9CA3AF) : const Color(0xFF111827),
                     ),
                   ),
                 );
