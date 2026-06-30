@@ -821,7 +821,7 @@ class _RefereeDashboardScreenState extends State<RefereeDashboardScreen> {
                                       child: _playerCell(
                                         leftTop,
                                         isServing: _servingPlayer == leftTop,
-                                        isBase: leftTop == displayLeftBase,
+                                        isBase: !isRallyScoring && leftTop == displayLeftBase,
                                         isRight: false,
                                       ),
                                     ),
@@ -839,7 +839,7 @@ class _RefereeDashboardScreenState extends State<RefereeDashboardScreen> {
                                         child: _playerCell(
                                           leftBottom,
                                           isServing: _servingPlayer == leftBottom,
-                                          isBase: leftBottom == displayLeftBase,
+                                          isBase: !isRallyScoring && leftBottom == displayLeftBase,
                                           isRight: false,
                                         ),
                                       ),
@@ -858,7 +858,7 @@ class _RefereeDashboardScreenState extends State<RefereeDashboardScreen> {
                                       child: _playerCell(
                                         rightTop,
                                         isServing: _servingPlayer == rightTop,
-                                        isBase: rightTop == displayRightBase,
+                                        isBase: !isRallyScoring && rightTop == displayRightBase,
                                         isRight: true,
                                       ),
                                     ),
@@ -876,7 +876,7 @@ class _RefereeDashboardScreenState extends State<RefereeDashboardScreen> {
                                         child: _playerCell(
                                           rightBottom,
                                           isServing: _servingPlayer == rightBottom,
-                                          isBase: rightBottom == displayRightBase,
+                                          isBase: !isRallyScoring && rightBottom == displayRightBase,
                                           isRight: true,
                                         ),
                                       ),
@@ -1141,7 +1141,7 @@ class _RefereeDashboardScreenState extends State<RefereeDashboardScreen> {
                                     child: SizedBox(
                                       height: 56,
                                       child: ElevatedButton(
-                                        onPressed: _awardRallyPointLeft,
+                                        onPressed: _endsSwitched ? _awardRallyPointRight : _awardRallyPointLeft,
                                         style: ElevatedButton.styleFrom(
                                           backgroundColor: const Color(0xFF3B82F6),
                                           foregroundColor: Colors.white,
@@ -1150,7 +1150,7 @@ class _RefereeDashboardScreenState extends State<RefereeDashboardScreen> {
                                           ),
                                         ),
                                         child: Text(
-                                          '${g.player1}\nPOINT',
+                                          '${_endsSwitched ? g.player2 : g.player1}\nPOINT',
                                           textAlign: TextAlign.center,
                                           style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
                                         ),
@@ -1179,7 +1179,7 @@ class _RefereeDashboardScreenState extends State<RefereeDashboardScreen> {
                                     child: SizedBox(
                                       height: 56,
                                       child: ElevatedButton(
-                                        onPressed: _awardRallyPointRight,
+                                        onPressed: _endsSwitched ? _awardRallyPointLeft : _awardRallyPointRight,
                                         style: ElevatedButton.styleFrom(
                                           backgroundColor: const Color(0xFF8B5CF6),
                                           foregroundColor: Colors.white,
@@ -1188,7 +1188,7 @@ class _RefereeDashboardScreenState extends State<RefereeDashboardScreen> {
                                           ),
                                         ),
                                         child: Text(
-                                          '${g.player2}\nPOINT',
+                                          '${_endsSwitched ? g.player1 : g.player2}\nPOINT',
                                           textAlign: TextAlign.center,
                                           style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
                                         ),
@@ -2071,13 +2071,27 @@ extension on _RefereeDashboardScreenState {
     _rightBottomOverride = currentTop;
   }
 
-  String _activeServerForTeam(TournamentMatch g, {required bool team1}) {
+  String _rallyServerForTeam(TournamentMatch g, {required bool team1}) {
     final team = _splitTeam(team1 ? g.player1 : g.player2);
+    if (team.isEmpty) return '';
     if (team.length <= 1) return team.first;
+
+    final score = team1 ? _score1 : _score2;
+    final even = (score % 2 == 0);
+
+    String currentTop;
+    String currentBottom;
     if (team1) {
-      return _leftBottomOverride.isNotEmpty ? _leftBottomOverride : team[1];
+      currentTop = _leftTopOverride.isNotEmpty ? _leftTopOverride : team[0];
+      currentBottom = _leftBottomOverride.isNotEmpty ? _leftBottomOverride : team[1];
+    } else {
+      currentTop = _rightTopOverride.isNotEmpty ? _rightTopOverride : team[1];
+      currentBottom = _rightBottomOverride.isNotEmpty ? _rightBottomOverride : team[0];
     }
-    return _rightTopOverride.isNotEmpty ? _rightTopOverride : team[1];
+
+    final rightSlotIsTop = !team1;
+    final serveSlotIsTop = even ? rightSlotIsTop : !rightSlotIsTop;
+    return serveSlotIsTop ? currentTop : currentBottom;
   }
 
   void _pushSnapshot() {
@@ -2149,18 +2163,22 @@ extension on _RefereeDashboardScreenState {
     setState(() {
       if (team1Wins) {
         _score1 += 1;
-        _swapLeftTeamDisplay(g);
-        _servingPlayer = _activeServerForTeam(g, team1: true);
+        _servingPlayer = _rallyServerForTeam(g, team1: true);
         _leftServeStage = 1;
         _rightServeStage = 0;
-        _serverTop = false;
+        final leftTeam = _splitTeam(g.player1);
+        final currentTop = _leftTopOverride.isNotEmpty ? _leftTopOverride : (leftTeam.isNotEmpty ? leftTeam[0] : g.player1);
+        _serverTop = _servingPlayer == currentTop;
       } else {
         _score2 += 1;
-        _swapRightTeamDisplay(g);
-        _servingPlayer = _activeServerForTeam(g, team1: false);
+        _servingPlayer = _rallyServerForTeam(g, team1: false);
         _leftServeStage = 0;
         _rightServeStage = 1;
-        _serverTop = true;
+        final rightTeam = _splitTeam(g.player2);
+        final currentTop = _rightTopOverride.isNotEmpty
+            ? _rightTopOverride
+            : (rightTeam.length > 1 ? rightTeam[1] : (rightTeam.isNotEmpty ? rightTeam[0] : g.player2));
+        _serverTop = _servingPlayer == currentTop;
       }
     });
     _syncLiveScoreTick();
