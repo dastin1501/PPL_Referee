@@ -391,102 +391,111 @@ class _TeamMatchConfirmationScreenState extends State<TeamMatchConfirmationScree
       ),
       body: Container(
         color: const Color(0xFFF7F9FB),
-        child: Padding(
-          padding: const EdgeInsets.all(16.0),
-          child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            if (categoryName.isNotEmpty)
-              Container(
-                padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-                decoration: BoxDecoration(
-                  color: const Color(0xFFE8F6F1),
-                  borderRadius: BorderRadius.circular(14),
-                ),
-                child: Text(
-                  categoryName,
-                  style: const TextStyle(
-                    fontSize: 15,
-                    fontWeight: FontWeight.w600,
-                    color: Color.fromARGB(255, 26, 161, 123),
-                  ),
-                  textAlign: TextAlign.center,
-                ),
-              ),
-            const SizedBox(height: 24),
-            Expanded(
-              child: Row(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Expanded(
-                    child: _buildTeamColumn(
-                      'Team 1',
-                      team1Label,
-                      team1Options,
-                      const Color(0xFF3B82F6),
-                    ),
-                  ),
-                  const SizedBox(width: 14),
-                  Padding(
-                    padding: const EdgeInsets.only(top: 52),
-                    child: Container(
-                      width: 40,
-                      height: 40,
-                      alignment: Alignment.center,
-                      decoration: BoxDecoration(
-                        color: Colors.white,
-                        shape: BoxShape.circle,
-                        boxShadow: [
-                          BoxShadow(
-                            color: Colors.black.withValues(alpha: 0.06),
-                            blurRadius: 12,
-                            offset: const Offset(0, 4),
+        child: SafeArea(
+          child: Padding(
+            padding: const EdgeInsets.all(16.0),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Expanded(
+                  child: SingleChildScrollView(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        if (categoryName.isNotEmpty)
+                          Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                            decoration: BoxDecoration(
+                              color: const Color(0xFFE8F6F1),
+                              borderRadius: BorderRadius.circular(14),
+                            ),
+                            child: Text(
+                              categoryName,
+                              style: const TextStyle(
+                                fontSize: 15,
+                                fontWeight: FontWeight.w600,
+                                color: Color.fromARGB(255, 26, 161, 123),
+                              ),
+                              textAlign: TextAlign.center,
+                            ),
                           ),
-                        ],
-                      ),
-                      child: const Text(
-                        'VS',
-                        style: TextStyle(
-                          fontSize: 14,
-                          fontWeight: FontWeight.w700,
-                          color: Color(0xFF6B7280),
+                        const SizedBox(height: 24),
+                        Row(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Expanded(
+                              child: _buildTeamColumn(
+                                'Team 1',
+                                team1Label,
+                                team1Options,
+                                const Color(0xFF3B82F6),
+                              ),
+                            ),
+                            const SizedBox(width: 14),
+                            Padding(
+                              padding: const EdgeInsets.only(top: 52),
+                              child: Container(
+                                width: 40,
+                                height: 40,
+                                alignment: Alignment.center,
+                                decoration: BoxDecoration(
+                                  color: Colors.white,
+                                  shape: BoxShape.circle,
+                                  boxShadow: [
+                                    BoxShadow(
+                                      color: Colors.black.withValues(alpha: 0.06),
+                                      blurRadius: 12,
+                                      offset: const Offset(0, 4),
+                                    ),
+                                  ],
+                                ),
+                                child: const Text(
+                                  'VS',
+                                  style: TextStyle(
+                                    fontSize: 14,
+                                    fontWeight: FontWeight.w700,
+                                    color: Color(0xFF6B7280),
+                                  ),
+                                ),
+                              ),
+                            ),
+                            const SizedBox(width: 14),
+                            Expanded(
+                              child: _buildTeamColumn(
+                                'Team 2',
+                                team2Label,
+                                team2Options,
+                                const Color(0xFFEF4444),
+                              ),
+                            ),
+                          ],
                         ),
-                      ),
+                      ],
                     ),
                   ),
-                  const SizedBox(width: 14),
-                  Expanded(
-                    child: _buildTeamColumn(
-                      'Team 2',
-                      team2Label,
-                      team2Options,
-                      const Color(0xFFEF4444),
+                ),
+                const SizedBox(height: 16),
+                ElevatedButton(
+                  onPressed: _proceedToDashboard,
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: const Color.fromARGB(255, 26, 161, 123),
+                    foregroundColor: Colors.white,
+                    padding: const EdgeInsets.symmetric(vertical: 16),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(12),
                     ),
                   ),
-                ],
-              ),
-            ),
-            const SizedBox(height: 20),
-            ElevatedButton(
-              onPressed: _proceedToDashboard,
-              style: ElevatedButton.styleFrom(
-                backgroundColor: const Color.fromARGB(255, 26, 161, 123),
-                foregroundColor: Colors.white,
-                padding: const EdgeInsets.symmetric(vertical: 16),
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(12),
+                  child: const Text(
+                    'Continue',
+                    style: TextStyle(
+                      fontSize: 16,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
                 ),
-              ),
-              child: const Text(
-                'Continue',
-                style: TextStyle(
-                  fontSize: 16,
-                  fontWeight: FontWeight.bold,
-                ),
-              ),
+              ],
             ),
-          ],
-        ),
+          ),
         ),
       ),
     );
