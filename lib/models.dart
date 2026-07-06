@@ -106,6 +106,8 @@ class TournamentMatch {
   final int? game3Player1;
   final int? game3Player2;
   final String round;
+  final String roundShort;
+  final String roundLabel;
   final String court;
   final String date;
   final String time;
@@ -160,6 +162,8 @@ class TournamentMatch {
     this.game3Player1,
     this.game3Player2,
     required this.round,
+    this.roundShort = '',
+    this.roundLabel = '',
     required this.court,
     required this.date,
     required this.time,
@@ -239,6 +243,157 @@ class TournamentMatch {
       return v;
     }
 
+    String resolvePlayerName(String key, {required String fallbackKey}) {
+      final direct = (j[key]?.toString() ?? '').trim();
+      bool isPlaceholder(String text) {
+        final low = text.trim().toLowerCase();
+        if (low.isEmpty) return true;
+        if (low == 'tbd') return true;
+        if (low.startsWith('winner')) return true;
+        if (low.startsWith('loser')) return true;
+        if (low.startsWith('w ') || low.startsWith('l ')) return true;
+        if (RegExp(r'\bwinner\b', caseSensitive: false).hasMatch(low)) return true;
+        if (RegExp(r'\bloser\b', caseSensitive: false).hasMatch(low)) return true;
+        if (RegExp(r'\br\d{1,2}\b', caseSensitive: false).hasMatch(low) &&
+            RegExp(r'\bwinner\b', caseSensitive: false).hasMatch(low)) {
+          return true;
+        }
+        if (RegExp(r'\bqf\d+\b', caseSensitive: false).hasMatch(low) &&
+            RegExp(r'\bwinner\b', caseSensitive: false).hasMatch(low)) {
+          return true;
+        }
+        if (RegExp(r'\bsf\d+\b', caseSensitive: false).hasMatch(low) &&
+            RegExp(r'\bwinner\b', caseSensitive: false).hasMatch(low)) {
+          return true;
+        }
+        if (RegExp(r'\bcf\d+\b', caseSensitive: false).hasMatch(low) &&
+            RegExp(r'\bwinner\b', caseSensitive: false).hasMatch(low)) {
+          return true;
+        }
+        return false;
+      }
+
+      String? resolveFromPlayers(dynamic players, String key) {
+        if (players is Map) {
+          final fb = (players[key]?.toString() ?? '').trim();
+          if (fb.isNotEmpty && !isPlaceholder(fb)) return fb;
+        }
+        return null;
+      }
+
+      final players = j['players'];
+      final fallback = resolveFromPlayers(players, fallbackKey);
+      if (fallback != null) return fallback;
+      if (!isPlaceholder(direct)) return direct;
+      return direct.isNotEmpty ? direct : 'TBD';
+    }
+
+    String resolveRoundShort() {
+      final direct = pickFirstNonEmpty([
+        j['roundShort'],
+        j['round_short'],
+      ]);
+      if (direct.isNotEmpty) return direct;
+      final round = j['round'];
+      if (round is Map) {
+        return pickFirstNonEmpty([
+          round['roundShort'],
+          round['short'],
+          round['code'],
+        ]);
+      }
+      return '';
+    }
+
+    String resolveRoundLabel() {
+      final direct = pickFirstNonEmpty([
+        j['roundLabel'],
+        j['round_label'],
+      ]);
+      if (direct.isNotEmpty) return direct;
+      final round = j['round'];
+      if (round is Map) {
+        return pickFirstNonEmpty([
+          round['roundLabel'],
+          round['label'],
+          round['name'],
+        ]);
+      }
+      return '';
+    }
+
+    String normalizeElimId(String raw) {
+      var s = raw.trim().toLowerCase();
+      s = s.replaceAll(RegExp(r'[\s]+'), '');
+      s = s.replaceAll('_', '-');
+      s = s.replaceAll(RegExp(r'[^a-z0-9-]'), '');
+      final r32 = RegExp(r'^(?:round)?32-?(\d+)$').firstMatch(s) ??
+          RegExp(r'^r32-?(\d+)$').firstMatch(s);
+      if (r32 != null) return 'r32-${r32.group(1)}';
+      final r16 = RegExp(r'^(?:round)?16-?(\d+)$').firstMatch(s) ??
+          RegExp(r'^r16-?(\d+)$').firstMatch(s);
+      if (r16 != null) return 'r16-${r16.group(1)}';
+      final qf = RegExp(r'^(?:quarter|qf)-?(\d+)$').firstMatch(s);
+      if (qf != null) return 'qf${qf.group(1)}';
+      final sf = RegExp(r'^(?:semi|sf)-?(\d+)$').firstMatch(s);
+      if (sf != null) return 'sf${sf.group(1)}';
+      final cf = RegExp(r'^(?:crossover|cf)-?(\d+)$').firstMatch(s);
+      if (cf != null) return 'cf${cf.group(1)}';
+      if (s == 'finals' || s == 'final') return 'final';
+      if (s == 'brz' || s == 'bronze') return 'bronze';
+      return s;
+    }
+
+    String deriveRoundShortFromId(String id, String type) {
+      if (type != 'elimination') return '';
+      final norm = normalizeElimId(id);
+      if (norm.startsWith('r32-')) return 'R32';
+      if (norm.startsWith('r16-')) return 'R16';
+      if (norm.startsWith('qf')) return 'QF';
+      if (norm.startsWith('sf')) return 'SF';
+      if (norm.startsWith('cf')) return 'CF';
+      if (norm == 'final') return 'GOLD';
+      if (norm == 'bronze') return 'BRONZE';
+      return '';
+    }
+
+    String deriveRoundLabelFromShort(String short, String type) {
+      if (type != 'elimination') return '';
+      switch (short.toUpperCase()) {
+        case 'R32':
+          return 'Round of 32';
+        case 'R16':
+          return 'Round of 16';
+        case 'QF':
+          return 'Quarterfinal';
+        case 'SF':
+          return 'Semifinal';
+        case 'CF':
+          return 'Crossover Finals';
+        case 'GOLD':
+          return 'Battle for Gold';
+        case 'BRONZE':
+          return 'Battle for Bronze';
+        default:
+          return '';
+      }
+    }
+
+    String resolveRound() {
+      final round = j['round'];
+      if (round is Map) {
+        return pickFirstNonEmpty([
+          round['roundLabel'],
+          round['label'],
+          round['name'],
+          round['roundShort'],
+          round['short'],
+          round['code'],
+        ]);
+      }
+      return round?.toString() ?? '';
+    }
+
     final resolvedDate = pickFirstNonEmpty([
       j['date'],
       j['mdDate'],
@@ -284,12 +439,45 @@ class TournamentMatch {
     if (gs is List) {
       sigs = gs.map((e) => e?.toString()).toList();
     }
+    final resolvedType = j['type']?.toString() ?? '';
+    final resolvedId =
+        j['id']?.toString() ?? j['matchId']?.toString() ?? j['matchKey']?.toString() ?? j['_id']?.toString() ?? '';
+    dynamic cellIdCandidate;
+    final cell = j['cell'];
+    if (cell is Map) {
+      cellIdCandidate = cell['id'] ?? cell['_id'] ?? cell['key'];
+    }
+    final stableElimIdRaw = pickFirstNonEmpty([
+      j['matchId'],
+      j['cellId'],
+      cellIdCandidate,
+      j['bracketId'],
+      j['key'],
+    ]);
+    final stableElimId = resolvedType == 'elimination'
+        ? normalizeElimId(stableElimIdRaw.isNotEmpty ? stableElimIdRaw : resolvedId)
+        : '';
+    final rawRoundShort = resolveRoundShort();
+    final derivedShort = rawRoundShort.trim().isNotEmpty
+        ? rawRoundShort
+        : deriveRoundShortFromId(
+            resolvedType == 'elimination' && stableElimId.isNotEmpty ? stableElimId : resolvedId,
+            resolvedType,
+          );
+    final rawRoundLabel = resolveRoundLabel();
+    final derivedLabel =
+        rawRoundLabel.trim().isNotEmpty ? rawRoundLabel : deriveRoundLabelFromShort(derivedShort, resolvedType);
+    final resolvedMatchKey = (j['matchKey']?.toString() ?? '').trim();
+    final derivedMatchKey = (resolvedType == 'elimination' && stableElimId.isNotEmpty)
+        ? stableElimId
+        : resolvedMatchKey;
+
     return TournamentMatch(
-      id: j['id']?.toString() ?? j['matchId']?.toString() ?? j['matchKey']?.toString() ?? j['_id']?.toString() ?? '',
+      id: resolvedId,
       documentId: j['_id']?.toString() ?? '',
       scheduleFromAssignments: scheduleFromAssignments,
-      player1: j['player1']?.toString() ?? 'TBD',
-      player2: j['player2']?.toString() ?? 'TBD',
+      player1: resolvePlayerName('player1', fallbackKey: 'a1'),
+      player2: resolvePlayerName('player2', fallbackKey: 'b1'),
       player1Name: j['player1Name']?.toString() ?? '',
       player2Name: j['player2Name']?.toString() ?? '',
       score1: int.tryParse(j['score1']?.toString() ?? '0') ?? 0,
@@ -303,7 +491,9 @@ class TournamentMatch {
       game2Player2: int.tryParse(j['game2Player2']?.toString() ?? ''),
       game3Player1: int.tryParse(j['game3Player1']?.toString() ?? ''),
       game3Player2: int.tryParse(j['game3Player2']?.toString() ?? ''),
-      round: j['round']?.toString() ?? '',
+      round: resolveRound(),
+      roundShort: derivedShort,
+      roundLabel: derivedLabel,
       court: normalizeCourt(resolvedCourt),
       date: resolvedDate,
       time: resolvedTime,
@@ -313,9 +503,18 @@ class TournamentMatch {
       mdTime3: j['mdTime3']?.toString(),
       mdEnd3: j['mdEnd3']?.toString(),
       status: resolvedStatus,
-      categoryId: j['categoryId']?.toString() ?? '',
-      matchKey: j['matchKey']?.toString() ?? '',
-      type: j['type']?.toString() ?? '',
+      categoryId: (j['categoryId']?.toString().trim().isNotEmpty ?? false)
+          ? j['categoryId']?.toString() ?? ''
+          : () {
+              final cat = j['category'];
+              if (cat is Map) {
+                final m = Map<String, dynamic>.from(cat);
+                return m['_id']?.toString() ?? m['id']?.toString() ?? '';
+              }
+              return cat?.toString() ?? '';
+            }(),
+      matchKey: derivedMatchKey,
+      type: resolvedType,
       seedLabel: j['seedLabel']?.toString() ?? '',
       matchLabel: j['matchLabel']?.toString() ?? '',
       groupId: j['groupId']?.toString() ?? '',
@@ -1193,15 +1392,8 @@ class TeamMemberInfo {
   });
 
   String get displayLabel {
-    final parts = <String>[];
-    if (gender.isNotEmpty) {
-      parts.add(gender);
-    }
-    if (isSub) {
-      parts.add('Sub');
-    }
-    if (parts.isEmpty) return name;
-    return '$name (${parts.join(', ')})';
+    if (!isSub) return name;
+    return '$name (Sub)';
   }
 }
 

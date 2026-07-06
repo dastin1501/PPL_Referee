@@ -178,6 +178,11 @@ class AppState extends ChangeNotifier {
       // Extract courts and matches
       courts = fullTournament.courts;
       games = fullTournament.matches;
+      try {
+        final assigned = await _api.getAssignedMatches();
+        _overlayAssignedMatches(assigned);
+      } catch (_) {}
+      _resolveEliminationPlaceholdersFromTournamentDetails();
       
       selectedCourt = null;
       selectedDate = null;
@@ -422,6 +427,11 @@ class AppState extends ChangeNotifier {
       selectedTournament = fullTournament;
       courts = fullTournament.courts;
       games = _mergeRefreshedMatchesWithLocalState(fullTournament.matches);
+      try {
+        final assigned = await _api.getAssignedMatches();
+        _overlayAssignedMatches(assigned);
+      } catch (_) {}
+      _resolveEliminationPlaceholdersFromTournamentDetails();
       if (selectedGame != null) {
         final selectedKey = _matchIdentityKey(selectedGame!);
         final refreshedSelected = games.where((m) => _matchIdentityKey(m) == selectedKey).toList();
@@ -442,6 +452,463 @@ class AppState extends ChangeNotifier {
     }
     loading = false;
     notifyListeners();
+  }
+
+  void _overlayAssignedMatches(List<TournamentMatch> assigned) {
+    if (assigned.isEmpty) return;
+    final byKey = <String, TournamentMatch>{};
+    for (final m in assigned) {
+      final key = _matchIdentityKey(m);
+      if (key.isNotEmpty) {
+        byKey[key] = m;
+      }
+    }
+    if (byKey.isEmpty) return;
+    games = games.map((existing) {
+      final key = _matchIdentityKey(existing);
+      final inc = byKey[key];
+      if (inc == null) return existing;
+
+      String pickName(String a, String b) {
+        final aa = a.trim();
+        final bb = b.trim();
+        if (aa.isNotEmpty) return aa;
+        if (bb.isNotEmpty) return bb;
+        return '';
+      }
+
+      final mergedPlayer1 = pickName(inc.player1, existing.player1);
+      final mergedPlayer2 = pickName(inc.player2, existing.player2);
+      final mergedRoundShort = pickName(inc.roundShort, existing.roundShort);
+      final mergedRoundLabel = pickName(inc.roundLabel, existing.roundLabel);
+      final mergedMatchLabel = pickName(inc.matchLabel, existing.matchLabel);
+      final mergedSeedLabel = pickName(inc.seedLabel, existing.seedLabel);
+
+      return TournamentMatch(
+        id: existing.id,
+        documentId: existing.documentId,
+        scheduleFromAssignments: existing.scheduleFromAssignments,
+        player1: mergedPlayer1.isNotEmpty ? mergedPlayer1 : existing.player1,
+        player2: mergedPlayer2.isNotEmpty ? mergedPlayer2 : existing.player2,
+        player1Name: existing.player1Name,
+        player2Name: existing.player2Name,
+        score1: existing.score1,
+        score2: existing.score2,
+        game1Status: existing.game1Status,
+        game2Status: existing.game2Status,
+        game3Status: existing.game3Status,
+        game1Player1: existing.game1Player1,
+        game1Player2: existing.game1Player2,
+        game2Player1: existing.game2Player1,
+        game2Player2: existing.game2Player2,
+        game3Player1: existing.game3Player1,
+        game3Player2: existing.game3Player2,
+        round: existing.round,
+        roundShort: mergedRoundShort,
+        roundLabel: mergedRoundLabel,
+        court: existing.court,
+        date: existing.date,
+        time: existing.time,
+        venue: existing.venue,
+        mdTime2: existing.mdTime2,
+        mdEnd2: existing.mdEnd2,
+        mdTime3: existing.mdTime3,
+        mdEnd3: existing.mdEnd3,
+        status: existing.status,
+        categoryId: existing.categoryId,
+        matchKey: existing.matchKey,
+        type: existing.type,
+        seedLabel: mergedSeedLabel,
+        matchLabel: mergedMatchLabel,
+        groupId: existing.groupId,
+        winner: existing.winner,
+        signatureData: existing.signatureData,
+        gameSignatures: existing.gameSignatures,
+        refereeNote: existing.refereeNote,
+        scoringFormat: existing.scoringFormat,
+        game1Team1Player: existing.game1Team1Player,
+        game1Team1Player2: existing.game1Team1Player2,
+        game1Team2Player: existing.game1Team2Player,
+        game1Team2Player2: existing.game1Team2Player2,
+        game2Team1Player: existing.game2Team1Player,
+        game2Team1Player2: existing.game2Team1Player2,
+        game2Team2Player: existing.game2Team2Player,
+        game2Team2Player2: existing.game2Team2Player2,
+        game3Team1Player: existing.game3Team1Player,
+        game3Team1Player2: existing.game3Team1Player2,
+        game3Team2Player: existing.game3Team2Player,
+        game3Team2Player2: existing.game3Team2Player2,
+      );
+    }).toList();
+  }
+
+  void _resolveEliminationPlaceholdersFromTournamentDetails() {
+    bool isPlaceholder(String text) {
+      final low = text.trim().toLowerCase();
+      if (low.isEmpty) return false;
+      if (low == 'tbd') return true;
+      if (low.startsWith('winner')) return true;
+      if (low.startsWith('loser')) return true;
+      if (low.startsWith('w ')) return true;
+      if (low.startsWith('l ')) return true;
+      return false;
+    }
+
+    String normalizeRef(String raw) {
+      var s = raw.trim().toLowerCase();
+      s = s.replaceAll(RegExp(r'[\s]+'), '');
+      s = s.replaceAll('_', '-');
+      s = s.replaceAll(RegExp(r'[^a-z0-9-]'), '');
+
+      final r32 = RegExp(r'^(?:round)?32-?(\d+)$').firstMatch(s) ??
+          RegExp(r'^r32-?(\d+)$').firstMatch(s);
+      if (r32 != null) return 'r32-${r32.group(1)}';
+
+      final r16 = RegExp(r'^(?:round)?16-?(\d+)$').firstMatch(s) ??
+          RegExp(r'^r16-?(\d+)$').firstMatch(s);
+      if (r16 != null) return 'r16-${r16.group(1)}';
+
+      final qf = RegExp(r'^(?:quarter|qf)-?(\d+)$').firstMatch(s);
+      if (qf != null) return 'qf${qf.group(1)}';
+
+      final sf = RegExp(r'^(?:semi|sf)-?(\d+)$').firstMatch(s);
+      if (sf != null) return 'sf${sf.group(1)}';
+
+      final cf = RegExp(r'^(?:crossover|cf)-?(\d+)$').firstMatch(s);
+      if (cf != null) return 'cf${cf.group(1)}';
+
+      if (s == 'finals' || s == 'final') return 'final';
+      if (s == 'brz' || s == 'bronze') return 'bronze';
+      return s;
+    }
+
+    String? extractRefFromPlaceholder(String text) {
+      final trimmed = text.trim();
+      final m = RegExp(r'^(Winner|Loser)\s+(.+)$', caseSensitive: false).firstMatch(trimmed);
+      if (m != null) return normalizeRef(m.group(2) ?? '');
+      final m2 = RegExp(r'^(W|L)\s+(.+)$', caseSensitive: false).firstMatch(trimmed);
+      if (m2 != null) return normalizeRef(m2.group(2) ?? '');
+      return null;
+    }
+
+    bool isWinnerPlaceholder(String text) =>
+        RegExp(r'^\s*(Winner|W)\b', caseSensitive: false).hasMatch(text);
+
+    bool isLoserPlaceholder(String text) =>
+        RegExp(r'^\s*(Loser|L)\b', caseSensitive: false).hasMatch(text);
+
+    String makeWinnerPlaceholder(String ref) => 'Winner $ref';
+    String makeLoserPlaceholder(String ref) => 'Loser $ref';
+
+    List<String>? expectedPlaceholders(String roundShort, String matchKeyNorm) {
+      final rs = roundShort.trim().toUpperCase();
+      if (rs == 'SF') {
+        if (matchKeyNorm == 'sf1') {
+          return [makeWinnerPlaceholder('QF1'), makeWinnerPlaceholder('QF2')];
+        }
+        if (matchKeyNorm == 'sf2') {
+          return [makeWinnerPlaceholder('QF3'), makeWinnerPlaceholder('QF4')];
+        }
+        if (matchKeyNorm == 'sf3') {
+          return [makeWinnerPlaceholder('QF5'), makeWinnerPlaceholder('QF6')];
+        }
+        if (matchKeyNorm == 'sf4') {
+          return [makeWinnerPlaceholder('QF7'), makeWinnerPlaceholder('QF8')];
+        }
+      }
+      if (rs == 'CF') {
+        if (matchKeyNorm == 'cf1') {
+          return [makeWinnerPlaceholder('SF1'), makeWinnerPlaceholder('SF2')];
+        }
+        if (matchKeyNorm == 'cf2') {
+          return [makeWinnerPlaceholder('SF3'), makeWinnerPlaceholder('SF4')];
+        }
+        return [makeWinnerPlaceholder('SF1'), makeWinnerPlaceholder('SF2')];
+      }
+      if (rs == 'BRONZE') {
+        return [makeLoserPlaceholder('CF1'), makeLoserPlaceholder('CF2')];
+      }
+      if (rs == 'GOLD') {
+        return [makeWinnerPlaceholder('CF1'), makeWinnerPlaceholder('CF2')];
+      }
+      return null;
+    }
+
+    bool sameName(String a, String b) {
+      String norm(String s) {
+        return s.trim().toLowerCase().replaceAll(RegExp(r'\s+'), ' ');
+      }
+      return norm(a) == norm(b);
+    }
+
+    String? winnerName(TournamentMatch m) {
+      final w = (m.winner ?? '').toString().trim();
+      final p1 = m.player1.trim();
+      final p2 = m.player2.trim();
+      if (w.isNotEmpty &&
+          !isPlaceholder(w) &&
+          (p1.isNotEmpty || p2.isNotEmpty) &&
+          (sameName(w, p1) || sameName(w, p2))) {
+        return w;
+      }
+
+      int bestScoreA = 0;
+      int bestScoreB = 0;
+      for (int i = 1; i <= 3; i++) {
+        final a = (i == 1
+                ? m.game1Player1
+                : (i == 2 ? m.game2Player1 : m.game3Player1)) ??
+            0;
+        final b = (i == 1
+                ? m.game1Player2
+                : (i == 2 ? m.game2Player2 : m.game3Player2)) ??
+            0;
+        if (a + b > 0) {
+          bestScoreA = a;
+          bestScoreB = b;
+        }
+      }
+      if (bestScoreA == 0 && bestScoreB == 0) {
+        final a = m.score1;
+        final b = m.score2;
+        bestScoreA = a;
+        bestScoreB = b;
+      }
+      if (bestScoreA == 0 && bestScoreB == 0) return null;
+      if (bestScoreA > bestScoreB) {
+        final name = m.player1.trim();
+        return name.isNotEmpty ? name : null;
+      }
+      if (bestScoreB > bestScoreA) {
+        final name = m.player2.trim();
+        return name.isNotEmpty ? name : null;
+      }
+      return null;
+    }
+
+    String? loserName(TournamentMatch m) {
+      final w = winnerName(m);
+      if (w == null) return null;
+      final p1 = m.player1.trim();
+      final p2 = m.player2.trim();
+      if (p1.isEmpty || p2.isEmpty) return null;
+      if (w == p1) return p2;
+      if (w == p2) return p1;
+      return null;
+    }
+
+    final elimMatches = games.where((m) => m.type == 'elimination').toList();
+    if (elimMatches.isEmpty) return;
+
+    bool applyPlaceholderCorrections() {
+      bool changed = false;
+      games = games.map((m) {
+        if (m.type != 'elimination') return m;
+        final key = normalizeRef(m.matchKey.trim().isNotEmpty ? m.matchKey : m.id);
+        final expected = expectedPlaceholders(m.roundShort, key);
+        if (expected == null || expected.length != 2) return m;
+
+        String correctSide(String current, String expectedText) {
+          final cur = current.trim();
+          if (!isPlaceholder(cur)) return current;
+          final curRef = extractRefFromPlaceholder(cur);
+          final expRef = extractRefFromPlaceholder(expectedText) ?? normalizeRef(expectedText);
+          if (curRef == null || curRef.isEmpty) return expectedText;
+          if (curRef != expRef) return expectedText;
+          if (isWinnerPlaceholder(expectedText) && !isWinnerPlaceholder(cur)) return expectedText;
+          if (isLoserPlaceholder(expectedText) && !isLoserPlaceholder(cur)) return expectedText;
+          return current;
+        }
+
+        final newP1 = correctSide(m.player1, expected[0]);
+        final newP2 = correctSide(m.player2, expected[1]);
+        if (newP1 == m.player1 && newP2 == m.player2) return m;
+        changed = true;
+        return TournamentMatch(
+          id: m.id,
+          documentId: m.documentId,
+          scheduleFromAssignments: m.scheduleFromAssignments,
+          player1: newP1,
+          player2: newP2,
+          player1Name: m.player1Name,
+          player2Name: m.player2Name,
+          score1: m.score1,
+          score2: m.score2,
+          game1Status: m.game1Status,
+          game2Status: m.game2Status,
+          game3Status: m.game3Status,
+          game1Player1: m.game1Player1,
+          game1Player2: m.game1Player2,
+          game2Player1: m.game2Player1,
+          game2Player2: m.game2Player2,
+          game3Player1: m.game3Player1,
+          game3Player2: m.game3Player2,
+          round: m.round,
+          roundShort: m.roundShort,
+          roundLabel: m.roundLabel,
+          court: m.court,
+          date: m.date,
+          time: m.time,
+          venue: m.venue,
+          mdTime2: m.mdTime2,
+          mdEnd2: m.mdEnd2,
+          mdTime3: m.mdTime3,
+          mdEnd3: m.mdEnd3,
+          status: m.status,
+          categoryId: m.categoryId,
+          matchKey: m.matchKey,
+          type: m.type,
+          seedLabel: m.seedLabel,
+          matchLabel: m.matchLabel,
+          groupId: m.groupId,
+          winner: m.winner,
+          signatureData: m.signatureData,
+          gameSignatures: m.gameSignatures,
+          refereeNote: m.refereeNote,
+          scoringFormat: m.scoringFormat,
+          game1Team1Player: m.game1Team1Player,
+          game1Team1Player2: m.game1Team1Player2,
+          game1Team2Player: m.game1Team2Player,
+          game1Team2Player2: m.game1Team2Player2,
+          game2Team1Player: m.game2Team1Player,
+          game2Team1Player2: m.game2Team1Player2,
+          game2Team2Player: m.game2Team2Player,
+          game2Team2Player2: m.game2Team2Player2,
+          game3Team1Player: m.game3Team1Player,
+          game3Team1Player2: m.game3Team1Player2,
+          game3Team2Player: m.game3Team2Player,
+          game3Team2Player2: m.game3Team2Player2,
+        );
+      }).toList();
+      return changed;
+    }
+
+    applyPlaceholderCorrections();
+
+    for (int pass = 0; pass < 4; pass++) {
+      final winners = <String, String>{};
+      final losers = <String, String>{};
+      final elim = games.where((m) => m.type == 'elimination').toList();
+      for (final m in elim) {
+        final key = normalizeRef(m.matchKey.trim().isNotEmpty ? m.matchKey : m.id);
+        final w = winnerName(m);
+        final l = loserName(m);
+        if (key.isNotEmpty && w != null && w.trim().isNotEmpty && !isPlaceholder(w)) {
+          winners[key] = w.trim();
+        }
+        if (key.isNotEmpty && l != null && l.trim().isNotEmpty && !isPlaceholder(l)) {
+          losers[key] = l.trim();
+        }
+      }
+
+      if (kDebugMode) {
+        String? w(String k) => winners[k];
+        String? l(String k) => losers[k];
+        debugPrint(
+          '[elim-resolve] pass=$pass keys=${winners.length}/${losers.length} '
+          'w:sf1=${w('sf1')} sf2=${w('sf2')} sf3=${w('sf3')} sf4=${w('sf4')} '
+          'cf1=${w('cf1')} cf2=${w('cf2')} final=${w('final')} '
+          'l:cf1=${l('cf1')} cf2=${l('cf2')}',
+        );
+      }
+
+      bool changed = false;
+      games = games.map((m) {
+        if (m.type != 'elimination') return m;
+
+        final key = normalizeRef(m.matchKey.trim().isNotEmpty ? m.matchKey : m.id);
+        final expected = expectedPlaceholders(m.roundShort, key);
+        String baseP1 = m.player1;
+        String baseP2 = m.player2;
+        if (expected != null && expected.length == 2) {
+          baseP1 = expected[0];
+          baseP2 = expected[1];
+        }
+
+        String resolveSide(String current) {
+          final text = current.trim();
+          if (!isPlaceholder(text)) return current;
+          final ref = extractRefFromPlaceholder(text);
+          if (ref == null || ref.isEmpty) return current;
+          if (isWinnerPlaceholder(text)) {
+            final found = winners[ref];
+            if (found != null && found.trim().isNotEmpty) return found;
+          } else if (isLoserPlaceholder(text)) {
+            final found = losers[ref];
+            if (found != null && found.trim().isNotEmpty) return found;
+          }
+          return current;
+        }
+
+        final p1 = resolveSide(baseP1);
+        final p2 = resolveSide(baseP2);
+        if (kDebugMode && (m.roundShort.toUpperCase() == 'GOLD' || m.roundShort.toUpperCase() == 'BRONZE')) {
+          debugPrint(
+            '[elim-resolve] ${m.roundShort} key=$key before="${m.player1} vs ${m.player2}" '
+            'base="$baseP1 vs $baseP2" resolved="$p1 vs $p2"',
+          );
+        }
+        if (p1 == m.player1 && p2 == m.player2) return m;
+        changed = true;
+        return TournamentMatch(
+          id: m.id,
+          documentId: m.documentId,
+          scheduleFromAssignments: m.scheduleFromAssignments,
+          player1: p1,
+          player2: p2,
+          player1Name: m.player1Name,
+          player2Name: m.player2Name,
+          score1: m.score1,
+          score2: m.score2,
+          game1Status: m.game1Status,
+          game2Status: m.game2Status,
+          game3Status: m.game3Status,
+          game1Player1: m.game1Player1,
+          game1Player2: m.game1Player2,
+          game2Player1: m.game2Player1,
+          game2Player2: m.game2Player2,
+          game3Player1: m.game3Player1,
+          game3Player2: m.game3Player2,
+          round: m.round,
+          roundShort: m.roundShort,
+          roundLabel: m.roundLabel,
+          court: m.court,
+          date: m.date,
+          time: m.time,
+          venue: m.venue,
+          mdTime2: m.mdTime2,
+          mdEnd2: m.mdEnd2,
+          mdTime3: m.mdTime3,
+          mdEnd3: m.mdEnd3,
+          status: m.status,
+          categoryId: m.categoryId,
+          matchKey: m.matchKey,
+          type: m.type,
+          seedLabel: m.seedLabel,
+          matchLabel: m.matchLabel,
+          groupId: m.groupId,
+          winner: m.winner,
+          signatureData: m.signatureData,
+          gameSignatures: m.gameSignatures,
+          refereeNote: m.refereeNote,
+          scoringFormat: m.scoringFormat,
+          game1Team1Player: m.game1Team1Player,
+          game1Team1Player2: m.game1Team1Player2,
+          game1Team2Player: m.game1Team2Player,
+          game1Team2Player2: m.game1Team2Player2,
+          game2Team1Player: m.game2Team1Player,
+          game2Team1Player2: m.game2Team1Player2,
+          game2Team2Player: m.game2Team2Player,
+          game2Team2Player2: m.game2Team2Player2,
+          game3Team1Player: m.game3Team1Player,
+          game3Team1Player2: m.game3Team1Player2,
+          game3Team2Player: m.game3Team2Player,
+          game3Team2Player2: m.game3Team2Player2,
+        );
+      }).toList();
+
+      if (!changed) break;
+    }
   }
 
   Future<void> updateSelectedMatchFields(
@@ -624,6 +1091,8 @@ class AppState extends ChangeNotifier {
       game3Player1: _fieldAsInt(payload, 'game3Player1', g.game3Player1),
       game3Player2: _fieldAsInt(payload, 'game3Player2', g.game3Player2),
       round: g.round,
+      roundShort: g.roundShort,
+      roundLabel: g.roundLabel,
       court: g.court,
       date: g.date,
       time: g.time,
@@ -812,7 +1281,8 @@ class AppState extends ChangeNotifier {
       payload['groupId'] = activeMatch.groupId;
       payload['matchKey'] = activeMatch.matchKey;
     } else {
-      payload['matchId'] = activeMatch.id;
+      payload['matchId'] =
+          activeMatch.matchKey.trim().isNotEmpty ? activeMatch.matchKey.trim() : activeMatch.id;
       if (activeMatch.documentId.trim().isNotEmpty) {
         payload['documentId'] = activeMatch.documentId;
       }
@@ -1198,6 +1668,8 @@ class AppState extends ChangeNotifier {
           scheduleFromAssignments: m.scheduleFromAssignments,
           player1: m.player1,
           player2: m.player2,
+          player1Name: m.player1Name,
+          player2Name: m.player2Name,
           score1: m.score1,
           score2: m.score2,
           game1Status: m.game1Status,
@@ -1210,6 +1682,8 @@ class AppState extends ChangeNotifier {
           game3Player1: m.game3Player1,
           game3Player2: m.game3Player2,
           round: m.round,
+          roundShort: m.roundShort,
+          roundLabel: m.roundLabel,
           court: m.court,
           date: m.date,
           time: m.time,
@@ -1230,6 +1704,18 @@ class AppState extends ChangeNotifier {
           gameSignatures: m.gameSignatures,
           refereeNote: m.refereeNote,
           scoringFormat: existing.scoringFormat,
+          game1Team1Player: m.game1Team1Player,
+          game1Team1Player2: m.game1Team1Player2,
+          game1Team2Player: m.game1Team2Player,
+          game1Team2Player2: m.game1Team2Player2,
+          game2Team1Player: m.game2Team1Player,
+          game2Team1Player2: m.game2Team1Player2,
+          game2Team2Player: m.game2Team2Player,
+          game2Team2Player2: m.game2Team2Player2,
+          game3Team1Player: m.game3Team1Player,
+          game3Team1Player2: m.game3Team1Player2,
+          game3Team2Player: m.game3Team2Player,
+          game3Team2Player2: m.game3Team2Player2,
         );
       }).toList();
       final incomingIds = incoming

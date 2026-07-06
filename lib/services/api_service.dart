@@ -150,6 +150,105 @@ class ApiService {
     }
   }
 
+  Future<List<TournamentMatch>> getAssignedMatches() async {
+    try {
+      final ts = DateTime.now().millisecondsSinceEpoch;
+      Future<http.Response> doGet(String path) async {
+        final url = '$baseUrl$path?_ts=$ts';
+        if (kDebugMode) {
+          debugPrint('GET $url');
+        }
+        return http.get(Uri.parse(url), headers: _headers);
+      }
+
+      void logPreview(dynamic decoded) {
+        if (!kDebugMode) return;
+        List<dynamic> items;
+        if (decoded is List) {
+          items = decoded;
+        } else if (decoded is Map) {
+          final map = Map<String, dynamic>.from(decoded);
+          items = (map['matches'] as List?) ??
+              (map['assignedMatches'] as List?) ??
+              (map['data'] as List?) ??
+              const [];
+        } else {
+          items = const [];
+        }
+        final take = items.take(2).toList();
+        try {
+          debugPrint('[assigned-matches] previewCount=${items.length} first=${jsonEncode(take)}');
+        } catch (_) {
+          debugPrint('[assigned-matches] previewCount=${items.length} (jsonEncode failed)');
+        }
+      }
+
+      final primaryPath = '/api/referees/assigned-matches';
+      var res = await doGet(primaryPath);
+      if (kDebugMode) {
+        debugPrint('[assigned-matches] status=${res.statusCode} path=$primaryPath');
+      }
+      if (res.statusCode != 200) {
+        throw Exception('Status ${res.statusCode}: ${res.body}');
+      }
+
+      final decoded = jsonDecode(res.body);
+      logPreview(decoded);
+      List<dynamic> raw;
+      if (decoded is List) {
+        raw = decoded;
+      } else if (decoded is Map) {
+        final map = Map<String, dynamic>.from(decoded);
+        raw = (map['matches'] as List?) ??
+            (map['assignedMatches'] as List?) ??
+            (map['data'] as List?) ??
+            const [];
+      } else {
+        raw = const [];
+      }
+
+      Map<String, dynamic>? normalizeEntry(dynamic value) {
+        if (value is Map<String, dynamic>) return value;
+        if (value is Map) return Map<String, dynamic>.from(value);
+        return null;
+      }
+
+      Map<String, dynamic>? extractMatch(Map<String, dynamic> entry) {
+        final direct = entry;
+        final nested = entry['match'] ?? entry['matchData'] ?? entry['game'];
+        if (nested is Map) {
+          final out = Map<String, dynamic>.from(nested);
+          if (!out.containsKey('categoryId') && direct['categoryId'] != null) {
+            out['categoryId'] = direct['categoryId'];
+          }
+          if (!out.containsKey('type') && direct['type'] != null) {
+            out['type'] = direct['type'];
+          }
+          if (!out.containsKey('tournamentId') && direct['tournamentId'] != null) {
+            out['tournamentId'] = direct['tournamentId'];
+          }
+          return out;
+        }
+        return direct;
+      }
+
+      final out = <TournamentMatch>[];
+      for (final item in raw) {
+        final entry = normalizeEntry(item);
+        if (entry == null) continue;
+        final matchMap = extractMatch(entry);
+        if (matchMap == null) continue;
+        out.add(TournamentMatch.fromJson(matchMap));
+      }
+      return out;
+    } catch (e) {
+      if (kDebugMode) {
+        debugPrint('Error fetching assigned matches: $e');
+      }
+      rethrow;
+    }
+  }
+
   Future<Tournament> getTournamentDetails(String id) async {
     try {
       final ts = DateTime.now().millisecondsSinceEpoch;

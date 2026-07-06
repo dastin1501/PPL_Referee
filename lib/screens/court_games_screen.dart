@@ -72,20 +72,21 @@ class _CourtGamesScreenState extends State<CourtGamesScreen>
             gameNo: resolvedGameNo,
           ),
         ),
-      ).then((result) {
-        if (!mounted) return;
-        if (result == 'completed') {
-          _tabController.animateTo(1);
-        }
-      });
+      ).then(_handleMatchFlowResult);
     } else {
       app.openGameWithNumber(g, resolvedGameNo);
-      Navigator.of(context).pushNamed('/dashboard').then((result) {
-        if (!mounted) return;
-        if (result == 'completed') {
-          _tabController.animateTo(1);
-        }
-      });
+      Navigator.of(context).pushNamed('/dashboard').then(_handleMatchFlowResult);
+    }
+  }
+
+  Future<void> _handleMatchFlowResult(Object? result) async {
+    if (result is! String) return;
+    if (result != 'ongoing' && result != 'completed') return;
+    final app = context.read<AppState>();
+    await app.refreshSelectedTournament();
+    if (!mounted) return;
+    if (result == 'completed') {
+      _tabController.animateTo(1);
     }
   }
 
@@ -425,10 +426,13 @@ Widget _buildGamesList(
         final bool isRallyScoring = g.isRallyScoring;
         final Color scoringBg = disabled
             ? const Color(0xFFF3F4F6)
-            : (isRallyScoring ? const Color(0xFFFFF1F2) : const Color(0xFFF0FDF4));
+            : (isRallyScoring ? const Color(0xFF111827) : Colors.white);
         final Color scoringBorder = disabled
             ? Colors.grey.shade400
-            : (isRallyScoring ? const Color(0xFFFB7185) : const Color(0xFF22C55E));
+            : (isRallyScoring ? const Color(0xFF111827) : const Color(0xFF111827));
+        final Color scoringText = disabled
+            ? Colors.grey.shade500
+            : (isRallyScoring ? Colors.white : const Color(0xFF111827));
         final String scoringLabel = isRallyScoring ? 'Rally' : 'Side-Out';
         return InkWell(
           onTap: disabled
@@ -489,7 +493,7 @@ Widget _buildGamesList(
                               ),
                               child: Text(
                                 'Scoring: $scoringLabel',
-                                style: TextStyle(fontSize: 12, color: scoringBorder, fontWeight: FontWeight.w600),
+                                style: TextStyle(fontSize: 12, color: scoringText, fontWeight: FontWeight.w600),
                               ),
                             ),
                           ],
@@ -498,6 +502,12 @@ Widget _buildGamesList(
                         padding: const EdgeInsets.symmetric(vertical: 2.0),
                         child: Text(
                           () {
+                            if (g.type == 'elimination') {
+                              final rs = g.roundShort.toString().trim();
+                              final rl = g.roundLabel.toString().trim();
+                              if (rs.isNotEmpty) return '$rs - Game $n';
+                              if (rl.isNotEmpty) return '$rl - Game $n';
+                            }
                             final sl = g.seedLabel.toString();
                             if (sl.isNotEmpty) {
                               return '$sl - Game $n';
@@ -510,6 +520,13 @@ Widget _buildGamesList(
                           style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 14),
                         ),
                       ),
+                      if (g.type == 'elimination' &&
+                          g.roundShort.toString().trim().isNotEmpty &&
+                          g.roundLabel.toString().trim().isNotEmpty)
+                        Text(
+                          g.roundLabel.toString().trim(),
+                          style: const TextStyle(fontSize: 12, color: Colors.grey),
+                        ),
                       RichText(
                         text: TextSpan(
                           style: TextStyle(
@@ -690,14 +707,14 @@ class _ScoringFormatBadge extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final bg = isRally ? const Color(0xFFFFF1F2) : const Color(0xFFF0FDF4);
-    final fg = isRally ? const Color(0xFFE11D48) : const Color(0xFF15803D);
+    final bg = isRally ? const Color(0xFF111827) : Colors.white;
+    final fg = isRally ? Colors.white : const Color(0xFF111827);
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
       decoration: BoxDecoration(
         color: bg,
         borderRadius: BorderRadius.circular(999),
-        border: Border.all(color: fg.withValues(alpha: 0.4)),
+        border: Border.all(color: const Color(0xFF111827).withValues(alpha: 0.8)),
       ),
       child: Text(
         label,

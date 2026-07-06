@@ -264,6 +264,8 @@ class _TeamMatchConfirmationScreenState extends State<TeamMatchConfirmationScree
       game3Player1: widget.match.game3Player1,
       game3Player2: widget.match.game3Player2,
       round: widget.match.round,
+      roundShort: widget.match.roundShort,
+      roundLabel: widget.match.roundLabel,
       court: widget.match.court,
       date: widget.match.date,
       time: widget.match.time,
@@ -384,13 +386,18 @@ class _TeamMatchConfirmationScreenState extends State<TeamMatchConfirmationScree
 
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Select Players'),
-        backgroundColor: Colors.white,
-        foregroundColor: Colors.black87,
+        title: Text(
+          categoryName.isEmpty ? 'Select Players' : 'Select Players • $categoryName',
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+        ),
+        centerTitle: true,
+        backgroundColor: const Color(0xFF1F2937),
+        foregroundColor: Colors.white,
         elevation: 0,
       ),
       body: Container(
-        color: const Color(0xFFF7F9FB),
+        color: const Color(0xFFF3F4F6),
         child: SafeArea(
           child: Padding(
             padding: const EdgeInsets.all(16.0),
@@ -402,23 +409,29 @@ class _TeamMatchConfirmationScreenState extends State<TeamMatchConfirmationScree
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.stretch,
                       children: [
-                        if (categoryName.isNotEmpty)
-                          Container(
-                            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-                            decoration: BoxDecoration(
-                              color: const Color(0xFFE8F6F1),
-                              borderRadius: BorderRadius.circular(14),
-                            ),
-                            child: Text(
-                              categoryName,
-                              style: const TextStyle(
-                                fontSize: 15,
-                                fontWeight: FontWeight.w600,
-                                color: Color.fromARGB(255, 26, 161, 123),
+                        Padding(
+                          padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 4),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.stretch,
+                            children: [
+                              Text(
+                                'GAME ${widget.gameNo}',
+                                style: const TextStyle(
+                                  fontSize: 18,
+                                  fontWeight: FontWeight.w900,
+                                  color: Color(0xFF111827),
+                                  letterSpacing: 0.6,
+                                ),
+                                textAlign: TextAlign.center,
                               ),
-                              textAlign: TextAlign.center,
-                            ),
+                              const SizedBox(height: 8),
+                              Container(
+                                height: 1,
+                                color: const Color(0xFFE5E7EB),
+                              ),
+                            ],
                           ),
+                        ),
                         const SizedBox(height: 24),
                         Row(
                           crossAxisAlignment: CrossAxisAlignment.start,
@@ -439,7 +452,7 @@ class _TeamMatchConfirmationScreenState extends State<TeamMatchConfirmationScree
                                 height: 40,
                                 alignment: Alignment.center,
                                 decoration: BoxDecoration(
-                                  color: Colors.white,
+                                  color: const Color(0xFF111827),
                                   shape: BoxShape.circle,
                                   boxShadow: [
                                     BoxShadow(
@@ -454,7 +467,7 @@ class _TeamMatchConfirmationScreenState extends State<TeamMatchConfirmationScree
                                   style: TextStyle(
                                     fontSize: 14,
                                     fontWeight: FontWeight.w700,
-                                    color: Color(0xFF6B7280),
+                                    color: Colors.white,
                                   ),
                                 ),
                               ),
@@ -478,15 +491,15 @@ class _TeamMatchConfirmationScreenState extends State<TeamMatchConfirmationScree
                 ElevatedButton(
                   onPressed: _proceedToDashboard,
                   style: ElevatedButton.styleFrom(
-                    backgroundColor: const Color.fromARGB(255, 26, 161, 123),
+                    backgroundColor: const Color(0xFF111827),
                     foregroundColor: Colors.white,
                     padding: const EdgeInsets.symmetric(vertical: 16),
                     shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(12),
+                      borderRadius: BorderRadius.circular(20),
                     ),
                   ),
                   child: const Text(
-                    'Continue',
+                    'CONTINUE',
                     style: TextStyle(
                       fontSize: 16,
                       fontWeight: FontWeight.bold,
@@ -508,11 +521,10 @@ class _TeamMatchConfirmationScreenState extends State<TeamMatchConfirmationScree
     Color color,
   ) {
     return Container(
-      padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
         color: Colors.white,
         borderRadius: BorderRadius.circular(18),
-        border: Border.all(color: color.withValues(alpha: 0.18)),
+        border: Border.all(color: const Color(0xFFE5E7EB)),
         boxShadow: [
           BoxShadow(
             color: Colors.black.withValues(alpha: 0.04),
@@ -525,28 +537,37 @@ class _TeamMatchConfirmationScreenState extends State<TeamMatchConfirmationScree
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           Container(
-            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+            height: 6,
             decoration: BoxDecoration(
-              color: color.withValues(alpha: 0.08),
-              borderRadius: BorderRadius.circular(14),
+              color: color,
+              borderRadius: const BorderRadius.only(
+                topLeft: Radius.circular(18),
+                topRight: Radius.circular(18),
+              ),
             ),
+          ),
+          Padding(
+            padding: const EdgeInsets.all(16),
             child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
                 Text(
-                  label,
-                  style: TextStyle(
-                    fontSize: 15,
-                    fontWeight: FontWeight.w700,
-                    color: color,
+                  label.toUpperCase(),
+                  style: const TextStyle(
+                    fontSize: 12,
+                    fontWeight: FontWeight.w800,
+                    color: Color(0xFF6B7280),
+                    letterSpacing: 0.6,
                   ),
+                  textAlign: TextAlign.center,
                 ),
-                const SizedBox(height: 4),
+                const SizedBox(height: 8),
                 Text(
                   teamName,
                   style: const TextStyle(
-                    fontSize: 13,
-                    fontWeight: FontWeight.w500,
-                    color: Color(0xFF4B5563),
+                    fontSize: 16,
+                    fontWeight: FontWeight.w800,
+                    color: Color(0xFF111827),
                   ),
                   textAlign: TextAlign.center,
                   maxLines: 2,
@@ -556,71 +577,70 @@ class _TeamMatchConfirmationScreenState extends State<TeamMatchConfirmationScree
                 Text(
                   '${availableMembers.length} available players',
                   style: const TextStyle(
-                    fontSize: 11,
+                    fontSize: 12,
+                    fontWeight: FontWeight.w500,
                     color: Color(0xFF6B7280),
                   ),
                   textAlign: TextAlign.center,
+                ),
+                const SizedBox(height: 16),
+                Padding(
+                  padding: const EdgeInsets.only(bottom: 12),
+                  child: _buildPlayerDropdown(
+                    label: 'Player 1',
+                    value: label == 'Team 1' ? _selectedTeam1Player1 : _selectedTeam2Player1,
+                    options: availableMembers,
+                    color: color,
+                    onChanged: (value) {
+                      setState(() {
+                        if (label == 'Team 1') {
+                          _selectedTeam1Player1 = value;
+                          if (_selectedTeam1Player2 != null &&
+                              _normalizeTeamKey(_selectedTeam1Player2!) ==
+                                  _normalizeTeamKey(value ?? '')) {
+                            _selectedTeam1Player2 = null;
+                          }
+                        } else {
+                          _selectedTeam2Player1 = value;
+                          if (_selectedTeam2Player2 != null &&
+                              _normalizeTeamKey(_selectedTeam2Player2!) ==
+                                  _normalizeTeamKey(value ?? '')) {
+                            _selectedTeam2Player2 = null;
+                          }
+                        }
+                      });
+                    },
+                  ),
+                ),
+                _buildPlayerDropdown(
+                  label: 'Player 2',
+                  value: label == 'Team 1' ? _selectedTeam1Player2 : _selectedTeam2Player2,
+                  options: availableMembers,
+                  color: color,
+                  onChanged: (value) {
+                    setState(() {
+                      if (label == 'Team 1') {
+                        _selectedTeam1Player2 = value;
+                        if (_selectedTeam1Player1 != null &&
+                            _normalizeTeamKey(_selectedTeam1Player1!) ==
+                                _normalizeTeamKey(value ?? '')) {
+                          _selectedTeam1Player1 = null;
+                        }
+                      } else {
+                        _selectedTeam2Player2 = value;
+                        if (_selectedTeam2Player1 != null &&
+                            _normalizeTeamKey(_selectedTeam2Player1!) ==
+                                _normalizeTeamKey(value ?? '')) {
+                          _selectedTeam2Player1 = null;
+                        }
+                      }
+                    });
+                  },
                 ),
               ],
             ),
           ),
           const SizedBox(height: 16),
-          Padding(
-            padding: const EdgeInsets.only(bottom: 12),
-            child: _buildPlayerDropdown(
-              label: 'Player 1',
-              value: label == 'Team 1' ? _selectedTeam1Player1 : _selectedTeam2Player1,
-              options: availableMembers,
-              color: color,
-              onChanged: (value) {
-                setState(() {
-                  if (label == 'Team 1') {
-                    _selectedTeam1Player1 = value;
-                    if (_selectedTeam1Player2 != null &&
-                        _normalizeTeamKey(_selectedTeam1Player2!) ==
-                            _normalizeTeamKey(value ?? '')) {
-                      _selectedTeam1Player2 = null;
-                    }
-                  } else {
-                    _selectedTeam2Player1 = value;
-                    if (_selectedTeam2Player2 != null &&
-                        _normalizeTeamKey(_selectedTeam2Player2!) ==
-                            _normalizeTeamKey(value ?? '')) {
-                      _selectedTeam2Player2 = null;
-                    }
-                  }
-                });
-              },
-            ),
-          ),
-          Padding(
-            padding: const EdgeInsets.only(bottom: 12),
-            child: _buildPlayerDropdown(
-              label: 'Player 2',
-              value: label == 'Team 1' ? _selectedTeam1Player2 : _selectedTeam2Player2,
-              options: availableMembers,
-              color: color,
-              onChanged: (value) {
-                setState(() {
-                  if (label == 'Team 1') {
-                    _selectedTeam1Player2 = value;
-                    if (_selectedTeam1Player1 != null &&
-                        _normalizeTeamKey(_selectedTeam1Player1!) ==
-                            _normalizeTeamKey(value ?? '')) {
-                      _selectedTeam1Player1 = null;
-                    }
-                  } else {
-                    _selectedTeam2Player2 = value;
-                    if (_selectedTeam2Player1 != null &&
-                        _normalizeTeamKey(_selectedTeam2Player1!) ==
-                            _normalizeTeamKey(value ?? '')) {
-                      _selectedTeam2Player1 = null;
-                    }
-                  }
-                });
-              },
-            ),
-          ),
         ],
       ),
     );
@@ -633,6 +653,45 @@ class _TeamMatchConfirmationScreenState extends State<TeamMatchConfirmationScree
     required Color color,
     required ValueChanged<String?> onChanged,
   }) {
+    Color? genderColor(String raw) {
+      final g = raw.trim().toLowerCase();
+      if (g.isEmpty) return null;
+      if (g.contains('female') || g == 'f' || g.startsWith('f ')) return const Color(0xFFEC4899);
+      if ((g.contains('male') && !g.contains('female')) || g == 'm' || g.startsWith('m ')) {
+        return const Color(0xFF2563EB);
+      }
+      return null;
+    }
+
+    Widget memberLabel(TeamMemberInfo option, {required bool disabled}) {
+      final baseColor = disabled ? const Color(0xFF9CA3AF) : (genderColor(option.gender) ?? const Color(0xFF111827));
+      final subColor = disabled ? const Color(0xFF9CA3AF) : const Color(0xFF6B7280);
+      return Text.rich(
+        TextSpan(
+          children: [
+            TextSpan(
+              text: option.name,
+              style: TextStyle(
+                color: baseColor,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+            if (option.isSub)
+              TextSpan(
+                text: ' (Sub)',
+                style: TextStyle(
+                  color: subColor,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+          ],
+        ),
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
+        style: const TextStyle(fontSize: 14),
+      );
+    }
+
     // Ensure value is in options
     String? effectiveValue = value;
     if (effectiveValue != null &&
@@ -656,79 +715,134 @@ class _TeamMatchConfirmationScreenState extends State<TeamMatchConfirmationScree
     if (selfKey.isNotEmpty) {
       blockedKeys.remove(selfKey);
     }
-    
+
+    Future<void> openPicker() async {
+      if (options.isEmpty) return;
+      final picked = await showDialog<String>(
+        context: context,
+        barrierDismissible: true,
+        builder: (dialogContext) {
+          final screen = MediaQuery.of(dialogContext).size;
+          final maxWidth = (screen.width * 0.72).clamp(320, 560).toDouble();
+          final maxHeight = (screen.height * 0.70).clamp(280, 520).toDouble();
+
+          return Dialog(
+            backgroundColor: Colors.white,
+            insetPadding: const EdgeInsets.symmetric(horizontal: 18, vertical: 18),
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+            child: ConstrainedBox(
+              constraints: BoxConstraints(maxWidth: maxWidth, maxHeight: maxHeight),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(16, 14, 8, 10),
+                    child: Row(
+                      children: [
+                        Expanded(
+                          child: Text(
+                            'Select $label',
+                            style: const TextStyle(
+                              fontSize: 16,
+                              fontWeight: FontWeight.w900,
+                              color: Color(0xFF111827),
+                            ),
+                          ),
+                        ),
+                        IconButton(
+                          onPressed: () => Navigator.of(dialogContext).pop(),
+                          icon: const Icon(Icons.close, color: Color(0xFF6B7280)),
+                        ),
+                      ],
+                    ),
+                  ),
+                  const Divider(height: 1),
+                  Expanded(
+                    child: ListView.separated(
+                      padding: const EdgeInsets.symmetric(vertical: 6),
+                      itemCount: options.length,
+                      separatorBuilder: (_, __) => const Divider(height: 1),
+                      itemBuilder: (context, index) {
+                        final option = options[index];
+                        final isDisabled = blockedKeys.contains(_normalizeTeamKey(option.name));
+                        final isSelected = effectiveValue != null &&
+                            _normalizeTeamKey(option.name) == _normalizeTeamKey(effectiveValue!);
+                        final dotColor = genderColor(option.gender) ?? const Color(0xFF9CA3AF);
+                        return ListTile(
+                          contentPadding: const EdgeInsets.symmetric(horizontal: 16),
+                          enabled: !isDisabled,
+                          onTap: isDisabled ? null : () => Navigator.of(dialogContext).pop(option.name),
+                          leading: Container(
+                            width: 10,
+                            height: 10,
+                            decoration: BoxDecoration(
+                              color: isDisabled ? const Color(0xFFD1D5DB) : dotColor,
+                              shape: BoxShape.circle,
+                            ),
+                          ),
+                          title: memberLabel(option, disabled: isDisabled),
+                          trailing: isSelected
+                              ? const Icon(Icons.check_circle, color: Color(0xFF10B981))
+                              : (isDisabled
+                                  ? const Icon(Icons.block, color: Color(0xFFD1D5DB))
+                                  : const Icon(Icons.chevron_right, color: Color(0xFF9CA3AF))),
+                        );
+                      },
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          );
+        },
+      );
+      if (picked != null) {
+        onChanged(picked);
+      }
+    }
+
+    final TeamMemberInfo? selectedOption = effectiveValue == null
+        ? null
+        : options.cast<TeamMemberInfo?>().firstWhere(
+              (o) => o != null && _normalizeTeamKey(o.name) == _normalizeTeamKey(effectiveValue!),
+              orElse: () => null,
+            );
+
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Text(
-          label,
-          style: const TextStyle(
-            fontSize: 13,
-            fontWeight: FontWeight.w600,
-            color: Color(0xFF374151),
-          ),
-        ),
-        const SizedBox(height: 6),
-        Container(
-          decoration: BoxDecoration(
-            color: const Color(0xFFF9FAFB),
-            border: Border.all(color: color.withValues(alpha: 0.22)),
+        Material(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(14),
+          child: InkWell(
             borderRadius: BorderRadius.circular(14),
-          ),
-          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 2),
-          child: DropdownButtonHideUnderline(
-            child: DropdownButton<String>(
-              value: effectiveValue,
-              isExpanded: true,
-              icon: const Icon(Icons.keyboard_arrow_down_rounded, color: Color(0xFF6B7280)),
-              borderRadius: BorderRadius.circular(16),
-              menuMaxHeight: 260,
-              dropdownColor: Colors.white,
-              hint: Text(
-                'Select $label',
-                style: const TextStyle(
-                  fontSize: 14,
-                  color: Color(0xFF9CA3AF),
-                ),
+            onTap: openPicker,
+            child: Container(
+              decoration: BoxDecoration(
+                border: Border.all(color: const Color(0xFFE5E7EB)),
+                borderRadius: BorderRadius.circular(14),
               ),
-              elevation: 10,
-              style: const TextStyle(
-                fontSize: 14,
-                color: Color(0xFF111827),
-                fontWeight: FontWeight.w500,
-              ),
-              onChanged: onChanged,
-              selectedItemBuilder: (context) {
-                return options.map<Widget>((option) {
-                  return Align(
-                    alignment: Alignment.centerLeft,
-                    child: Text(
-                      option.displayLabel,
-                      overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(
-                        fontSize: 14,
-                        color: Color(0xFF111827),
-                        fontWeight: FontWeight.w500,
-                      ),
-                    ),
-                  );
-                }).toList();
-              },
-              items: options.map<DropdownMenuItem<String>>((TeamMemberInfo option) {
-                final disabled = blockedKeys.contains(_normalizeTeamKey(option.name));
-                return DropdownMenuItem<String>(
-                  value: option.name,
-                  enabled: !disabled,
-                  child: Text(
-                    option.displayLabel,
-                    overflow: TextOverflow.ellipsis,
-                    style: TextStyle(
-                      fontSize: 14,
-                      color: disabled ? const Color(0xFF9CA3AF) : const Color(0xFF111827),
-                    ),
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: selectedOption == null
+                        ? Text(
+                            'Select $label',
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(
+                              fontSize: 14,
+                              color: Color(0xFF9CA3AF),
+                              fontWeight: FontWeight.w600,
+                            ),
+                          )
+                        : memberLabel(selectedOption, disabled: false),
                   ),
-                );
-              }).toList(),
+                  const SizedBox(width: 10),
+                  const Icon(Icons.unfold_more_rounded, color: Color(0xFF6B7280)),
+                ],
+              ),
             ),
           ),
         ),

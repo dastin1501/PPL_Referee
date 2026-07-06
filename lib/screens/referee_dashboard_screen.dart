@@ -473,6 +473,93 @@ class _RefereeDashboardScreenState extends State<RefereeDashboardScreen> {
     return [parts[0], parts[1]];
   }
 
+  String _firstNamesForTeam(String raw) {
+    final v = raw.trim();
+    if (v.isEmpty) return raw;
+    final parts = v.split(RegExp(r'\s*/\s*')).map((e) => e.trim()).where((e) => e.isNotEmpty).toList();
+    if (parts.isEmpty) return raw;
+    String firstName(String name) {
+      final tokens = name.split(RegExp(r'\s+')).where((e) => e.trim().isNotEmpty).toList();
+      return tokens.isEmpty ? name : tokens.first;
+    }
+    if (parts.length == 1) return firstName(parts.first);
+    return '${firstName(parts[0])} / ${firstName(parts[1])}';
+  }
+
+  Color _teamEventAccent(Color c) {
+    const blue1 = Color(0xFF2563EB);
+    const blue2 = Color(0xFF3B82F6);
+    const purple1 = Color(0xFF7C3AED);
+    const purple2 = Color(0xFFA78BFA);
+    if (c == blue1 || c == blue2 || c == purple1 || c == purple2) {
+      return const Color(0xFF10B981);
+    }
+    return c;
+  }
+
+  Widget _buildRallyPointButton({
+    required String teamName,
+    required Color accent,
+    required VoidCallback onPressed,
+  }) {
+    final displayName = _firstNamesForTeam(teamName);
+    return SizedBox(
+      height: 56,
+      child: _Pressable3D(
+        onPressed: onPressed,
+        borderRadius: 20,
+        backgroundColor: const Color(0xFF111827),
+        baseColor: Color.lerp(const Color(0xFF111827), Colors.black, 0.30)!,
+        borderColor: Colors.white.withValues(alpha: 0.12),
+        shadowColor: Colors.black.withValues(alpha: 0.55),
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Container(
+                  width: 8,
+                  height: 8,
+                  decoration: BoxDecoration(
+                    color: accent,
+                    shape: BoxShape.circle,
+                  ),
+                ),
+                const SizedBox(width: 6),
+                const Text(
+                  'POINT',
+                  style: TextStyle(
+                    fontSize: 10,
+                    fontWeight: FontWeight.w800,
+                    letterSpacing: 0.8,
+                    color: Colors.white70,
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 3),
+            Text(
+              displayName,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              textAlign: TextAlign.center,
+              style: const TextStyle(
+                fontSize: 15,
+                fontWeight: FontWeight.w900,
+                color: Colors.white,
+                letterSpacing: 0.2,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final app = context.watch<AppState>();
@@ -501,10 +588,11 @@ class _RefereeDashboardScreenState extends State<RefereeDashboardScreen> {
         secondaryColor = const Color(0xFF3B82F6);
         kind = 'men';
       }
-      final label = '${g.matchLabel} ${g.seedLabel}'.toLowerCase();
-      if (label.contains('final')) {
+      final roundShort = g.roundShort.toString().trim().toUpperCase();
+      final roundLabel = g.roundLabel.toString().trim().toLowerCase();
+      if (roundShort == 'GOLD' || roundLabel.contains('battle for gold')) {
         liningColor = const Color(0xFFF59E0B); // gold
-      } else if (label.contains('bronze')) {
+      } else if (roundShort == 'BRONZE' || roundLabel.contains('battle for bronze')) {
         liningColor = const Color(0xFFCD7F32); // bronze
       }
     }
@@ -748,7 +836,11 @@ class _RefereeDashboardScreenState extends State<RefereeDashboardScreen> {
                                       : (_servingPlayer == rightTop)));
                           String centerScore;
                           if (isRallyScoring) {
-                            centerScore = '$leftScore - $rightScore';
+                            if (_servingPlayer == null) {
+                              centerScore = '$leftScore - $rightScore';
+                            } else {
+                              centerScore = displayServerOnLeft ? '$leftScore - $rightScore' : '$rightScore - $leftScore';
+                            }
                           } else if (isDoubles) {
                             int sNum = 0;
                             if (_servingPlayer != null) {
@@ -963,6 +1055,78 @@ class _RefereeDashboardScreenState extends State<RefereeDashboardScreen> {
                                             ),
                                     ),
                                   ),
+                                if (!_gameStarted && isDoubles && leftBottom.isNotEmpty)
+                                  Align(
+                                    alignment: Alignment.centerLeft,
+                                    child: Padding(
+                                      padding: const EdgeInsets.only(left: 14),
+                                      child: Builder(builder: (_) {
+                                        final leftServing = _servingPlayer != null && _splitTeam(g.player1).contains(_servingPlayer);
+                                        final rightServing = _servingPlayer != null && _splitTeam(g.player2).contains(_servingPlayer);
+                                        final displayLeftServing = _endsSwitched ? rightServing : leftServing;
+                                        final VoidCallback leftHandler =
+                                            _endsSwitched ? () => _toggleRightReceiver(g) : () => _toggleLeftReceiver(g);
+                                        return Material(
+                                          color: Colors.transparent,
+                                          child: InkWell(
+                                            borderRadius: BorderRadius.circular(18),
+                                            onTap: displayLeftServing ? null : leftHandler,
+                                            child: AnimatedContainer(
+                                              duration: const Duration(milliseconds: 140),
+                                              width: 36,
+                                              height: 36,
+                                              decoration: BoxDecoration(
+                                                color: const Color(0xFF0B2A5A),
+                                                borderRadius: BorderRadius.circular(18),
+                                                border: Border.all(color: Colors.white, width: 1.2),
+                                              ),
+                                              child: Icon(
+                                                Icons.swap_vert,
+                                                size: 20,
+                                                color: displayLeftServing ? Colors.white54 : Colors.white,
+                                              ),
+                                            ),
+                                          ),
+                                        );
+                                      }),
+                                    ),
+                                  ),
+                                if (!_gameStarted && isDoubles && rightBottom.isNotEmpty)
+                                  Align(
+                                    alignment: Alignment.centerRight,
+                                    child: Padding(
+                                      padding: const EdgeInsets.only(right: 14),
+                                      child: Builder(builder: (_) {
+                                        final leftServing = _servingPlayer != null && _splitTeam(g.player1).contains(_servingPlayer);
+                                        final rightServing = _servingPlayer != null && _splitTeam(g.player2).contains(_servingPlayer);
+                                        final displayRightServing = _endsSwitched ? leftServing : rightServing;
+                                        final VoidCallback rightHandler =
+                                            _endsSwitched ? () => _toggleLeftReceiver(g) : () => _toggleRightReceiver(g);
+                                        return Material(
+                                          color: Colors.transparent,
+                                          child: InkWell(
+                                            borderRadius: BorderRadius.circular(18),
+                                            onTap: displayRightServing ? null : rightHandler,
+                                            child: AnimatedContainer(
+                                              duration: const Duration(milliseconds: 140),
+                                              width: 36,
+                                              height: 36,
+                                              decoration: BoxDecoration(
+                                                color: const Color(0xFF0B2A5A),
+                                                borderRadius: BorderRadius.circular(18),
+                                                border: Border.all(color: Colors.white, width: 1.2),
+                                              ),
+                                              child: Icon(
+                                                Icons.swap_vert,
+                                                size: 20,
+                                                color: displayRightServing ? Colors.white54 : Colors.white,
+                                              ),
+                                            ),
+                                          ),
+                                        );
+                                      }),
+                                    ),
+                                  ),
                                 Align(
                                   alignment: Alignment.center,
                                   child: AnimatedSwitcher(
@@ -1053,57 +1217,6 @@ class _RefereeDashboardScreenState extends State<RefereeDashboardScreen> {
                         ],
                       ),
                     ),
-                    Padding(
-                      padding: const EdgeInsets.fromLTRB(12, 8, 12, 4),
-                      child: Row(
-                        children: [
-                          if (!_gameStarted) ...[
-                            Builder(builder: (_) {
-                              final leftTeam = _splitTeam(g.player1);
-                              final rightTeam = _splitTeam(g.player2);
-                              final isDoubles = leftTeam.length > 1 || rightTeam.length > 1;
-                              final leftServing = _servingPlayer != null && leftTeam.contains(_servingPlayer);
-                              final rightServing = _servingPlayer != null && rightTeam.contains(_servingPlayer);
-                              if (!isDoubles) return const SizedBox.shrink();
-                              final displayLeftServing = _endsSwitched ? rightServing : leftServing;
-                              final VoidCallback leftHandler = _endsSwitched ? () => _toggleRightReceiver(g) : () => _toggleLeftReceiver(g);
-                              return Row(
-                                children: [
-                                  IconButton(
-                                    tooltip: 'Swap left receiver',
-                                    onPressed: displayLeftServing ? null : leftHandler,
-                                    icon: const Icon(Icons.swap_vert),
-                                  ),
-                                  const SizedBox(width: 8),
-                                ],
-                              );
-                            }),
-                          ],
-                          const Spacer(),
-                          if (!_gameStarted) ...[
-                            Builder(builder: (_) {
-                              final leftTeam = _splitTeam(g.player1);
-                              final rightTeam = _splitTeam(g.player2);
-                              final isDoubles = leftTeam.length > 1 || rightTeam.length > 1;
-                              final leftServing = _servingPlayer != null && leftTeam.contains(_servingPlayer);
-                              final rightServing = _servingPlayer != null && rightTeam.contains(_servingPlayer);
-                              if (!isDoubles) return const SizedBox.shrink();
-                              final displayRightServing = _endsSwitched ? leftServing : rightServing;
-                              final VoidCallback rightHandler = _endsSwitched ? () => _toggleLeftReceiver(g) : () => _toggleRightReceiver(g);
-                              return Row(
-                                children: [
-                                  IconButton(
-                                    tooltip: 'Swap right receiver',
-                                    onPressed: displayRightServing ? null : rightHandler,
-                                    icon: const Icon(Icons.swap_vert),
-                                  ),
-                                ],
-                              );
-                            }),
-                          ],
-                        ],
-                      ),
-                    ),
                     if (!_gameStarted)
                       Container(
                         color: Colors.white,
@@ -1113,18 +1226,28 @@ class _RefereeDashboardScreenState extends State<RefereeDashboardScreen> {
                             Expanded(
                               child: SizedBox(
                                 height: 44,
-                                child: ElevatedButton.icon(
+                                child: _Pressable3D(
                                   onPressed: _servingPlayer != null ? _startGame : null,
-                                  style: ElevatedButton.styleFrom(
-                                    backgroundColor: const Color(0xFF111827),
-                                    disabledBackgroundColor: Colors.grey[400],
-                                    foregroundColor: Colors.white,
-                                    shape: RoundedRectangleBorder(
-                                      borderRadius: BorderRadius.circular(20),
-                                    ),
+                                  borderRadius: 20,
+                                  backgroundColor: const Color(0xFF111827),
+                                  disabledBackgroundColor: Colors.grey.shade400,
+                                  borderColor: Colors.white.withValues(alpha: 0.12),
+                                  disabledBorderColor: Colors.grey.shade400,
+                                  shadowColor: Colors.black.withValues(alpha: 0.55),
+                                  disabledShadowColor: Colors.transparent,
+                                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+                                  child: const Row(
+                                    mainAxisAlignment: MainAxisAlignment.center,
+                                    mainAxisSize: MainAxisSize.min,
+                                    children: [
+                                      Icon(Icons.play_arrow, size: 22, color: Colors.white),
+                                      SizedBox(width: 8),
+                                      Text(
+                                        'START GAME',
+                                        style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+                                      ),
+                                    ],
                                   ),
-                                  icon: const Icon(Icons.play_arrow, size: 22),
-                                  label: const Text('START GAME', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
                                 ),
                               ),
                             ),
@@ -1135,102 +1258,61 @@ class _RefereeDashboardScreenState extends State<RefereeDashboardScreen> {
                       Padding(
                         padding: const EdgeInsets.fromLTRB(18, 8, 18, 24),
                         child: isRallyScoring
-                            ? Row(
-                                children: [
-                                  Expanded(
-                                    child: SizedBox(
-                                      height: 56,
-                                      child: ElevatedButton(
-                                        onPressed: _endsSwitched ? _awardRallyPointRight : _awardRallyPointLeft,
-                                        style: ElevatedButton.styleFrom(
-                                          backgroundColor: const Color(0xFF3B82F6),
-                                          foregroundColor: Colors.white,
-                                          shape: RoundedRectangleBorder(
-                                            borderRadius: BorderRadius.circular(20),
+                                ? LayoutBuilder(
+                                    builder: (context, c) {
+                                      final buttonW = (c.maxWidth * 0.42).clamp(240, 440).toDouble();
+                                      return Row(
+                                        children: [
+                                          SizedBox(
+                                            width: buttonW,
+                                            child: _buildRallyPointButton(
+                                              teamName: _endsSwitched ? g.player2 : g.player1,
+                                              accent: _teamEventAccent(primaryColor),
+                                              onPressed: _endsSwitched ? _awardRallyPointRight : _awardRallyPointLeft,
+                                            ),
                                           ),
-                                        ),
-                                        child: Text(
-                                          '${_endsSwitched ? g.player2 : g.player1}\nPOINT',
-                                          textAlign: TextAlign.center,
-                                          style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
-                                        ),
-                                      ),
-                                    ),
-                                  ),
-                                  const SizedBox(width: 12),
-                                  Container(
-                                    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-                                    decoration: BoxDecoration(
-                                      color: Colors.white,
-                                      borderRadius: BorderRadius.circular(20),
-                                      border: Border.all(color: const Color(0xFFD1D5DB)),
-                                    ),
-                                    child: Text(
-                                      _servingPlayer == null ? 'No server' : 'Server: $_servingPlayer',
-                                      textAlign: TextAlign.center,
-                                      style: const TextStyle(
-                                        color: Color(0xFF1F2937),
-                                        fontWeight: FontWeight.w700,
-                                      ),
-                                    ),
-                                  ),
-                                  const SizedBox(width: 12),
-                                  Expanded(
-                                    child: SizedBox(
-                                      height: 56,
-                                      child: ElevatedButton(
-                                        onPressed: _endsSwitched ? _awardRallyPointLeft : _awardRallyPointRight,
-                                        style: ElevatedButton.styleFrom(
-                                          backgroundColor: const Color(0xFF8B5CF6),
-                                          foregroundColor: Colors.white,
-                                          shape: RoundedRectangleBorder(
-                                            borderRadius: BorderRadius.circular(20),
+                                          const Expanded(child: SizedBox.shrink()),
+                                          SizedBox(
+                                            width: buttonW,
+                                            child: _buildRallyPointButton(
+                                              teamName: _endsSwitched ? g.player1 : g.player2,
+                                              accent: _teamEventAccent(primaryColor),
+                                              onPressed: _endsSwitched ? _awardRallyPointLeft : _awardRallyPointRight,
+                                            ),
                                           ),
-                                        ),
-                                        child: Text(
-                                          '${_endsSwitched ? g.player1 : g.player2}\nPOINT',
-                                          textAlign: TextAlign.center,
-                                          style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
-                                        ),
-                                      ),
-                                    ),
-                                  ),
-                                ],
-                              )
+                                        ],
+                                      );
+                                    },
+                                  )
                             : Row(
                                 mainAxisAlignment: MainAxisAlignment.spaceEvenly,
                                 children: [
                                   SizedBox(
                                     width: 120,
                                     height: 56,
-                                    child: ElevatedButton(
+                                    child: _Pressable3D(
                                       onPressed: _confirmDecrementPoint,
-                                      style: ElevatedButton.styleFrom(
-                                        elevation: 4,
-                                        shadowColor: Colors.black26,
-                                        backgroundColor: const Color(0xFF7F1D1D),
-                                        foregroundColor: Colors.white,
-                                        shape: RoundedRectangleBorder(
-                                          borderRadius: BorderRadius.circular(24),
-                                        ),
+                                      borderRadius: 24,
+                                      backgroundColor: const Color(0xFF7F1D1D),
+                                      borderColor: Colors.white.withValues(alpha: 0.14),
+                                      shadowColor: Colors.black.withValues(alpha: 0.55),
+                                      padding: EdgeInsets.zero,
+                                      child: const Text(
+                                        '-',
+                                        style: TextStyle(fontSize: 28, fontWeight: FontWeight.w700, height: 1),
                                       ),
-                                      child: const Text('-', style: TextStyle(fontSize: 28, fontWeight: FontWeight.w700, height: 1)),
                                     ),
                                   ),
                                   SizedBox(
                                     width: 200,
                                     height: 56,
-                                    child: ElevatedButton(
+                                    child: _Pressable3D(
                                       onPressed: _sideOut,
-                                      style: ElevatedButton.styleFrom(
-                                        elevation: 4,
-                                        shadowColor: Colors.black26,
-                                        backgroundColor: const Color(0xFF1F2937),
-                                        foregroundColor: Colors.white,
-                                        shape: RoundedRectangleBorder(
-                                          borderRadius: BorderRadius.circular(24),
-                                        ),
-                                      ),
+                                      borderRadius: 24,
+                                      backgroundColor: const Color(0xFF1F2937),
+                                      borderColor: Colors.white.withValues(alpha: 0.14),
+                                      shadowColor: Colors.black.withValues(alpha: 0.55),
+                                      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
                                       child: Builder(builder: (_) {
                                         final app = context.read<AppState>();
                                         final g = app.selectedGame;
@@ -1268,18 +1350,17 @@ class _RefereeDashboardScreenState extends State<RefereeDashboardScreen> {
                                   SizedBox(
                                     width: 120,
                                     height: 56,
-                                    child: ElevatedButton(
+                                    child: _Pressable3D(
                                       onPressed: _incrementPoint,
-                                      style: ElevatedButton.styleFrom(
-                                        elevation: 4,
-                                        shadowColor: Colors.black26,
-                                        backgroundColor: const Color(0xFF064E3B),
-                                        foregroundColor: Colors.white,
-                                        shape: RoundedRectangleBorder(
-                                          borderRadius: BorderRadius.circular(24),
-                                        ),
+                                      borderRadius: 24,
+                                      backgroundColor: const Color(0xFF064E3B),
+                                      borderColor: Colors.white.withValues(alpha: 0.14),
+                                      shadowColor: Colors.black.withValues(alpha: 0.55),
+                                      padding: EdgeInsets.zero,
+                                      child: const Text(
+                                        '+',
+                                        style: TextStyle(fontSize: 28, fontWeight: FontWeight.w700, height: 1),
                                       ),
-                                      child: const Text('+', style: TextStyle(fontSize: 28, fontWeight: FontWeight.w700, height: 1)),
                                     ),
                                   ),
                                 ],
@@ -1306,6 +1387,7 @@ class _RefereeDashboardScreenState extends State<RefereeDashboardScreen> {
         Uint8List? sigBytes;
         bool isSubmitting = false;
         return StatefulBuilder(builder: (context, setModalState) {
+          final hasSignature = sigBytes != null && sigBytes!.isNotEmpty;
           return Dialog(
           insetPadding: EdgeInsets.zero,
           backgroundColor: Colors.transparent,
@@ -1426,7 +1508,7 @@ class _RefereeDashboardScreenState extends State<RefereeDashboardScreen> {
                             ),
                             const SizedBox(width: 8),
                             ElevatedButton(
-                              onPressed: isSubmitting ? null : () async {
+                              onPressed: (isSubmitting || !hasSignature) ? null : () async {
                                 bool includeNote = true;
                                 if (_refereeNote.trim().isNotEmpty) {
                                   final decision = await showDialog<bool>(
@@ -1797,8 +1879,8 @@ class _ScoringFormatChip extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final background = isRally ? const Color(0xFFFFF1F2) : const Color(0xFFF0FDF4);
-    final foreground = isRally ? const Color(0xFFE11D48) : const Color(0xFF15803D);
+    final background = isRally ? const Color(0xFFE0F2FE) : const Color(0xFFF0FDF4);
+    final foreground = isRally ? const Color(0xFF0284C7) : const Color(0xFF15803D);
     return Container(
       padding: dense
           ? const EdgeInsets.symmetric(horizontal: 10, vertical: 5)
@@ -1816,6 +1898,121 @@ class _ScoringFormatChip extends StatelessWidget {
           fontSize: dense ? 12 : null,
         ),
       ),
+    );
+  }
+}
+
+class _Pressable3D extends StatefulWidget {
+  final VoidCallback? onPressed;
+  final Widget child;
+  final double borderRadius;
+  final Color backgroundColor;
+  final Color? disabledBackgroundColor;
+  final Color? baseColor;
+  final Color? disabledBaseColor;
+  final Color foregroundColor;
+  final Color disabledForegroundColor;
+  final Color borderColor;
+  final Color? disabledBorderColor;
+  final Color shadowColor;
+  final Color? disabledShadowColor;
+  final EdgeInsetsGeometry padding;
+
+  const _Pressable3D({
+    required this.onPressed,
+    required this.child,
+    required this.borderRadius,
+    required this.backgroundColor,
+    this.disabledBackgroundColor,
+    this.baseColor,
+    this.disabledBaseColor,
+    this.foregroundColor = Colors.white,
+    this.disabledForegroundColor = Colors.white70,
+    required this.borderColor,
+    this.disabledBorderColor,
+    required this.shadowColor,
+    this.disabledShadowColor,
+    required this.padding,
+  });
+
+  @override
+  State<_Pressable3D> createState() => _Pressable3DState();
+}
+
+class _Pressable3DState extends State<_Pressable3D> {
+  bool _pressed = false;
+
+  void _setPressed(bool v) {
+    if (_pressed == v) return;
+    setState(() => _pressed = v);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final enabled = widget.onPressed != null;
+    final r = BorderRadius.circular(widget.borderRadius);
+    const duration = Duration(milliseconds: 90);
+    final double down = enabled && _pressed ? 4 : 0;
+    final double shadowDown = enabled && _pressed ? 2 : 6;
+    final double shadowBlur = enabled && _pressed ? 10 : 18;
+    final bg = enabled ? widget.backgroundColor : (widget.disabledBackgroundColor ?? widget.backgroundColor);
+    final base = enabled
+        ? (widget.baseColor ?? Color.lerp(widget.backgroundColor, Colors.black, 0.42)!)
+        : (widget.disabledBaseColor ??
+            widget.disabledShadowColor ??
+            Color.lerp((widget.disabledBackgroundColor ?? widget.backgroundColor), Colors.black, 0.25)!);
+    final fg = enabled ? widget.foregroundColor : widget.disabledForegroundColor;
+    final border = enabled ? widget.borderColor : (widget.disabledBorderColor ?? widget.borderColor);
+    final shadow = enabled ? widget.shadowColor : (widget.disabledShadowColor ?? widget.shadowColor);
+    return Stack(
+      children: [
+        AnimatedContainer(
+          duration: duration,
+          transform: Matrix4.translationValues(0, shadowDown, 0),
+          decoration: BoxDecoration(
+            color: base,
+            borderRadius: r,
+            boxShadow: [
+              BoxShadow(
+                color: shadow,
+                blurRadius: shadowBlur,
+                offset: const Offset(0, 6),
+              ),
+            ],
+          ),
+        ),
+        AnimatedContainer(
+          duration: duration,
+          transform: Matrix4.translationValues(0, down, 0),
+          decoration: BoxDecoration(
+            color: bg,
+            borderRadius: r,
+            border: Border.all(color: border),
+          ),
+          child: Material(
+            color: Colors.transparent,
+            child: InkWell(
+              borderRadius: r,
+              onTap: widget.onPressed,
+              onHighlightChanged: enabled ? _setPressed : null,
+              splashColor: Colors.white.withValues(alpha: 0.06),
+              highlightColor: Colors.white.withValues(alpha: 0.04),
+              child: Padding(
+                padding: widget.padding,
+                child: Center(
+                  child: IconTheme.merge(
+                    data: IconThemeData(color: fg),
+                    child: DefaultTextStyle.merge(
+                      style: TextStyle(color: fg),
+                      child: widget.child,
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ),
+      ],
     );
   }
 }

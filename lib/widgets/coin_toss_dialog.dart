@@ -111,12 +111,6 @@ class _CoinTossDialogState extends State<CoinTossDialog> with SingleTickerProvid
               },
             ),
             const SizedBox(height: 16),
-            if (_result != null) ...[
-              Text(
-                'Result: $_result',
-                style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold, color: Colors.blueGrey),
-              ),
-            ],
           ],
         ),
       ),
