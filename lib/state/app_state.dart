@@ -961,10 +961,20 @@ class AppState extends ChangeNotifier {
     if (status != null && status.isNotEmpty) {
       final targetStatus = normalizeStatus(status);
       final selectedIndex = inferredIndex.clamp(1, 3);
-      payloadFields['game${selectedIndex}Status'] = targetStatus;
+      final gameStatusKey = 'game${selectedIndex}Status';
+      final explicitGameStatusRaw = payloadFields[gameStatusKey]?.toString().trim() ?? '';
+      final hasExplicitGameStatus = explicitGameStatusRaw.isNotEmpty;
+      final explicitGameStatus =
+          hasExplicitGameStatus ? normalizeStatus(explicitGameStatusRaw) : '';
+      payloadFields['status'] = targetStatus;
       submitFields['status'] = targetStatus;
-      submitFields['game${selectedIndex}Status'] = targetStatus;
-      payloadFields.remove('status');
+      if (hasExplicitGameStatus) {
+        payloadFields[gameStatusKey] = explicitGameStatus;
+        submitFields[gameStatusKey] = explicitGameStatus;
+      } else {
+        payloadFields[gameStatusKey] = targetStatus;
+        submitFields[gameStatusKey] = targetStatus;
+      }
     }
     if (!_hasStableIdentifiers(g)) {
       error = 'Missing stable match identifier for score sync.';

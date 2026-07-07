@@ -1632,6 +1632,13 @@ class _RefereeDashboardScreenState extends State<RefereeDashboardScreen> {
 
   Future<String?> _finishSubmit(TournamentMatch g, Uint8List? signatureBytes, {bool includeNote = true}) async {
     final app = context.read<AppState>();
+    bool isGameFinished(int a, int b) {
+      final maxScore = a > b ? a : b;
+      final minScore = a > b ? b : a;
+      if (maxScore < 11) return false;
+      return (maxScore - minScore) >= 2;
+    }
+
     final winnerName = _score1 > _score2
         ? g.player1
         : (_score2 > _score1 ? g.player2 : '');
@@ -1649,13 +1656,16 @@ class _RefereeDashboardScreenState extends State<RefereeDashboardScreen> {
       scheduledCount = context.read<AppState>().selectedTournament?.categoryGamesPerMatch[g.categoryId] ?? 1;
     }
     final bool lastGame = _currentGame >= scheduledCount;
+    final bool gameFinished = isGameFinished(_score1, _score2);
+    final bool matchCompleted = lastGame && gameFinished;
 
     final fields = <String, dynamic>{};
     final gKey1 = 'game${_currentGame}Player1';
     final gKey2 = 'game${_currentGame}Player2';
     fields[gKey1] = _score1;
     fields[gKey2] = _score2;
-    fields['status'] = 'Completed';
+    fields['status'] = matchCompleted ? 'Completed' : 'Ongoing';
+    fields['game${_currentGame}Status'] = gameFinished ? 'Completed' : 'Ongoing';
     if (signatureData != null) {
       fields['signatureData'] = signatureData;
       final base = List<String?>.filled(3, null);
@@ -1672,7 +1682,7 @@ class _RefereeDashboardScreenState extends State<RefereeDashboardScreen> {
       fields['gameSignatures'] = base;
     }
     // Only finalize the match when the last scheduled game is submitted
-    if (lastGame) {
+    if (matchCompleted) {
       fields['score1'] = _score1;
       fields['score2'] = _score2;
       fields['finalScorePlayer1'] = _score1;
@@ -1694,7 +1704,7 @@ class _RefereeDashboardScreenState extends State<RefereeDashboardScreen> {
           const SnackBar(content: Text('Match submitted')),
         );
       }
-      return lastGame ? 'completed' : 'ongoing';
+      return matchCompleted ? 'completed' : 'ongoing';
     } catch (_) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
