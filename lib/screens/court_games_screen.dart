@@ -101,13 +101,25 @@ class _CourtGamesScreenState extends State<CourtGamesScreen>
     final app = context.watch<AppState>();
     final courts = List<String>.from(app.courts)
       ..sort((a, b) {
-        final ma = RegExp(r'(\d+)').firstMatch(a);
-        final mb = RegExp(r'(\d+)').firstMatch(b);
-        if (ma != null && mb != null) {
-          final na = int.tryParse(ma.group(1)!) ?? 0;
-          final nb = int.tryParse(mb.group(1)!) ?? 0;
-          return na.compareTo(nb);
+        int typeRank(String s) {
+          final low = s.trim().toLowerCase();
+          if (low == 'center court' || low.contains('center court')) return 0;
+          final m = RegExp(r'\bcourt\s*(\d+)\b', caseSensitive: false).firstMatch(s) ??
+              RegExp(r'^\s*(\d+)\s*$').firstMatch(s);
+          if (m != null) return 1;
+          return 2;
         }
+
+        int numberValue(String s) {
+          final m = RegExp(r'\bcourt\s*(\d+)\b', caseSensitive: false).firstMatch(s) ??
+              RegExp(r'^\s*(\d+)\s*$').firstMatch(s);
+          return int.tryParse(m?.group(1) ?? '') ?? 0;
+        }
+
+        final ra = typeRank(a);
+        final rb = typeRank(b);
+        if (ra != rb) return ra.compareTo(rb);
+        if (ra == 1) return numberValue(a).compareTo(numberValue(b));
         return a.toLowerCase().compareTo(b.toLowerCase());
       });
     final hasCourt = app.selectedCourt != null;

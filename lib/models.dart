@@ -630,6 +630,14 @@ class Tournament {
       final assignments = source['assignments'] as List?;
       final timeSlots = source['timeSlots'] as List?;
       final courtCount = int.tryParse(source['courtCount']?.toString() ?? '');
+      final explicitCourtNames = <String>[];
+      final courtNamesCandidate = source['courtNames'] ?? source['courts'] ?? source['courtLabels'];
+      if (courtNamesCandidate is List) {
+        for (final v in courtNamesCandidate) {
+          final s = v?.toString().trim() ?? '';
+          if (s.isNotEmpty) explicitCourtNames.add(s);
+        }
+      }
 
       String normalizeBracketCode(String raw) {
         final text = raw.trim();
@@ -646,7 +654,9 @@ class Tournament {
         return '';
       }
 
-      if (courtCount != null && courtCount > 0) {
+      if (explicitCourtNames.isNotEmpty) {
+        courts.addAll(explicitCourtNames);
+      } else if (courtCount != null && courtCount > 0) {
         for (int i = 1; i <= courtCount; i++) {
           courts.add('Court $i');
         }
@@ -687,12 +697,17 @@ class Tournament {
               final groupId = 'group-$bracketCode';
               scheduleKey = 'rr-$catId-$groupId-$matchKey$gameSuffix';
             }
+            final cellCourtRaw = cell['court']?.toString().trim() ?? '';
+            final resolvedCourt =
+                cellCourtRaw.isNotEmpty ? cellCourtRaw : (c < explicitCourtNames.length ? explicitCourtNames[c] : 'Court ${c + 1}');
+            final normalizedCourt = resolvedCourt.trim();
+            if (normalizedCourt.isNotEmpty) courts.add(normalizedCourt);
             mergeScheduleCell(
               id: scheduleKey ?? id,
               date: resolvedDate,
               time: startTime,
               endTime: endTime,
-              court: 'Court ${c + 1}',
+              court: normalizedCourt.isNotEmpty ? normalizedCourt : 'Court ${c + 1}',
               venue: venueName,
             );
           }
