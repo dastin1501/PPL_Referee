@@ -297,6 +297,74 @@ class AppState extends ChangeNotifier {
     return s;
   }
 
+  void _cancelPendingOngoingSync() {
+    _ongoingSyncTimer?.cancel();
+    _ongoingSyncTimer = null;
+    _pendingOngoingFields = null;
+    _pendingOngoingMatchKey = null;
+  }
+
+  bool _hasGameSignature(TournamentMatch match, int gameNo) {
+    final sigs = match.gameSignatures;
+    if (sigs != null && gameNo >= 1 && gameNo <= sigs.length) {
+      final sig = (sigs[gameNo - 1] ?? '').toString().trim();
+      if (sig.isNotEmpty) return true;
+    }
+    if (gameNo == 1) {
+      final legacy = match.signatureData?.toString().trim() ?? '';
+      final hasPerGameSigs = sigs?.any((s) => (s ?? '').toString().trim().isNotEmpty) ?? false;
+      if (legacy.isNotEmpty && !hasPerGameSigs) return true;
+    }
+    return false;
+  }
+
+  bool _isFinishedGameScore(int a, int b) {
+    final maxScore = a > b ? a : b;
+    final minScore = a < b ? a : b;
+    if (maxScore < 11) return false;
+    return (maxScore - minScore) >= 2;
+  }
+
+  bool _hasCompletedEvidenceForGame(TournamentMatch match, int gameNo) {
+    if (_hasGameSignature(match, gameNo)) return true;
+    final a = _scoreForGame(match, gameNo, true) ?? 0;
+    final b = _scoreForGame(match, gameNo, false) ?? 0;
+    return _isFinishedGameScore(a, b);
+  }
+
+  String? _pickNonEmptySignature(dynamic value) {
+    final s = value?.toString().trim() ?? '';
+    return s.isEmpty ? null : s;
+  }
+
+  List<String?>? _mergeGameSignaturesList(
+    List<String?>? existing,
+    dynamic incoming,
+  ) {
+    List<String?>? asList(dynamic value) {
+      if (value is! List) return null;
+      return value.map((e) => e?.toString()).toList();
+    }
+
+    final inc = asList(incoming);
+    if (inc == null) return existing;
+    final out = List<String?>.filled(3, null);
+    for (int i = 0; i < 3; i++) {
+      final incStr = (i < inc.length ? (inc[i] ?? '') : '').toString().trim();
+      final exStr = (existing != null && i < existing.length
+              ? (existing[i] ?? '')
+              : '')
+          .toString()
+          .trim();
+      if (incStr.isNotEmpty) {
+        out[i] = incStr;
+      } else if (exStr.isNotEmpty) {
+        out[i] = exStr;
+      }
+    }
+    return out;
+  }
+
   bool hasScheduleForGame(TournamentMatch match, int gameNo) {
     if (match.court.trim().isEmpty) return false;
     if (match.date.trim().isEmpty) return false;
@@ -322,17 +390,18 @@ class AppState extends ChangeNotifier {
       raw = '';
     }
     if (raw.trim().isNotEmpty) {
-      return normalizeGameStatusKey(raw);
+      final normalized = normalizeGameStatusKey(raw);
+      if (normalized == 'ongoing' && _hasCompletedEvidenceForGame(match, gameNo)) {
+        return 'completed';
+      }
+      return normalized;
     }
 
     bool hasCompletedEvidence() {
-      final sigs = match.gameSignatures;
-      if (sigs != null && sigs.length >= gameNo) {
-        final sig = (sigs[gameNo - 1] ?? '').toString().trim();
-        if (sig.isNotEmpty) return true;
-      }
+      if (_hasGameSignature(match, gameNo)) return true;
       final a = _scoreForGame(match, gameNo, true) ?? 0;
       final b = _scoreForGame(match, gameNo, false) ?? 0;
+      if (_isFinishedGameScore(a, b)) return true;
       return (a + b) > 0;
     }
 
@@ -996,6 +1065,17 @@ class AppState extends ChangeNotifier {
       return;
     }
     final isOngoingStatus = status == 'Ongoing';
+    final isCompletedSubmit = status == 'Completed';
+    final explicitGameStatusRaw =
+        payloadFields['game${selectedIndex}Status']?.toString().trim() ?? '';
+    final isGameCompletedSubmit =
+        normalizeGameStatusKey(explicitGameStatusRaw) == 'completed' ||
+        isCompletedSubmit;
+
+    if (isGameCompletedSubmit) {
+      _cancelPendingOngoingSync();
+    }
+
     if (!isOngoingStatus && _inFlightSubmitSeqByMatch.containsKey(gameIdentity)) {
       error = 'Submission already in progress for this match.';
       notifyListeners();
@@ -1005,7 +1085,7 @@ class AppState extends ChangeNotifier {
     final applyOptimistically = status == null ||
         status.isEmpty ||
         isOngoingStatus ||
-        (g.type != 'group' && status == 'Completed');
+        status == 'Completed';
     if (applyOptimistically) {
       final updated = _mergeMatchWithFields(g, payloadFields);
       _replaceSelectedGame(updated, g);
@@ -1022,6 +1102,10 @@ class AppState extends ChangeNotifier {
         _pendingOngoingFields = null;
         _pendingOngoingMatchKey = null;
         if (pending == null || pendingMatchKey != gameIdentity) return;
+        final latest = _findMatchByIdentity(matchIdentity);
+        if (latest != null && gameStatusKey(latest, selectedIndex) == 'completed') {
+          return;
+        }
         await _submitSelectedMatchPayload(
           tournament: t,
           match: _findMatchByIdentity(matchIdentity) ?? g,
@@ -1119,10 +1203,12 @@ class AppState extends ChangeNotifier {
       matchLabel: g.matchLabel,
       groupId: g.groupId,
       winner: payload['winner']?.toString() ?? g.winner,
-      signatureData: payload['signatureData']?.toString() ?? g.signatureData,
-      gameSignatures: (payload['gameSignatures'] is List)
-          ? (payload['gameSignatures'] as List).map((e) => e?.toString()).toList()
-          : g.gameSignatures,
+      signatureData:
+          _pickNonEmptySignature(payload['signatureData']) ?? g.signatureData,
+      gameSignatures: _mergeGameSignaturesList(
+        g.gameSignatures,
+        payload['gameSignatures'],
+      ),
       refereeNote: payload['refereeNote']?.toString() ?? g.refereeNote,
       scoringFormat: g.scoringFormat,
       game1Team1Player: payload['game1Team1Player']?.toString() ?? g.game1Team1Player,
@@ -1162,21 +1248,9 @@ class AppState extends ChangeNotifier {
     }
 
     List<String?> mergeGameSignatures(List<String?>? existing, List<String?>? incoming) {
-      final out = List<String?>.filled(3, null);
-      for (int i = 0; i < 3; i++) {
-        final inc = (incoming != null && incoming.length > i) ? incoming[i] : null;
-        final ex = (existing != null && existing.length > i) ? existing[i] : null;
-        final incStr = (inc ?? '').toString().trim();
-        final exStr = (ex ?? '').toString().trim();
-        if (incStr.isNotEmpty) {
-          out[i] = incStr;
-        } else if (exStr.isNotEmpty) {
-          out[i] = exStr;
-        } else {
-          out[i] = null;
-        }
-      }
-      return out;
+      return _mergeGameSignaturesList(existing, incoming) ??
+          existing ??
+          List<String?>.filled(3, null);
     }
 
     return refreshed.map((m) {
@@ -1192,9 +1266,15 @@ class AppState extends ChangeNotifier {
           final explicitExistingStatus = (n == 1)
               ? existing.game1Status
               : (n == 2 ? existing.game2Status : existing.game3Status);
-          if (explicitExistingStatus.trim().isNotEmpty) {
+          if (existingKey == 'completed') {
+            overrides['game${n}Status'] = 'Completed';
+          } else if (explicitExistingStatus.trim().isNotEmpty) {
             overrides['game${n}Status'] = explicitExistingStatus;
           }
+          overrides['game${n}Player1'] = _scoreForGame(existing, n, true);
+          overrides['game${n}Player2'] = _scoreForGame(existing, n, false);
+        } else if (existingKey == 'completed' && incomingKey != 'completed') {
+          overrides['game${n}Status'] = 'Completed';
           overrides['game${n}Player1'] = _scoreForGame(existing, n, true);
           overrides['game${n}Player2'] = _scoreForGame(existing, n, false);
         }
@@ -1220,11 +1300,17 @@ class AppState extends ChangeNotifier {
       return;
     }
     games = games.map((m) {
-      final sameId = original.id.isNotEmpty && m.id == original.id;
-      final sameComposite = m.categoryId == original.categoryId &&
+      if (original.type == 'group' &&
+          m.type == 'group' &&
+          m.categoryId == original.categoryId &&
           m.groupId == original.groupId &&
-          m.matchKey == original.matchKey;
-      return (sameId || sameComposite) ? updated : m;
+          m.matchKey == original.matchKey) {
+        return updated;
+      }
+      if (original.documentId.isNotEmpty && m.documentId == original.documentId) {
+        return updated;
+      }
+      return m;
     }).toList();
     selectedGame = updated;
   }
@@ -1543,6 +1629,29 @@ class AppState extends ChangeNotifier {
         }
         continue;
       }
+      if (key == 'signatureData') {
+        final req = _pickNonEmptySignature(requestFields['signatureData']);
+        final srv = _pickNonEmptySignature(serverMatch['signatureData']);
+        final best = req ?? srv;
+        if (best != null) {
+          authoritative[key] = best;
+        }
+        continue;
+      }
+      if (key == 'gameSignatures') {
+        final merged = _mergeGameSignaturesList(
+          _mergeGameSignaturesList(
+            null,
+            requestFields['gameSignatures'],
+          ),
+          serverMatch['gameSignatures'],
+        );
+        if (merged != null &&
+            merged.any((s) => (s ?? '').toString().trim().isNotEmpty)) {
+          authoritative[key] = merged;
+        }
+        continue;
+      }
       authoritative[key] = serverMatch[key];
     }
     return authoritative;
@@ -1593,9 +1702,27 @@ class AppState extends ChangeNotifier {
 
   String _normalizeCourt(String? s) {
     if (s == null) return '';
-    final m = RegExp(r'^\s*(?:Court\s*)?(\d+)\s*$', caseSensitive: false).firstMatch(s);
-    if (m != null) return 'Court ${m.group(1)}';
-    return s.trim();
+    final trimmed = s.trim();
+    if (trimmed.isEmpty) return '';
+
+    final low = trimmed.toLowerCase();
+    for (final name in courts) {
+      if (name.trim().toLowerCase() == low) return name.trim();
+    }
+
+    final m = RegExp(r'^\s*(?:Court\s*)?(\d+)\s*$', caseSensitive: false).firstMatch(trimmed);
+    if (m != null) {
+      final idx = int.tryParse(m.group(1) ?? '');
+      if (idx != null && idx >= 1 && idx <= courts.length) {
+        return courts[idx - 1].trim();
+      }
+      if (idx != null && idx >= 1) {
+        return 'Court $idx';
+      }
+      return 'Court ${m.group(1)}';
+    }
+
+    return trimmed;
   }
 
   String? _normalizeDate(String? input) {
@@ -1781,14 +1908,17 @@ class AppState extends ChangeNotifier {
         match.id.trim().isNotEmpty) {
       return 'elim:${match.categoryId.trim()}:${match.id.trim()}';
     }
-    if (match.id.trim().isNotEmpty) {
-      return 'id:${match.id.trim()}';
-    }
     if (match.type == 'group' &&
         match.categoryId.trim().isNotEmpty &&
         match.groupId.trim().isNotEmpty &&
         match.matchKey.trim().isNotEmpty) {
       return 'group:${match.categoryId.trim()}:${match.groupId.trim()}:${match.matchKey.trim()}';
+    }
+    if (match.documentId.trim().isNotEmpty) {
+      return 'doc:${match.documentId.trim()}';
+    }
+    if (match.id.trim().isNotEmpty) {
+      return 'id:${match.categoryId.trim()}:${match.groupId.trim()}:${match.id.trim()}';
     }
     return '';
   }

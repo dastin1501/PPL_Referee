@@ -1612,10 +1612,28 @@ class _RefereeDashboardScreenState extends State<RefereeDashboardScreen> {
                         const SizedBox(width: 8),
                         ElevatedButton(
                           onPressed: () async {
-                            final b = await key.currentState?.export();
+                            final state = key.currentState;
+                            if (state == null || !state.hasInk) {
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                const SnackBar(
+                                  content: Text('Please draw your signature before saving.'),
+                                ),
+                              );
+                              return;
+                            }
+                            final b = await state.export();
+                            if (!context.mounted) return;
+                            if (b == null || b.isEmpty) {
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                const SnackBar(
+                                  content: Text('Could not capture signature. Please try again.'),
+                                ),
+                              );
+                              return;
+                            }
                             Navigator.of(context).pop(b);
                           },
-                          child: const Text('Save'),
+                          child: const Text('Done'),
                         ),
                       ],
                     ),
@@ -2957,7 +2975,15 @@ class _SignaturePadState extends State<SignaturePad> {
   final List<Offset?> _points = [];
   final GlobalKey _repaintKey = GlobalKey();
 
+  bool get hasInk => _points.where((p) => p != null).length >= 2;
+
   Future<Uint8List?> export() async {
+    if (!hasInk) return null;
+    for (int i = 0; i < 2; i++) {
+      await Future<void>.delayed(Duration.zero);
+      if (!mounted) return null;
+      await WidgetsBinding.instance.endOfFrame;
+    }
     final boundary = _repaintKey.currentContext?.findRenderObject() as RenderRepaintBoundary?;
     if (boundary == null) return null;
     final image = await boundary.toImage(pixelRatio: 3.0);

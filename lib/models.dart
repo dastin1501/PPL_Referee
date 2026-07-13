@@ -541,6 +541,174 @@ class TournamentMatch {
   }
 }
 
+Set<String> _makeElimIdAliases(String id) {
+  final s = id.trim().toLowerCase();
+  final out = <String>{};
+  void push(String v) {
+    final t = v.trim();
+    if (t.isNotEmpty) out.add(t);
+  }
+
+  push(s);
+  if (s.startsWith('quarter')) push('qf${s.replaceFirst('quarter', '')}');
+  if (s.startsWith('qf')) push('quarter${s.replaceFirst('qf', '')}');
+  if (s.startsWith('semi')) push('sf${s.replaceFirst('semi', '')}');
+  if (s.startsWith('sf')) push('semi${s.replaceFirst('sf', '')}');
+  if (s.startsWith('round16_')) push('r16-${s.replaceFirst('round16_', '')}');
+  if (s.startsWith('r16-')) push('round16_${s.replaceFirst('r16-', '')}');
+  if (s == 'finals') push('final');
+  if (s == 'final') push('finals');
+  return out;
+}
+
+String _elimScheduleKeyFromId(String id) {
+  final s = id.trim().toLowerCase();
+  if (s.startsWith('round16_')) return 'r16-${s.replaceFirst('round16_', '')}';
+  if (s.startsWith('r16-')) return s;
+  if (s.startsWith('quarter')) return 'qf${s.replaceFirst('quarter', '')}';
+  if (s.startsWith('qf')) return s;
+  if (s.startsWith('semi')) return 'sf${s.replaceFirst('semi', '')}';
+  if (s.startsWith('sf')) return s;
+  if (s == 'final' || s == 'finals') return 'final';
+  if (s == 'bronze') return 'bronze';
+  return '';
+}
+
+List<String> _makeElimScheduleCandidates(String catId, Map<String, dynamic> m, int index) {
+  final baseId = m['id']?.toString().trim() ?? '';
+  final pid = m['persistedId']?.toString().trim() ?? '';
+  final sk = m['scheduleKey']?.toString().trim() ?? '';
+  final derivedSk = sk.isNotEmpty ? sk : _elimScheduleKeyFromId(baseId);
+  final ids = <String>{};
+  void add(String v) {
+    final t = v.trim();
+    if (t.isNotEmpty) ids.add(t);
+  }
+
+  for (final alias in _makeElimIdAliases(baseId)) {
+    add('elim-$catId-$alias');
+  }
+  if (pid.isNotEmpty) {
+    for (final alias in _makeElimIdAliases(pid)) {
+      add('elim-$catId-$alias');
+    }
+  }
+  if (derivedSk.isNotEmpty) {
+    add('elimgen-$catId-$derivedSk');
+  }
+  add('elim-$catId-$index');
+  add('elimgen-$catId-$index');
+  return ids.toList();
+}
+
+String? _courtNameFromEntry(dynamic v) {
+  if (v is Map) {
+    return (v['name'] ?? v['label'] ?? v['courtName'])?.toString().trim();
+  }
+  final s = v?.toString().trim() ?? '';
+  return s.isEmpty ? null : s;
+}
+
+List<String> _parseCourtNameList(dynamic candidate) {
+  if (candidate is! List) return const [];
+  final out = <String>[];
+  for (final v in candidate) {
+    final name = _courtNameFromEntry(v);
+    if (name != null && name.isNotEmpty) out.add(name);
+  }
+  return out;
+}
+
+String _resolveCourtFromIndexOrName(
+  String raw,
+  List<String> courtNames, {
+  int? columnIndex,
+}) {
+  if (columnIndex != null && columnIndex >= 0) {
+    if (columnIndex < courtNames.length) {
+      return courtNames[columnIndex].trim();
+    }
+    return 'Court ${columnIndex + 1}';
+  }
+
+  final trimmed = raw.trim();
+  if (trimmed.isEmpty) return '';
+
+  final low = trimmed.toLowerCase();
+  for (final name in courtNames) {
+    if (name.trim().toLowerCase() == low) return name.trim();
+  }
+
+  final m = RegExp(r'^\s*(?:court\s*)?(\d+)\s*$', caseSensitive: false).firstMatch(trimmed);
+  if (m != null) {
+    final idx = int.tryParse(m.group(1) ?? '');
+    if (idx != null && idx >= 1 && idx <= courtNames.length) {
+      return courtNames[idx - 1].trim();
+    }
+    if (idx != null && idx >= 1) {
+      return 'Court $idx';
+    }
+  }
+
+  return trimmed;
+}
+
+List<String> _buildTournamentCourtList({
+  required List<String> namedCourts,
+  required Iterable<String> discoveredCourts,
+  required int maxCourtCount,
+  required int maxAssignmentColumns,
+}) {
+  bool hasCourt(List<String> list, String name) =>
+      list.any((r) => r.trim().toLowerCase() == name.trim().toLowerCase());
+
+  final result = <String>[];
+
+  if (namedCourts.isNotEmpty) {
+    result.addAll(namedCourts);
+    final total = [
+      namedCourts.length,
+      maxCourtCount,
+      maxAssignmentColumns,
+    ].reduce((a, b) => a > b ? a : b);
+    // Only extend beyond configured names (e.g. Court 6+) — never regenerate renamed slots.
+    for (int i = namedCourts.length; i < total; i++) {
+      final fallback = 'Court ${i + 1}';
+      if (!hasCourt(result, fallback)) {
+        result.add(fallback);
+      }
+    }
+  } else {
+    final total = [
+      maxCourtCount,
+      maxAssignmentColumns,
+    ].reduce((a, b) => a > b ? a : b);
+    for (int i = 0; i < total; i++) {
+      result.add('Court ${i + 1}');
+    }
+  }
+
+  for (final court in discoveredCourts) {
+    final remapped = namedCourts.isNotEmpty
+        ? _resolveCourtFromIndexOrName(court, namedCourts)
+        : court.trim();
+    if (remapped.isNotEmpty && !hasCourt(result, remapped)) {
+      result.add(remapped);
+    }
+  }
+
+  if (namedCourts.isNotEmpty) {
+    result.removeWhere((court) {
+      final remapped = _resolveCourtFromIndexOrName(court, namedCourts);
+      return remapped.toLowerCase() != court.trim().toLowerCase() &&
+          hasCourt(result, remapped);
+    });
+  }
+
+  result.sort();
+  return result;
+}
+
 class Tournament {
   final String id;
   final String name;
@@ -595,6 +763,32 @@ class Tournament {
         (j['courtAssignments'] is Map<String, dynamic>)
             ? (j['courtAssignments']['scheduleDate']?.toString())
             : null;
+    final globalCourtNames = <String>[];
+    var maxCourtCount = 0;
+    var maxAssignmentColumns = 0;
+
+    void rememberCourtNames(List<String> names) {
+      for (int i = 0; i < names.length; i++) {
+        final name = names[i].trim();
+        if (name.isEmpty) continue;
+        while (globalCourtNames.length <= i) {
+          globalCourtNames.add('');
+        }
+        globalCourtNames[i] = name;
+      }
+      while (globalCourtNames.isNotEmpty && globalCourtNames.last.isEmpty) {
+        globalCourtNames.removeLast();
+      }
+    }
+
+    void noteCourtCapacity({int? courtCount, int? assignmentColumns}) {
+      if (courtCount != null && courtCount > maxCourtCount) {
+        maxCourtCount = courtCount;
+      }
+      if (assignmentColumns != null && assignmentColumns > maxAssignmentColumns) {
+        maxAssignmentColumns = assignmentColumns;
+      }
+    }
 
     // 0. Parse Court Assignments (Schedules.jsx source of truth)
     final scheduleMap = <String, Map<String, dynamic>>{};
@@ -632,12 +826,23 @@ class Tournament {
       final courtCount = int.tryParse(source['courtCount']?.toString() ?? '');
       final explicitCourtNames = <String>[];
       final courtNamesCandidate = source['courtNames'] ?? source['courts'] ?? source['courtLabels'];
-      if (courtNamesCandidate is List) {
-        for (final v in courtNamesCandidate) {
-          final s = v?.toString().trim() ?? '';
-          if (s.isNotEmpty) explicitCourtNames.add(s);
+      explicitCourtNames.addAll(_parseCourtNameList(courtNamesCandidate));
+      if (explicitCourtNames.isNotEmpty) {
+        rememberCourtNames(explicitCourtNames);
+      }
+
+      var assignmentColumns = 0;
+      if (assignments != null && assignments.isNotEmpty) {
+        for (final row in assignments) {
+          if (row is List && row.length > assignmentColumns) {
+            assignmentColumns = row.length;
+          }
         }
       }
+      noteCourtCapacity(
+        courtCount: courtCount,
+        assignmentColumns: assignmentColumns,
+      );
 
       String normalizeBracketCode(String raw) {
         final text = raw.trim();
@@ -698,8 +903,15 @@ class Tournament {
               scheduleKey = 'rr-$catId-$groupId-$matchKey$gameSuffix';
             }
             final cellCourtRaw = cell['court']?.toString().trim() ?? '';
-            final resolvedCourt =
-                cellCourtRaw.isNotEmpty ? cellCourtRaw : (c < explicitCourtNames.length ? explicitCourtNames[c] : 'Court ${c + 1}');
+            final resolvedCourt = explicitCourtNames.isNotEmpty
+                ? _resolveCourtFromIndexOrName(
+                    cellCourtRaw,
+                    explicitCourtNames,
+                    columnIndex: c,
+                  )
+                : (cellCourtRaw.isNotEmpty
+                    ? cellCourtRaw
+                    : 'Court ${c + 1}');
             final normalizedCourt = resolvedCourt.trim();
             if (normalizedCourt.isNotEmpty) courts.add(normalizedCourt);
             mergeScheduleCell(
@@ -1131,6 +1343,13 @@ class Tournament {
           m['player1'] = extract(p1);
           m['player2'] = extract(p2);
 
+          if (globalCourtNames.isNotEmpty) {
+            final courtRaw = m['court']?.toString() ?? '';
+            if (courtRaw.isNotEmpty) {
+              m['court'] = _resolveCourtFromIndexOrName(courtRaw, globalCourtNames);
+            }
+          }
+
           final match = TournamentMatch.fromJson(m);
           matches.add(match);
           if (match.court.isNotEmpty) {
@@ -1321,14 +1540,8 @@ class Tournament {
             for (int i = 0; i < elimMatches.length; i++) {
               var m = elimMatches[i];
               if (m is Map<String, dynamic>) {
-                final mId = m['id']?.toString();
-                // Try multiple key forms used by web scheduler
-                final candidates = <String>[
-                  if (mId != null && mId.isNotEmpty) 'elim-$catId-$mId',
-                  if (mId != null && mId.isNotEmpty) 'elimgen-$catId-$mId',
-                  'elim-$catId-$i',
-                  'elimgen-$catId-$i',
-                ];
+                // Match web scheduler key aliases (semi1↔sf1, quarter1↔qf1, etc.)
+                final candidates = _makeElimScheduleCandidates(catId, m, i);
                 bool matchedSchedule = false;
                 for (final k in candidates) {
                   if (scheduleMap.containsKey(k)) {
@@ -1370,7 +1583,12 @@ class Tournament {
         return e.toString();
       }).toList() ?? [],
       matches: matches,
-      courts: courts.toList()..sort(),
+      courts: _buildTournamentCourtList(
+        namedCourts: globalCourtNames,
+        discoveredCourts: courts,
+        maxCourtCount: maxCourtCount,
+        maxAssignmentColumns: maxAssignmentColumns,
+      ),
       categoryNames: categoryNames,
       categoryGamesPerMatch: categoryGPM,
       categoryScoringTypes: categoryScoringTypes,
