@@ -398,7 +398,7 @@ class ApiService {
     if (kDebugMode) {
       final idSummary = safePayload['type'] == 'group'
           ? 'groupId=${safePayload['groupId']}, matchKey=${safePayload['matchKey']}'
-          : 'matchId=${safePayload['matchId']}';
+          : 'matchId=${safePayload['matchId']}, documentId=${safePayload['documentId'] ?? ''}';
       final game = safePayload['game'];
       print(
         '[score-sync][api] POST /api/referees/submit-score '

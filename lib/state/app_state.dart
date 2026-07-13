@@ -1377,10 +1377,17 @@ class AppState extends ChangeNotifier {
       payload['groupId'] = activeMatch.groupId;
       payload['matchKey'] = activeMatch.matchKey;
     } else {
+      // Elimination matches are stored on the backend by their raw tournament id
+      // (e.g. "quarter1", "semi1", "round16_1"). matchKey may be a schedule-only
+      // alias (e.g. "qf1") used for court-assignment lookup — do not submit that
+      // as matchId or the backend returns 404 "Match not found".
+      final rawMatchId = activeMatch.id.trim();
+      final aliasMatchKey = activeMatch.matchKey.trim();
       payload['matchId'] =
-          activeMatch.matchKey.trim().isNotEmpty ? activeMatch.matchKey.trim() : activeMatch.id;
+          rawMatchId.isNotEmpty ? rawMatchId : aliasMatchKey;
       if (activeMatch.documentId.trim().isNotEmpty) {
         payload['documentId'] = activeMatch.documentId;
+        payload['_id'] = activeMatch.documentId;
       }
     }
 
@@ -1445,7 +1452,7 @@ class AppState extends ChangeNotifier {
     if (kDebugMode) {
       final matchRef = activeMatch.type == 'group'
           ? 'groupId=${activeMatch.groupId}, matchKey=${activeMatch.matchKey}'
-          : 'matchId=${activeMatch.id}';
+          : 'matchId=${payload['matchId']}, docId=${payload['documentId'] ?? ''}, alias=${activeMatch.matchKey}';
       final sig = payload['signatureData']?.toString() ?? '';
       final sigPrefix = sig.startsWith('data:image') ? 'data:image' : (sig.isNotEmpty ? 'base64' : 'none');
       final sigLen = sig.length;

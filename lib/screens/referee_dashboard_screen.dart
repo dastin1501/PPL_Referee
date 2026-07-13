@@ -2562,7 +2562,7 @@ extension on _RefereeDashboardScreenState {
     if (kDebugMode) {
       final matchRef = g.type == 'group'
           ? 'groupId=${g.groupId}, matchKey=${g.matchKey}'
-          : 'matchId=${g.id}';
+          : 'matchId=${g.id}, docId=${g.documentId}, alias=${g.matchKey}';
       debugPrint(
         '[score-sync][tap] $matchRef selectedGame=$_currentGame '
         'score=$_score1-$_score2 action=score-interaction',
