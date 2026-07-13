@@ -1666,12 +1666,17 @@ class _RefereeDashboardScreenState extends State<RefereeDashboardScreen> {
       signatureData = 'data:image/png;base64,$encoded';
     }
     // Determine how many games were actually scheduled for this match
-    int scheduledCount = 0;
-    if (g.time.toString().trim().isNotEmpty) scheduledCount += 1;
-    if ((g.mdTime2?.toString().trim().isNotEmpty ?? false)) scheduledCount += 1;
-    if ((g.mdTime3?.toString().trim().isNotEmpty ?? false)) scheduledCount += 1;
+    // (elimination rounds can differ per round, e.g. QF best-of-1 vs SF best-of-3).
+    final gpm = app.gamesPerMatchFor(g);
+    var scheduledCount = 0;
+    for (int i = 1; i <= gpm; i++) {
+      if (app.hasScheduleForGame(g, i)) scheduledCount++;
+    }
     if (scheduledCount == 0) {
-      scheduledCount = context.read<AppState>().selectedTournament?.categoryGamesPerMatch[g.categoryId] ?? 1;
+      // No schedule data at all for this match — fall back to the category's
+      // configured games-per-match instead of the elimination scan bound.
+      scheduledCount =
+          context.read<AppState>().selectedTournament?.categoryGamesPerMatch[g.categoryId] ?? 1;
     }
     final bool lastGame = _currentGame >= scheduledCount;
     final bool gameFinished = isGameFinished(_score1, _score2);

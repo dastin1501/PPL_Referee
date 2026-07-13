@@ -372,10 +372,29 @@ class AppState extends ChangeNotifier {
         match.scheduleFromAssignments != true) {
       return false;
     }
+    // Whether a game exists is purely schedule-driven — mirrors the website:
+    // a round only has as many games as were actually assigned time slots
+    // in the court-assignment grid (e.g. QF may be best-of-1 while SF/Final
+    // are best-of-3, depending on what the admin scheduled).
     if (gameNo == 1) return match.time.trim().isNotEmpty;
-    if (gameNo == 2) return (match.mdTime2?.toString().trim().isNotEmpty ?? false);
-    if (gameNo == 3) return (match.mdTime3?.toString().trim().isNotEmpty ?? false);
+    if (gameNo == 2) return match.mdTime2?.toString().trim().isNotEmpty ?? false;
+    if (gameNo == 3) return match.mdTime3?.toString().trim().isNotEmpty ?? false;
     return false;
+  }
+
+  // Upper bound of games to *check* for a match (actual visibility of each
+  // game is still gated by hasScheduleForGame / real schedule data above).
+  int gamesPerMatchFor(TournamentMatch match) {
+    final tournament = selectedTournament;
+    if (tournament == null) return 1;
+    if (match.type == 'elimination') {
+      // Elimination rounds can differ per round (e.g. QF best-of-1, SF
+      // best-of-3), so always scan up to 3 and let the schedule decide.
+      return 3;
+    }
+    final catId = match.categoryId.trim();
+    if (catId.isEmpty) return 1;
+    return (tournament.categoryGamesPerMatch[catId] ?? 1).clamp(1, 3);
   }
 
   String gameStatusKey(TournamentMatch match, int gameNo) {

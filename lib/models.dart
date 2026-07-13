@@ -579,26 +579,56 @@ List<String> _makeElimScheduleCandidates(String catId, Map<String, dynamic> m, i
   final pid = m['persistedId']?.toString().trim() ?? '';
   final sk = m['scheduleKey']?.toString().trim() ?? '';
   final derivedSk = sk.isNotEmpty ? sk : _elimScheduleKeyFromId(baseId);
-  final ids = <String>{};
-  void add(String v) {
+  final elimgenKeys = <String>[];
+  final elimKeys = <String>[];
+  void addElimgen(String v) {
     final t = v.trim();
-    if (t.isNotEmpty) ids.add(t);
+    if (t.isNotEmpty && !elimgenKeys.contains(t)) elimgenKeys.add(t);
   }
 
-  for (final alias in _makeElimIdAliases(baseId)) {
-    add('elim-$catId-$alias');
+  void addElim(String v) {
+    final t = v.trim();
+    if (t.isNotEmpty && !elimKeys.contains(t)) elimKeys.add(t);
   }
-  if (pid.isNotEmpty) {
-    for (final alias in _makeElimIdAliases(pid)) {
-      add('elim-$catId-$alias');
+
+  void addAliases(String rawId) {
+    for (final alias in _makeElimIdAliases(rawId)) {
+      addElim('elim-$catId-$alias');
+      final scheduleKey = _elimScheduleKeyFromId(alias);
+      if (scheduleKey.isNotEmpty) {
+        addElimgen('elimgen-$catId-$scheduleKey');
+      }
     }
   }
-  if (derivedSk.isNotEmpty) {
-    add('elimgen-$catId-$derivedSk');
+
+  addAliases(baseId);
+  if (pid.isNotEmpty) addAliases(pid);
+  if (derivedSk.isNotEmpty) addElimgen('elimgen-$catId-$derivedSk');
+  addElim('elim-$catId-$index');
+  addElimgen('elimgen-$catId-$index');
+  // Prefer elimgen-* keys first — they carry best-of-3 schedule slots (g1/g2/g3).
+  return [...elimgenKeys, ...elimKeys];
+}
+
+Map<String, dynamic>? _pickBestScheduleInfo(
+  List<String> candidates,
+  Map<String, Map<String, dynamic>> scheduleMap,
+) {
+  Map<String, dynamic>? best;
+  var bestScore = -1;
+  for (final key in candidates) {
+    final info = scheduleMap[key];
+    if (info == null) continue;
+    var score = 0;
+    if (info['time']?.toString().trim().isNotEmpty ?? false) score++;
+    if (info['mdTime2']?.toString().trim().isNotEmpty ?? false) score++;
+    if (info['mdTime3']?.toString().trim().isNotEmpty ?? false) score++;
+    if (score > bestScore) {
+      bestScore = score;
+      best = info;
+    }
   }
-  add('elim-$catId-$index');
-  add('elimgen-$catId-$index');
-  return ids.toList();
+  return best;
 }
 
 String? _courtNameFromEntry(dynamic v) {
@@ -1542,15 +1572,10 @@ class Tournament {
               if (m is Map<String, dynamic>) {
                 // Match web scheduler key aliases (semi1↔sf1, quarter1↔qf1, etc.)
                 final candidates = _makeElimScheduleCandidates(catId, m, i);
-                bool matchedSchedule = false;
-                for (final k in candidates) {
-                  if (scheduleMap.containsKey(k)) {
-                    applyScheduleInfo(m, scheduleMap[k]!);
-                    matchedSchedule = true;
-                    break;
-                  }
-                }
-                if (!matchedSchedule && hasAuthoritativeSchedule) {
+                final scheduleInfo = _pickBestScheduleInfo(candidates, scheduleMap);
+                if (scheduleInfo != null) {
+                  applyScheduleInfo(m, scheduleInfo);
+                } else if (hasAuthoritativeSchedule) {
                   clearScheduleFields(m);
                 }
                 // Provide a match label for elimination rounds

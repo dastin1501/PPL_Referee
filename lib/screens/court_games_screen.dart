@@ -301,7 +301,7 @@ Widget _buildGamesList(
   // Expand per-game items (only include games that were actually scheduled)
   final items = <Map<String, dynamic>>[];
   for (final g in games) {
-    final int gpm = app.selectedTournament?.categoryGamesPerMatch[g.categoryId] ?? 1;
+    final int gpm = app.gamesPerMatchFor(g);
     String label = g.matchLabel.toString() ?? '';
     if (label.isEmpty) label = 'GA';
 
