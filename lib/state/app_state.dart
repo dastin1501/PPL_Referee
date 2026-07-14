@@ -688,7 +688,22 @@ class AppState extends ChangeNotifier {
     String makeWinnerPlaceholder(String ref) => 'Winner $ref';
     String makeLoserPlaceholder(String ref) => 'Loser $ref';
 
-    List<String>? expectedPlaceholders(String roundShort, String matchKeyNorm) {
+    // Whether a category's bracket actually has a Crossover Final (CF) round.
+    // CF only exists for larger brackets (e.g. Round of 32 -> 4 semis -> CF ->
+    // Gold/Bronze). Smaller brackets (e.g. QF -> 2 semis) go straight from
+    // SF to Gold/Bronze, so Gold/Bronze must reference SF1/SF2 directly.
+    final categoriesWithCF = <String>{};
+    for (final m in games) {
+      if (m.type == 'elimination' && m.roundShort.trim().toUpperCase() == 'CF') {
+        categoriesWithCF.add(m.categoryId.trim());
+      }
+    }
+
+    List<String>? expectedPlaceholders(
+      String roundShort,
+      String matchKeyNorm,
+      String categoryId,
+    ) {
       final rs = roundShort.trim().toUpperCase();
       if (rs == 'SF') {
         if (matchKeyNorm == 'sf1') {
@@ -713,11 +728,16 @@ class AppState extends ChangeNotifier {
         }
         return [makeWinnerPlaceholder('SF1'), makeWinnerPlaceholder('SF2')];
       }
+      final hasCF = categoriesWithCF.contains(categoryId.trim());
       if (rs == 'BRONZE') {
-        return [makeLoserPlaceholder('CF1'), makeLoserPlaceholder('CF2')];
+        return hasCF
+            ? [makeLoserPlaceholder('CF1'), makeLoserPlaceholder('CF2')]
+            : [makeLoserPlaceholder('SF1'), makeLoserPlaceholder('SF2')];
       }
       if (rs == 'GOLD') {
-        return [makeWinnerPlaceholder('CF1'), makeWinnerPlaceholder('CF2')];
+        return hasCF
+            ? [makeWinnerPlaceholder('CF1'), makeWinnerPlaceholder('CF2')]
+            : [makeWinnerPlaceholder('SF1'), makeWinnerPlaceholder('SF2')];
       }
       return null;
     }
@@ -793,7 +813,7 @@ class AppState extends ChangeNotifier {
       games = games.map((m) {
         if (m.type != 'elimination') return m;
         final key = normalizeRef(m.matchKey.trim().isNotEmpty ? m.matchKey : m.id);
-        final expected = expectedPlaceholders(m.roundShort, key);
+        final expected = expectedPlaceholders(m.roundShort, key, m.categoryId);
         if (expected == null || expected.length != 2) return m;
 
         String correctSide(String current, String expectedText) {
@@ -905,7 +925,7 @@ class AppState extends ChangeNotifier {
         if (m.type != 'elimination') return m;
 
         final key = normalizeRef(m.matchKey.trim().isNotEmpty ? m.matchKey : m.id);
-        final expected = expectedPlaceholders(m.roundShort, key);
+        final expected = expectedPlaceholders(m.roundShort, key, m.categoryId);
         String baseP1 = m.player1;
         String baseP2 = m.player2;
         if (expected != null && expected.length == 2) {
