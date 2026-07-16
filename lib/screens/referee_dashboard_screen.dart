@@ -77,6 +77,11 @@ class _RefereeDashboardScreenState extends State<RefereeDashboardScreen> {
     ]);
 
     WidgetsBinding.instance.addPostFrameCallback((_) {
+      // Re-assert landscape after prior route dispose (e.g. team selection).
+      SystemChrome.setPreferredOrientations([
+        DeviceOrientation.landscapeLeft,
+        DeviceOrientation.landscapeRight,
+      ]);
       _checkCoinToss();
       _measureAppBarTitle();
     });
@@ -363,37 +368,171 @@ class _RefereeDashboardScreenState extends State<RefereeDashboardScreen> {
   }
 
   Future<void> _addRefereeNote(TournamentMatch g) async {
+    const brand = Color(0xFF0F766E);
     final ctrl = TextEditingController(text: _refereeNote);
-    final ok = await showDialog<bool>(
+    final focusNode = FocusNode();
+    // Portrait gives enough room above the keyboard on phones.
+    await SystemChrome.setPreferredOrientations([
+      DeviceOrientation.portraitUp,
+      DeviceOrientation.portraitDown,
+      DeviceOrientation.landscapeLeft,
+      DeviceOrientation.landscapeRight,
+    ]);
+    bool? ok;
+    try {
+      ok = await showModalBottomSheet<bool>(
       context: context,
-      builder: (dialogContext) => Padding(
-        padding: EdgeInsets.only(bottom: MediaQuery.of(dialogContext).viewInsets.bottom),
-        child: AlertDialog(
-          title: const Text('Referee Note'),
-          content: SingleChildScrollView(
-            child: SizedBox(
-              height: 220,
-              child: TextField(
-                controller: ctrl,
-                maxLines: null,
-                expands: true,
-                textAlignVertical: TextAlignVertical.top,
-                decoration: const InputDecoration(
-                  hintText: 'Describe the dispute or note here',
-                  border: OutlineInputBorder(),
+      isScrollControlled: true,
+      useSafeArea: true,
+      backgroundColor: Colors.white,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (sheetContext) {
+        // Size the sheet to the space *above* the keyboard so typing stays visible.
+        final keyboard = MediaQuery.viewInsetsOf(sheetContext).bottom;
+        final maxH = MediaQuery.sizeOf(sheetContext).height;
+        final available = (maxH - keyboard).clamp(200.0, maxH);
+        final sheetH = keyboard > 0
+            ? available
+            : (maxH * 0.62).clamp(280.0, maxH);
+        return AnimatedPadding(
+          duration: const Duration(milliseconds: 180),
+          curve: Curves.easeOut,
+          padding: EdgeInsets.only(bottom: keyboard),
+          child: SizedBox(
+            height: sheetH,
+            child: Column(
+              children: [
+                const SizedBox(height: 8),
+                Container(
+                  width: 40,
+                  height: 4,
+                  decoration: BoxDecoration(
+                    color: Colors.grey.shade300,
+                    borderRadius: BorderRadius.circular(999),
+                  ),
                 ),
-              ),
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(14, 10, 4, 6),
+                  child: Row(
+                    children: [
+                      Container(
+                        width: 32,
+                        height: 32,
+                        decoration: BoxDecoration(
+                          color: brand.withValues(alpha: 0.1),
+                          borderRadius: BorderRadius.circular(10),
+                        ),
+                        child: const Icon(Icons.sticky_note_2_outlined, color: brand, size: 18),
+                      ),
+                      const SizedBox(width: 10),
+                      const Expanded(
+                        child: Text(
+                          'Referee Note',
+                          style: TextStyle(
+                            fontSize: 16,
+                            fontWeight: FontWeight.w800,
+                            color: Color(0xFF0F172A),
+                          ),
+                        ),
+                      ),
+                      IconButton(
+                        onPressed: () => Navigator.of(sheetContext).pop(false),
+                        icon: const Icon(Icons.close_rounded),
+                      ),
+                    ],
+                  ),
+                ),
+                const Divider(height: 1),
+                Expanded(
+                  child: Padding(
+                    padding: const EdgeInsets.fromLTRB(14, 10, 14, 6),
+                    child: TextField(
+                      controller: ctrl,
+                      focusNode: focusNode,
+                      autofocus: true,
+                      maxLines: null,
+                      expands: true,
+                      textAlignVertical: TextAlignVertical.top,
+                      keyboardType: TextInputType.multiline,
+                      textInputAction: TextInputAction.newline,
+                      decoration: InputDecoration(
+                        hintText: 'Describe the dispute or note here…',
+                        filled: true,
+                        fillColor: const Color(0xFFF8FAFC),
+                        contentPadding: const EdgeInsets.all(12),
+                        border: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(12),
+                          borderSide: const BorderSide(color: Color(0xFFE2E8F0)),
+                        ),
+                        enabledBorder: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(12),
+                          borderSide: const BorderSide(color: Color(0xFFE2E8F0)),
+                        ),
+                        focusedBorder: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(12),
+                          borderSide: const BorderSide(color: brand, width: 1.5),
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+                SafeArea(
+                  top: false,
+                  child: Padding(
+                    padding: const EdgeInsets.fromLTRB(14, 0, 14, 12),
+                    child: Row(
+                      children: [
+                        Expanded(
+                          child: OutlinedButton(
+                            onPressed: () => Navigator.of(sheetContext).pop(false),
+                            style: OutlinedButton.styleFrom(
+                              foregroundColor: const Color(0xFF475569),
+                              side: const BorderSide(color: Color(0xFFCBD5E1)),
+                              padding: const EdgeInsets.symmetric(vertical: 12),
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(12),
+                              ),
+                            ),
+                            child: const Text('Cancel', style: TextStyle(fontWeight: FontWeight.w700)),
+                          ),
+                        ),
+                        const SizedBox(width: 10),
+                        Expanded(
+                          flex: 2,
+                          child: FilledButton(
+                            onPressed: () => Navigator.of(sheetContext).pop(true),
+                            style: FilledButton.styleFrom(
+                              backgroundColor: brand,
+                              padding: const EdgeInsets.symmetric(vertical: 12),
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(12),
+                              ),
+                            ),
+                            child: const Text('Save Note', style: TextStyle(fontWeight: FontWeight.w800)),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ],
             ),
           ),
-          actions: [
-            TextButton(onPressed: () => Navigator.of(dialogContext).pop(false), child: const Text('Cancel')),
-            ElevatedButton(onPressed: () => Navigator.of(dialogContext).pop(true), child: const Text('Save')),
-          ],
-        ),
-      ),
+        );
+      },
     );
+    } finally {
+      await SystemChrome.setPreferredOrientations([
+        DeviceOrientation.landscapeLeft,
+        DeviceOrientation.landscapeRight,
+      ]);
+      focusNode.dispose();
+    }
     if (ok == true) {
       final note = ctrl.text.trim();
+      ctrl.dispose();
       if (note.isEmpty) return;
       setState(() {
         _refereeNote = note;
@@ -402,6 +541,8 @@ class _RefereeDashboardScreenState extends State<RefereeDashboardScreen> {
       try {
         await app.updateSelectedMatchFields({'refereeNote': _refereeNote});
       } catch (_) {}
+    } else {
+      ctrl.dispose();
     }
   }
 
@@ -1375,6 +1516,7 @@ class _RefereeDashboardScreenState extends State<RefereeDashboardScreen> {
   }
 
   void _showSubmitDialog(TournamentMatch g) {
+    const brand = Color(0xFF0F766E);
     final app = context.read<AppState>();
     final category = app.selectedTournament?.categoryNames[g.categoryId] ?? '';
     final winnerName = _score1 > _score2
@@ -1383,188 +1525,565 @@ class _RefereeDashboardScreenState extends State<RefereeDashboardScreen> {
     showDialog(
       context: context,
       barrierDismissible: false,
-      builder: (_) {
+      builder: (dialogContext) {
         Uint8List? sigBytes;
         bool isSubmitting = false;
+        String? submitError;
         return StatefulBuilder(builder: (context, setModalState) {
           final hasSignature = sigBytes != null && sigBytes!.isNotEmpty;
-          return Dialog(
-          insetPadding: EdgeInsets.zero,
-          backgroundColor: Colors.transparent,
-          child: LayoutBuilder(
-            builder: (context, constraints) {
-              return SizedBox(
-                width: constraints.maxWidth,
-                height: constraints.maxHeight,
-                child: Container(
-                  color: Colors.white,
-                  child: Stack(
-                    children: [
-                      Column(
+          return PopScope(
+            canPop: !isSubmitting,
+            child: Dialog(
+              insetPadding: EdgeInsets.zero,
+              backgroundColor: Colors.transparent,
+              child: LayoutBuilder(
+                builder: (context, constraints) {
+                  return SizedBox(
+                    width: constraints.maxWidth,
+                    height: constraints.maxHeight,
+                    child: Material(
+                      color: const Color(0xFFF4F7F6),
+                      child: Stack(
                         children: [
-                      Padding(
-                        padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
+                        Column(
                           children: [
-                            const Text(
-                              'Submit Match',
-                              style: TextStyle(
-                                fontSize: 20,
-                                fontWeight: FontWeight.bold,
-                              ),
-                            ),
-                            if (category.isNotEmpty)
-                              Padding(
-                                padding: const EdgeInsets.only(top: 4),
-                                child: Text(
-                                  category,
-                                  style: const TextStyle(
-                                    fontSize: 14,
-                                    color: Colors.grey,
-                                  ),
+                            Container(
+                              width: double.infinity,
+                              color: Colors.white,
+                              padding: const EdgeInsets.fromLTRB(20, 16, 20, 14),
+                              child: SafeArea(
+                                bottom: false,
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Row(
+                                      children: [
+                                        Container(
+                                          width: 40,
+                                          height: 40,
+                                          decoration: BoxDecoration(
+                                            color: brand.withValues(alpha: 0.1),
+                                            borderRadius: BorderRadius.circular(12),
+                                          ),
+                                          child: const Icon(
+                                            Icons.fact_check_outlined,
+                                            color: brand,
+                                            size: 22,
+                                          ),
+                                        ),
+                                        const SizedBox(width: 12),
+                                        const Expanded(
+                                          child: Column(
+                                            crossAxisAlignment: CrossAxisAlignment.start,
+                                            children: [
+                                              Text(
+                                                'Submit Match',
+                                                style: TextStyle(
+                                                  fontSize: 20,
+                                                  fontWeight: FontWeight.w800,
+                                                  color: Color(0xFF0F172A),
+                                                ),
+                                              ),
+                                              Text(
+                                                'Confirm result and capture signature',
+                                                style: TextStyle(
+                                                  fontSize: 12,
+                                                  fontWeight: FontWeight.w500,
+                                                  color: Color(0xFF64748B),
+                                                ),
+                                              ),
+                                            ],
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                    if (category.isNotEmpty) ...[
+                                      const SizedBox(height: 12),
+                                      Text(
+                                        category,
+                                        style: const TextStyle(
+                                          fontSize: 13,
+                                          fontWeight: FontWeight.w600,
+                                          color: Color(0xFF475569),
+                                        ),
+                                      ),
+                                    ],
+                                    const SizedBox(height: 10),
+                                    _ScoringFormatChip(
+                                      label: _scoringFormatLabel(g),
+                                      isRally: g.isRallyScoring,
+                                    ),
+                                  ],
                                 ),
                               ),
-                            const SizedBox(height: 8),
-                            _ScoringFormatChip(
-                              label: _scoringFormatLabel(g),
-                              isRally: g.isRallyScoring,
                             ),
-                          ],
-                        ),
-                      ),
-                      const Divider(height: 1),
-                      Expanded(
-                        child: SingleChildScrollView(
-                          padding: const EdgeInsets.all(16),
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.stretch,
-                            children: [
-                              Text('${g.player1} vs ${g.player2}'),
-                              const SizedBox(height: 8),
-                              Text('Score: $_score1 - $_score2'),
-                              if (winnerName.isNotEmpty) ...[
-                                const SizedBox(height: 8),
-                                Text.rich(
-                                  TextSpan(
-                                    text: 'Winner: ',
-                                    style: const TextStyle(),
+                            if (submitError != null) ...[
+                              Padding(
+                                padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
+                                child: Container(
+                                  width: double.infinity,
+                                  padding: const EdgeInsets.symmetric(
+                                    horizontal: 12,
+                                    vertical: 10,
+                                  ),
+                                  decoration: BoxDecoration(
+                                    color: const Color(0xFFFEF2F2),
+                                    borderRadius: BorderRadius.circular(12),
+                                    border: Border.all(color: const Color(0xFFFECACA)),
+                                  ),
+                                  child: Row(
+                                    crossAxisAlignment: CrossAxisAlignment.start,
                                     children: [
-                                      TextSpan(
-                                        text: winnerName,
-                                        style: const TextStyle(fontWeight: FontWeight.bold),
+                                      const Icon(
+                                        Icons.error_outline_rounded,
+                                        color: Color(0xFFDC2626),
+                                        size: 20,
+                                      ),
+                                      const SizedBox(width: 8),
+                                      Expanded(
+                                        child: Text(
+                                          submitError!,
+                                          style: const TextStyle(
+                                            fontSize: 13,
+                                            fontWeight: FontWeight.w600,
+                                            color: Color(0xFF991B1B),
+                                            height: 1.3,
+                                          ),
+                                        ),
+                                      ),
+                                      IconButton(
+                                        visualDensity: VisualDensity.compact,
+                                        padding: EdgeInsets.zero,
+                                        constraints: const BoxConstraints(
+                                          minWidth: 28,
+                                          minHeight: 28,
+                                        ),
+                                        onPressed: isSubmitting
+                                            ? null
+                                            : () => setModalState(() => submitError = null),
+                                        icon: const Icon(
+                                          Icons.close_rounded,
+                                          size: 18,
+                                          color: Color(0xFF991B1B),
+                                        ),
                                       ),
                                     ],
                                   ),
                                 ),
-                              ],
-                              const SizedBox(height: 16),
-                              Container(height: 1, color: Colors.grey, margin: const EdgeInsets.only(bottom: 8)),
-                              Row(
-                                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                                children: [
-                                  const Text('Signature', style: TextStyle(fontSize: 12, color: Colors.grey)),
-                                  TextButton.icon(
-                                    onPressed: () async {
-                                      final b = await _openSignatureDialog();
-                                      if (b != null && b.isNotEmpty) {
-                                        setModalState(() {
-                                          sigBytes = b;
-                                        });
-                                      }
-                                    },
-                                    icon: const Icon(Icons.draw),
-                                    label: Text(sigBytes == null ? 'Add Signature' : 'Retake Signature'),
-                                  ),
-                                ],
-                              ),
-                              const SizedBox(height: 8),
-                              Container(
-                                height: 220,
-                                decoration: BoxDecoration(
-                                  border: Border.all(color: Colors.black12),
-                                  borderRadius: BorderRadius.circular(6),
-                                  color: Colors.white,
-                                ),
-                                alignment: Alignment.center,
-                                child: sigBytes != null
-                                    ? Image.memory(sigBytes!, fit: BoxFit.contain, width: double.infinity, height: double.infinity)
-                                    : const Text('No signature captured'),
                               ),
                             ],
-                          ),
-                        ),
-                      ),
-                      Padding(
-                        padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
-                        child: Row(
-                          mainAxisAlignment: MainAxisAlignment.end,
-                          children: [
-                            TextButton(
-                              onPressed: isSubmitting ? null : () {
-                                Navigator.of(context).pop();
-                              },
-                              child: const Text('Cancel'),
-                            ),
-                            const SizedBox(width: 8),
-                            ElevatedButton(
-                              onPressed: (isSubmitting || !hasSignature) ? null : () async {
-                                bool includeNote = true;
-                                if (_refereeNote.trim().isNotEmpty) {
-                                  final decision = await showDialog<bool>(
-                                    context: context,
-                                    builder: (_) => AlertDialog(
-                                      title: const Text('Attach Referee Note?'),
-                                      content: const Text('Send the referee note to the website so it appears in the completed game summary?'),
-                                      actions: [
-                                        TextButton(onPressed: () => Navigator.of(context).pop(false), child: const Text('Skip')),
-                                        ElevatedButton(onPressed: () => Navigator.of(context).pop(true), child: const Text('Send Note')),
-                                      ],
+                            Expanded(
+                              child: SingleChildScrollView(
+                                padding: const EdgeInsets.fromLTRB(16, 16, 16, 12),
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                                  children: [
+                                    Container(
+                                      padding: const EdgeInsets.fromLTRB(14, 12, 14, 12),
+                                      decoration: BoxDecoration(
+                                        color: Colors.white,
+                                        borderRadius: BorderRadius.circular(16),
+                                        border: Border.all(
+                                          color: brand.withValues(alpha: 0.12),
+                                        ),
+                                        boxShadow: [
+                                          BoxShadow(
+                                            color: Colors.black.withValues(alpha: 0.04),
+                                            blurRadius: 10,
+                                            offset: const Offset(0, 3),
+                                          ),
+                                        ],
+                                      ),
+                                      child: Column(
+                                        children: [
+                                          Text.rich(
+                                            TextSpan(
+                                              style: const TextStyle(
+                                                fontSize: 14,
+                                                fontWeight: FontWeight.w600,
+                                                color: Color(0xFF0F172A),
+                                                height: 1.3,
+                                              ),
+                                              children: [
+                                                TextSpan(text: g.player1),
+                                                const TextSpan(
+                                                  text: '  vs  ',
+                                                  style: TextStyle(
+                                                    color: Color(0xFFDC2626),
+                                                    fontWeight: FontWeight.w800,
+                                                  ),
+                                                ),
+                                                TextSpan(text: g.player2),
+                                              ],
+                                            ),
+                                            textAlign: TextAlign.center,
+                                          ),
+                                          const SizedBox(height: 10),
+                                          Row(
+                                            children: [
+                                              Expanded(
+                                                child: Container(
+                                                  padding: const EdgeInsets.symmetric(
+                                                    vertical: 10,
+                                                    horizontal: 10,
+                                                  ),
+                                                  decoration: BoxDecoration(
+                                                    color: const Color(0xFFF0FDFA),
+                                                    borderRadius: BorderRadius.circular(12),
+                                                  ),
+                                                  child: Column(
+                                                    children: [
+                                                      const Text(
+                                                        'SCORE',
+                                                        style: TextStyle(
+                                                          fontSize: 10,
+                                                          fontWeight: FontWeight.w700,
+                                                          letterSpacing: 0.5,
+                                                          color: Color(0xFF64748B),
+                                                        ),
+                                                      ),
+                                                      const SizedBox(height: 2),
+                                                      Text(
+                                                        '$_score1 – $_score2',
+                                                        style: const TextStyle(
+                                                          fontSize: 22,
+                                                          fontWeight: FontWeight.w800,
+                                                          color: Color(0xFF0F172A),
+                                                        ),
+                                                      ),
+                                                    ],
+                                                  ),
+                                                ),
+                                              ),
+                                              if (winnerName.isNotEmpty) ...[
+                                                const SizedBox(width: 8),
+                                                Expanded(
+                                                  flex: 2,
+                                                  child: Container(
+                                                    padding: const EdgeInsets.symmetric(
+                                                      horizontal: 10,
+                                                      vertical: 10,
+                                                    ),
+                                                    decoration: BoxDecoration(
+                                                      color: const Color(0xFFECFDF5),
+                                                      borderRadius: BorderRadius.circular(12),
+                                                      border: Border.all(
+                                                        color: brand.withValues(alpha: 0.18),
+                                                      ),
+                                                    ),
+                                                    child: Row(
+                                                      children: [
+                                                        const Icon(
+                                                          Icons.emoji_events_rounded,
+                                                          color: brand,
+                                                          size: 18,
+                                                        ),
+                                                        const SizedBox(width: 8),
+                                                        Expanded(
+                                                          child: Column(
+                                                            crossAxisAlignment: CrossAxisAlignment.start,
+                                                            children: [
+                                                              const Text(
+                                                                'Winner',
+                                                                style: TextStyle(
+                                                                  fontSize: 10,
+                                                                  fontWeight: FontWeight.w700,
+                                                                  color: Color(0xFF64748B),
+                                                                ),
+                                                              ),
+                                                              Text(
+                                                                winnerName,
+                                                                maxLines: 2,
+                                                                overflow: TextOverflow.ellipsis,
+                                                                style: const TextStyle(
+                                                                  fontSize: 13,
+                                                                  fontWeight: FontWeight.w800,
+                                                                  color: brand,
+                                                                  height: 1.2,
+                                                                ),
+                                                              ),
+                                                            ],
+                                                          ),
+                                                        ),
+                                                      ],
+                                                    ),
+                                                  ),
+                                                ),
+                                              ],
+                                            ],
+                                          ),
+                                        ],
+                                      ),
                                     ),
-                                  );
-                                  includeNote = decision ?? true;
-                                }
-                                setModalState(() {
-                                  isSubmitting = true;
-                                });
-                                await Future<void>.delayed(const Duration(milliseconds: 16));
-                                final result = await _finishSubmit(g, sigBytes, includeNote: includeNote);
-                                if (!mounted) return;
-                                if (result != null) {
-                                  Navigator.of(context).pop();
-                                  Navigator.of(context).pop(result);
-                                } else {
-                                  setModalState(() {
-                                    isSubmitting = false;
-                                  });
-                                }
-                              },
-                              child: const Text('Finish'),
+                                    const SizedBox(height: 12),
+                                    Container(
+                                      padding: const EdgeInsets.all(14),
+                                      decoration: BoxDecoration(
+                                        color: Colors.white,
+                                        borderRadius: BorderRadius.circular(16),
+                                        border: Border.all(
+                                          color: brand.withValues(alpha: 0.12),
+                                        ),
+                                      ),
+                                      child: Column(
+                                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                                        children: [
+                                          Row(
+                                            children: [
+                                              const Icon(Icons.draw_outlined, size: 18, color: brand),
+                                              const SizedBox(width: 8),
+                                              const Expanded(
+                                                child: Text(
+                                                  'Referee Signature',
+                                                  style: TextStyle(
+                                                    fontSize: 14,
+                                                    fontWeight: FontWeight.w800,
+                                                    color: Color(0xFF0F172A),
+                                                  ),
+                                                ),
+                                              ),
+                                              TextButton.icon(
+                                                onPressed: isSubmitting
+                                                    ? null
+                                                    : () async {
+                                                        final b = await _openSignatureDialog();
+                                                        if (b != null && b.isNotEmpty) {
+                                                          setModalState(() {
+                                                            sigBytes = b;
+                                                          });
+                                                        }
+                                                      },
+                                                icon: Icon(
+                                                  hasSignature ? Icons.refresh_rounded : Icons.edit_outlined,
+                                                  size: 18,
+                                                  color: brand,
+                                                ),
+                                                label: Text(
+                                                  hasSignature ? 'Retake' : 'Add',
+                                                  style: const TextStyle(
+                                                    color: brand,
+                                                    fontWeight: FontWeight.w700,
+                                                  ),
+                                                ),
+                                                style: TextButton.styleFrom(
+                                                  foregroundColor: brand,
+                                                  padding: const EdgeInsets.symmetric(horizontal: 8),
+                                                ),
+                                              ),
+                                            ],
+                                          ),
+                                          const SizedBox(height: 4),
+                                          Text(
+                                            hasSignature
+                                                ? 'Signature captured. You can retake if needed.'
+                                                : 'A signature is required before finishing.',
+                                            style: TextStyle(
+                                              fontSize: 12,
+                                              color: hasSignature
+                                                  ? const Color(0xFF059669)
+                                                  : const Color(0xFF94A3B8),
+                                              fontWeight: FontWeight.w500,
+                                            ),
+                                          ),
+                                          const SizedBox(height: 10),
+                                          InkWell(
+                                            onTap: isSubmitting
+                                                ? null
+                                                : () async {
+                                                    final b = await _openSignatureDialog();
+                                                    if (b != null && b.isNotEmpty) {
+                                                      setModalState(() {
+                                                        sigBytes = b;
+                                                      });
+                                                    }
+                                                  },
+                                            borderRadius: BorderRadius.circular(14),
+                                            child: Container(
+                                              height: 120,
+                                              decoration: BoxDecoration(
+                                                color: hasSignature
+                                                    ? Colors.white
+                                                    : const Color(0xFFF8FAFC),
+                                                borderRadius: BorderRadius.circular(14),
+                                                border: Border.all(
+                                                  color: hasSignature
+                                                      ? brand.withValues(alpha: 0.35)
+                                                      : const Color(0xFFE2E8F0),
+                                                  width: hasSignature ? 1.5 : 1,
+                                                ),
+                                              ),
+                                              alignment: Alignment.center,
+                                              child: hasSignature
+                                                  ? ClipRRect(
+                                                      borderRadius: BorderRadius.circular(13),
+                                                      child: Image.memory(
+                                                        sigBytes!,
+                                                        fit: BoxFit.contain,
+                                                        width: double.infinity,
+                                                        height: double.infinity,
+                                                      ),
+                                                    )
+                                                  : const Column(
+                                                      mainAxisAlignment: MainAxisAlignment.center,
+                                                      children: [
+                                                        Icon(
+                                                          Icons.gesture_rounded,
+                                                          size: 36,
+                                                          color: Color(0xFFCBD5E1),
+                                                        ),
+                                                        SizedBox(height: 8),
+                                                        Text(
+                                                          'Tap to sign',
+                                                          style: TextStyle(
+                                                            fontSize: 14,
+                                                            fontWeight: FontWeight.w600,
+                                                            color: Color(0xFF94A3B8),
+                                                          ),
+                                                        ),
+                                                      ],
+                                                    ),
+                                            ),
+                                          ),
+                                        ],
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            ),
+                            Container(
+                              color: Colors.white,
+                              padding: const EdgeInsets.fromLTRB(16, 12, 16, 16),
+                              child: SafeArea(
+                                top: false,
+                                child: Row(
+                                  children: [
+                                    Expanded(
+                                      child: OutlinedButton(
+                                        onPressed: isSubmitting
+                                            ? null
+                                            : () => Navigator.of(context).pop(),
+                                        style: OutlinedButton.styleFrom(
+                                          foregroundColor: const Color(0xFF475569),
+                                          side: const BorderSide(color: Color(0xFFCBD5E1)),
+                                          padding: const EdgeInsets.symmetric(vertical: 14),
+                                          shape: RoundedRectangleBorder(
+                                            borderRadius: BorderRadius.circular(12),
+                                          ),
+                                        ),
+                                        child: const Text(
+                                          'Cancel',
+                                          style: TextStyle(fontWeight: FontWeight.w700),
+                                        ),
+                                      ),
+                                    ),
+                                    const SizedBox(width: 10),
+                                    Expanded(
+                                      flex: 2,
+                                      child: FilledButton(
+                                        onPressed: (isSubmitting || !hasSignature)
+                                            ? null
+                                            : () async {
+                                                bool includeNote = true;
+                                                if (_refereeNote.trim().isNotEmpty) {
+                                                  final decision = await showDialog<bool>(
+                                                    context: context,
+                                                    builder: (noteContext) => AlertDialog(
+                                                      title: const Text('Attach Referee Note?'),
+                                                      content: const Text(
+                                                        'Send the referee note to the website so it appears in the completed game summary?',
+                                                      ),
+                                                      actions: [
+                                                        TextButton(
+                                                          onPressed: () => Navigator.of(noteContext).pop(false),
+                                                          child: const Text('Skip'),
+                                                        ),
+                                                        FilledButton(
+                                                          onPressed: () => Navigator.of(noteContext).pop(true),
+                                                          style: FilledButton.styleFrom(
+                                                            backgroundColor: brand,
+                                                          ),
+                                                          child: const Text('Send Note'),
+                                                        ),
+                                                      ],
+                                                    ),
+                                                  );
+                                                  includeNote = decision ?? true;
+                                                }
+                                                setModalState(() {
+                                                  isSubmitting = true;
+                                                  submitError = null;
+                                                });
+                                                // Let the loader paint before the network call.
+                                                await Future<void>.delayed(
+                                                  const Duration(milliseconds: 50),
+                                                );
+                                                final result = await _finishSubmit(
+                                                  g,
+                                                  sigBytes,
+                                                  includeNote: includeNote,
+                                                );
+                                                if (!mounted) return;
+                                                if (result != null) {
+                                                  // Keep loader visible until we leave this screen.
+                                                  if (dialogContext.mounted) {
+                                                    Navigator.of(dialogContext).pop();
+                                                  }
+                                                  if (mounted) {
+                                                    Navigator.of(this.context).pop(result);
+                                                  }
+                                                } else {
+                                                  setModalState(() {
+                                                    isSubmitting = false;
+                                                    submitError =
+                                                        'Failed to submit match. Check your connection and try again.';
+                                                  });
+                                                }
+                                              },
+                                        style: FilledButton.styleFrom(
+                                          backgroundColor: brand,
+                                          disabledBackgroundColor: brand.withValues(alpha: 0.35),
+                                          foregroundColor: Colors.white,
+                                          padding: const EdgeInsets.symmetric(vertical: 14),
+                                          shape: RoundedRectangleBorder(
+                                            borderRadius: BorderRadius.circular(12),
+                                          ),
+                                        ),
+                                        child: Text(
+                                          isSubmitting
+                                              ? 'Submitting…'
+                                              : (hasSignature ? 'Finish & Submit' : 'Signature Required'),
+                                          style: const TextStyle(fontWeight: FontWeight.w800),
+                                        ),
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
                             ),
                           ],
                         ),
-                      ),
-                    ],
-                      ),
-                      if (isSubmitting)
-                        Positioned.fill(
-                          child: const _SubmitLoadingOverlay(
-                            message: 'Submitting match, please wait...',
+                        if (isSubmitting)
+                          const Positioned.fill(
+                            child: _SubmitLoadingOverlay(
+                              message: 'Submitting match, please wait...',
+                            ),
                           ),
-                        ),
-                    ],
+                      ],
+                    ),
                   ),
-                ),
-              );
-            },
-          ),
-        );
+                );
+              },
+            ),
+            ),
+          );
         });
       },
     );
   }
 
   Future<Uint8List?> _openSignatureDialog() async {
+    const brand = Color(0xFF0F766E);
     final key = GlobalKey<_SignaturePadState>();
     final r = await showDialog<Uint8List?>(
       context: context,
@@ -1572,7 +2091,7 @@ class _RefereeDashboardScreenState extends State<RefereeDashboardScreen> {
       builder: (_) {
         return Dialog(
           insetPadding: EdgeInsets.zero,
-          backgroundColor: Colors.white,
+          backgroundColor: const Color(0xFFF4F7F6),
           child: LayoutBuilder(builder: (context, c) {
             final maxH = MediaQuery.of(context).size.height;
             return SizedBox(
@@ -1580,62 +2099,138 @@ class _RefereeDashboardScreenState extends State<RefereeDashboardScreen> {
               height: maxH,
               child: Column(
                 children: [
-                  AppBar(
-                    title: const Text('Signature'),
-                    automaticallyImplyLeading: false,
-                    actions: [
-                      TextButton(onPressed: () => Navigator.of(context).pop(), child: const Text('Cancel', style: TextStyle(color: Colors.white))),
-                    ],
-                  ),
-                  Expanded(
-                    child: Padding(
-                      padding: const EdgeInsets.all(12.0),
-                      child: Container(
-                        decoration: BoxDecoration(
-                          border: Border.all(color: Colors.black26),
-                          borderRadius: BorderRadius.circular(8),
-                          color: Colors.white,
+                  Container(
+                    color: Colors.white,
+                    child: SafeArea(
+                      bottom: false,
+                      child: Padding(
+                        padding: const EdgeInsets.fromLTRB(8, 4, 8, 8),
+                        child: Row(
+                          children: [
+                            IconButton(
+                              onPressed: () => Navigator.of(context).pop(),
+                              icon: const Icon(Icons.close_rounded),
+                              color: const Color(0xFF475569),
+                            ),
+                            const Expanded(
+                              child: Column(
+                                children: [
+                                  Text(
+                                    'Draw Signature',
+                                    style: TextStyle(
+                                      fontSize: 17,
+                                      fontWeight: FontWeight.w800,
+                                      color: Color(0xFF0F172A),
+                                    ),
+                                  ),
+                                  Text(
+                                    'Sign inside the pad below',
+                                    style: TextStyle(
+                                      fontSize: 12,
+                                      color: Color(0xFF64748B),
+                                      fontWeight: FontWeight.w500,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                            const SizedBox(width: 48),
+                          ],
                         ),
-                        child: SignaturePad(key: key),
                       ),
                     ),
                   ),
-                  Padding(
-                    padding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
-                    child: Row(
-                      mainAxisAlignment: MainAxisAlignment.end,
-                      children: [
-                        TextButton(
-                          onPressed: () => key.currentState?.clear(),
-                          child: const Text('Clear'),
+                  Expanded(
+                    child: Padding(
+                      padding: const EdgeInsets.all(16),
+                      child: Container(
+                        decoration: BoxDecoration(
+                          border: Border.all(color: brand.withValues(alpha: 0.25), width: 1.5),
+                          borderRadius: BorderRadius.circular(16),
+                          color: Colors.white,
+                          boxShadow: [
+                            BoxShadow(
+                              color: Colors.black.withValues(alpha: 0.04),
+                              blurRadius: 12,
+                              offset: const Offset(0, 4),
+                            ),
+                          ],
                         ),
-                        const SizedBox(width: 8),
-                        ElevatedButton(
-                          onPressed: () async {
-                            final state = key.currentState;
-                            if (state == null || !state.hasInk) {
-                              ScaffoldMessenger.of(context).showSnackBar(
-                                const SnackBar(
-                                  content: Text('Please draw your signature before saving.'),
-                                ),
-                              );
-                              return;
-                            }
-                            final b = await state.export();
-                            if (!context.mounted) return;
-                            if (b == null || b.isEmpty) {
-                              ScaffoldMessenger.of(context).showSnackBar(
-                                const SnackBar(
-                                  content: Text('Could not capture signature. Please try again.'),
-                                ),
-                              );
-                              return;
-                            }
-                            Navigator.of(context).pop(b);
-                          },
-                          child: const Text('Done'),
+                        child: ClipRRect(
+                          borderRadius: BorderRadius.circular(15),
+                          child: SignaturePad(key: key),
                         ),
-                      ],
+                      ),
+                    ),
+                  ),
+                  Container(
+                    color: Colors.white,
+                    padding: const EdgeInsets.fromLTRB(16, 12, 16, 16),
+                    child: SafeArea(
+                      top: false,
+                      child: Row(
+                        children: [
+                          Expanded(
+                            child: OutlinedButton.icon(
+                              onPressed: () => key.currentState?.clear(),
+                              icon: const Icon(Icons.refresh_rounded, size: 18),
+                              label: const Text(
+                                'Clear',
+                                style: TextStyle(fontWeight: FontWeight.w700),
+                              ),
+                              style: OutlinedButton.styleFrom(
+                                foregroundColor: const Color(0xFF475569),
+                                side: const BorderSide(color: Color(0xFFCBD5E1)),
+                                padding: const EdgeInsets.symmetric(vertical: 14),
+                                shape: RoundedRectangleBorder(
+                                  borderRadius: BorderRadius.circular(12),
+                                ),
+                              ),
+                            ),
+                          ),
+                          const SizedBox(width: 10),
+                          Expanded(
+                            flex: 2,
+                            child: FilledButton.icon(
+                              onPressed: () async {
+                                final state = key.currentState;
+                                if (state == null || !state.hasInk) {
+                                  ScaffoldMessenger.of(context).showSnackBar(
+                                    const SnackBar(
+                                      content: Text('Please draw your signature before saving.'),
+                                    ),
+                                  );
+                                  return;
+                                }
+                                final b = await state.export();
+                                if (!context.mounted) return;
+                                if (b == null || b.isEmpty) {
+                                  ScaffoldMessenger.of(context).showSnackBar(
+                                    const SnackBar(
+                                      content: Text('Could not capture signature. Please try again.'),
+                                    ),
+                                  );
+                                  return;
+                                }
+                                Navigator.of(context).pop(b);
+                              },
+                              icon: const Icon(Icons.check_rounded, size: 18),
+                              label: const Text(
+                                'Save Signature',
+                                style: TextStyle(fontWeight: FontWeight.w800),
+                              ),
+                              style: FilledButton.styleFrom(
+                                backgroundColor: brand,
+                                foregroundColor: Colors.white,
+                                padding: const EdgeInsets.symmetric(vertical: 14),
+                                shape: RoundedRectangleBorder(
+                                  borderRadius: BorderRadius.circular(12),
+                                ),
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
                     ),
                   ),
                 ],
@@ -1749,17 +2344,10 @@ class _RefereeDashboardScreenState extends State<RefereeDashboardScreen> {
         setState(() {
           _gameStarted = false;
         });
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Match submitted')),
-        );
       }
       return matchCompleted ? 'completed' : 'ongoing';
     } catch (_) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Failed to submit match')),
-        );
-      }
+      // Caller (Submit Match dialog) shows the failure inline.
       return null;
     }
   }
@@ -2172,62 +2760,76 @@ class _SubmitLoadingOverlayState extends State<_SubmitLoadingOverlay>
 
   @override
   Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    return Stack(
-      children: [
-        Positioned.fill(
-          child: BackdropFilter(
-            filter: ui.ImageFilter.blur(sigmaX: 6, sigmaY: 6),
-            child: Container(
-              color: Colors.black.withValues(alpha: 0.20),
+    const brand = Color(0xFF0F766E);
+    return AbsorbPointer(
+      child: Stack(
+        children: [
+          Positioned.fill(
+            child: BackdropFilter(
+              filter: ui.ImageFilter.blur(sigmaX: 8, sigmaY: 8),
+              child: Container(
+                color: Colors.black.withValues(alpha: 0.35),
+              ),
             ),
           ),
-        ),
-        Center(
-          child: AnimatedBuilder(
-            animation: _controller,
-            builder: (context, _) {
-              return Transform.scale(
-                scale: _scale.value,
-                child: Opacity(
-                  opacity: _fade.value,
-                  child: Container(
-                    constraints: const BoxConstraints(maxWidth: 360),
-                    padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 16),
-                    decoration: BoxDecoration(
-                      color: Colors.white,
-                      borderRadius: BorderRadius.circular(16),
-                      boxShadow: const [
-                        BoxShadow(
-                          color: Colors.black26,
-                          blurRadius: 18,
-                          offset: Offset(0, 10),
-                        ),
-                      ],
-                    ),
-                    child: Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        const _SpinnerRing(size: 28),
-                        const SizedBox(width: 14),
-                        Flexible(
-                          child: Text(
-                            widget.message,
-                            maxLines: 2,
-                            overflow: TextOverflow.ellipsis,
-                            style: theme.textTheme.titleSmall
-                                ?.copyWith(fontWeight: FontWeight.w800),
+          Center(
+            child: AnimatedBuilder(
+              animation: _controller,
+              builder: (context, _) {
+                return Transform.scale(
+                  scale: _scale.value,
+                  child: Opacity(
+                    opacity: _fade.value,
+                    child: Container(
+                      constraints: const BoxConstraints(maxWidth: 340),
+                      margin: const EdgeInsets.symmetric(horizontal: 24),
+                      padding: const EdgeInsets.symmetric(horizontal: 22, vertical: 22),
+                      decoration: BoxDecoration(
+                        color: Colors.white,
+                        borderRadius: BorderRadius.circular(18),
+                        boxShadow: const [
+                          BoxShadow(
+                            color: Colors.black26,
+                            blurRadius: 18,
+                            offset: Offset(0, 10),
                           ),
-                        ),
-                      ],
+                        ],
+                      ),
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          const _SpinnerRing(size: 36),
+                          const SizedBox(height: 16),
+                          Text(
+                            widget.message,
+                            textAlign: TextAlign.center,
+                            style: const TextStyle(
+                              fontSize: 15,
+                              fontWeight: FontWeight.w800,
+                              color: Color(0xFF0F172A),
+                              height: 1.3,
+                            ),
+                          ),
+                          const SizedBox(height: 6),
+                          Text(
+                            'Do not leave this screen',
+                            textAlign: TextAlign.center,
+                            style: TextStyle(
+                              fontSize: 12,
+                              fontWeight: FontWeight.w600,
+                              color: brand.withValues(alpha: 0.85),
+                            ),
+                          ),
+                        ],
+                      ),
                     ),
                   ),
-                ),
-              );
-            },
+                );
+              },
+            ),
           ),
-        ),
-      ],
+        ],
+      ),
     );
   }
 }

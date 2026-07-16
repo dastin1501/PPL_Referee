@@ -91,6 +91,13 @@ class _CourtGamesScreenState extends State<CourtGamesScreen>
     final app = context.read<AppState>();
     await app.refreshSelectedTournament();
     if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          result == 'completed' ? 'Match submitted' : 'Game submitted',
+        ),
+      ),
+    );
     if (result == 'completed') {
       _tabController.animateTo(1);
     }

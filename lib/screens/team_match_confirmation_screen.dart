@@ -24,6 +24,8 @@ class _TeamMatchConfirmationScreenState extends State<TeamMatchConfirmationScree
   String? _selectedTeam1Player2;
   String? _selectedTeam2Player1;
   String? _selectedTeam2Player2;
+  /// When true, skip restoring portrait in dispose (handing off to dashboard).
+  bool _retainLandscapeOnExit = false;
 
   String _slotLabelForTeam1() {
     return widget.match.player1Name.trim().isNotEmpty
@@ -324,6 +326,9 @@ class _TeamMatchConfirmationScreenState extends State<TeamMatchConfirmationScree
           : widget.match.game3Team2Player2,
     );
     app.openGameWithNumber(updatedMatch, widget.gameNo);
+    // Keep landscape while handing off to the scoring dashboard.
+    // (dispose would otherwise flip back to portrait and win the race.)
+    _retainLandscapeOnExit = true;
     Navigator.of(context).pushReplacementNamed('/dashboard').then((result) {
       if (mounted && result == 'completed') {
         Navigator.of(context).pop('completed');
@@ -347,10 +352,12 @@ class _TeamMatchConfirmationScreenState extends State<TeamMatchConfirmationScree
 
   @override
   void dispose() {
-    SystemChrome.setPreferredOrientations([
-      DeviceOrientation.portraitUp,
-      DeviceOrientation.portraitDown,
-    ]);
+    if (!_retainLandscapeOnExit) {
+      SystemChrome.setPreferredOrientations([
+        DeviceOrientation.portraitUp,
+        DeviceOrientation.portraitDown,
+      ]);
+    }
     super.dispose();
   }
 
