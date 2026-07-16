@@ -753,6 +753,8 @@ class AppState extends ChangeNotifier {
       final w = (m.winner ?? '').toString().trim();
       final p1 = m.player1.trim();
       final p2 = m.player2.trim();
+      // Only trust an explicit winner when it is a real player name (not a
+      // bracket placeholder like "Winner QF2") and matches one side.
       if (w.isNotEmpty &&
           !isPlaceholder(w) &&
           (p1.isNotEmpty || p2.isNotEmpty) &&
@@ -760,8 +762,11 @@ class AppState extends ChangeNotifier {
         return w;
       }
 
-      int bestScoreA = 0;
-      int bestScoreB = 0;
+      // Best-of-N: count games/sets won — same as website Brackets.jsx.
+      // Do NOT use the last played game's point score (e.g. Game 3 4-11),
+      // which incorrectly flips the series winner.
+      int p1Wins = 0;
+      int p2Wins = 0;
       for (int i = 1; i <= 3; i++) {
         final a = (i == 1
                 ? m.game1Player1
@@ -771,25 +776,26 @@ class AppState extends ChangeNotifier {
                 ? m.game1Player2
                 : (i == 2 ? m.game2Player2 : m.game3Player2)) ??
             0;
-        if (a + b > 0) {
-          bestScoreA = a;
-          bestScoreB = b;
+        if (a + b <= 0) continue;
+        if (a > b) {
+          p1Wins += 1;
+        } else if (b > a) {
+          p2Wins += 1;
         }
       }
-      if (bestScoreA == 0 && bestScoreB == 0) {
-        final a = m.score1;
-        final b = m.score2;
-        bestScoreA = a;
-        bestScoreB = b;
+      if (p1Wins > p2Wins) {
+        return p1.isNotEmpty ? p1 : null;
       }
-      if (bestScoreA == 0 && bestScoreB == 0) return null;
-      if (bestScoreA > bestScoreB) {
-        final name = m.player1.trim();
-        return name.isNotEmpty ? name : null;
+      if (p2Wins > p1Wins) {
+        return p2.isNotEmpty ? p2 : null;
       }
-      if (bestScoreB > bestScoreA) {
-        final name = m.player2.trim();
-        return name.isNotEmpty ? name : null;
+
+      // Fallback: overall point totals (single-game / incomplete series).
+      if (m.score1 > m.score2) {
+        return p1.isNotEmpty ? p1 : null;
+      }
+      if (m.score2 > m.score1) {
+        return p2.isNotEmpty ? p2 : null;
       }
       return null;
     }
@@ -800,8 +806,8 @@ class AppState extends ChangeNotifier {
       final p1 = m.player1.trim();
       final p2 = m.player2.trim();
       if (p1.isEmpty || p2.isEmpty) return null;
-      if (w == p1) return p2;
-      if (w == p2) return p1;
+      if (sameName(w, p1)) return p2;
+      if (sameName(w, p2)) return p1;
       return null;
     }
 

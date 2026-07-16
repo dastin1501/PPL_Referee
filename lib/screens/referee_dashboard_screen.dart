@@ -1704,14 +1704,40 @@ class _RefereeDashboardScreenState extends State<RefereeDashboardScreen> {
       }
       fields['gameSignatures'] = base;
     }
-    // Only finalize the match when the last scheduled game is submitted
+    // Only finalize the match when the last scheduled game is submitted.
+    // Winner / finalScore must reflect series (set) wins for best-of-N,
+    // not the point score of the last game alone.
     if (matchCompleted) {
-      fields['score1'] = _score1;
-      fields['score2'] = _score2;
-      fields['finalScorePlayer1'] = _score1;
-      fields['finalScorePlayer2'] = _score2;
-      if (winnerName.isNotEmpty) {
-        fields['winner'] = winnerName;
+      int scoreFor(int gameNo, bool player1) {
+        if (gameNo == _currentGame) return player1 ? _score1 : _score2;
+        if (gameNo == 1) return player1 ? (g.game1Player1 ?? 0) : (g.game1Player2 ?? 0);
+        if (gameNo == 2) return player1 ? (g.game2Player1 ?? 0) : (g.game2Player2 ?? 0);
+        if (gameNo == 3) return player1 ? (g.game3Player1 ?? 0) : (g.game3Player2 ?? 0);
+        return 0;
+      }
+
+      var sets1 = 0;
+      var sets2 = 0;
+      for (int i = 1; i <= scheduledCount; i++) {
+        final a = scoreFor(i, true);
+        final b = scoreFor(i, false);
+        if (a + b <= 0) continue;
+        if (a > b) {
+          sets1 += 1;
+        } else if (b > a) {
+          sets2 += 1;
+        }
+      }
+
+      fields['finalScorePlayer1'] = sets1;
+      fields['finalScorePlayer2'] = sets2;
+      fields['score1'] = sets1;
+      fields['score2'] = sets2;
+      final seriesWinner = sets1 > sets2
+          ? g.player1
+          : (sets2 > sets1 ? g.player2 : '');
+      if (seriesWinner.trim().isNotEmpty) {
+        fields['winner'] = seriesWinner.trim();
       }
     }
     if (includeNote && _refereeNote.trim().isNotEmpty) {
