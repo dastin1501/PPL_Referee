@@ -1834,7 +1834,7 @@ class _RefereeDashboardScreenState extends State<RefereeDashboardScreen> {
                                               const SizedBox(width: 8),
                                               const Expanded(
                                                 child: Text(
-                                                  'Referee Signature',
+                                                  'Winner Signature',
                                                   style: TextStyle(
                                                     fontSize: 14,
                                                     fontWeight: FontWeight.w800,
