@@ -688,14 +688,34 @@ class AppState extends ChangeNotifier {
     String makeWinnerPlaceholder(String ref) => 'Winner $ref';
     String makeLoserPlaceholder(String ref) => 'Loser $ref';
 
-    // Whether a category's bracket actually has a Crossover Final (CF) round.
-    // CF only exists for larger brackets (e.g. Round of 32 -> 4 semis -> CF ->
-    // Gold/Bronze). Smaller brackets (e.g. QF -> 2 semis) go straight from
-    // SF to Gold/Bronze, so Gold/Bronze must reference SF1/SF2 directly.
+    // Detect per-category elim shape from matches present (website bracketMode
+    // 1 / 2 / 4 / 8). Do not assume R32/CF unless those rounds actually exist.
+    //
+    // 1 bracket: GOLD = A1 vs A2, BRONZE = A3 vs A4 (no SF/QF)
+    // 2 brackets: SF seeded from groups → GOLD/BRONZE from SF W/L
+    // 4 brackets: QF → SF → GOLD/BRONZE
+    // 8 brackets: R16 → QF → SF → GOLD/BRONZE
+    final categoriesWithR16 = <String>{};
+    final categoriesWithQF = <String>{};
+    final categoriesWithSF = <String>{};
     final categoriesWithCF = <String>{};
     for (final m in games) {
-      if (m.type == 'elimination' && m.roundShort.trim().toUpperCase() == 'CF') {
-        categoriesWithCF.add(m.categoryId.trim());
+      if (m.type != 'elimination') continue;
+      final cat = m.categoryId.trim();
+      if (cat.isEmpty) continue;
+      switch (m.roundShort.trim().toUpperCase()) {
+        case 'R16':
+          categoriesWithR16.add(cat);
+          break;
+        case 'QF':
+          categoriesWithQF.add(cat);
+          break;
+        case 'SF':
+          categoriesWithSF.add(cat);
+          break;
+        case 'CF':
+          categoriesWithCF.add(cat);
+          break;
       }
     }
 
@@ -705,7 +725,17 @@ class AppState extends ChangeNotifier {
       String categoryId,
     ) {
       final rs = roundShort.trim().toUpperCase();
+      final cat = categoryId.trim();
+      final hasCF = categoriesWithCF.contains(cat);
+      final hasQF = categoriesWithQF.contains(cat);
+      final hasSF = categoriesWithSF.contains(cat);
+      final hasR16 = categoriesWithR16.contains(cat);
+      // 1-bracket medal matches: standings labels / names already on the match.
+      final isSingleBracketMedals = !hasSF && !hasQF && !hasCF && !hasR16;
+
       if (rs == 'SF') {
+        // 2-bracket SF is seeded from group standings (not QF winners).
+        if (!hasQF) return null;
         if (matchKeyNorm == 'sf1') {
           return [makeWinnerPlaceholder('QF1'), makeWinnerPlaceholder('QF2')];
         }
@@ -728,19 +758,23 @@ class AppState extends ChangeNotifier {
         }
         return [makeWinnerPlaceholder('SF1'), makeWinnerPlaceholder('SF2')];
       }
-      final hasCF = categoriesWithCF.contains(categoryId.trim());
       if (rs == 'BRONZE') {
+        if (isSingleBracketMedals) return null;
         return hasCF
             ? [makeLoserPlaceholder('CF1'), makeLoserPlaceholder('CF2')]
             : [makeLoserPlaceholder('SF1'), makeLoserPlaceholder('SF2')];
       }
       if (rs == 'GOLD') {
+        if (isSingleBracketMedals) return null;
         return hasCF
             ? [makeWinnerPlaceholder('CF1'), makeWinnerPlaceholder('CF2')]
             : [makeWinnerPlaceholder('SF1'), makeWinnerPlaceholder('SF2')];
       }
       return null;
     }
+
+    String scopedResultKey(String categoryId, String ref) =>
+        '${categoryId.trim()}|${ref.trim()}';
 
     bool sameName(String a, String b) {
       String norm(String s) {
@@ -905,24 +939,26 @@ class AppState extends ChangeNotifier {
       final elim = games.where((m) => m.type == 'elimination').toList();
       for (final m in elim) {
         final key = normalizeRef(m.matchKey.trim().isNotEmpty ? m.matchKey : m.id);
+        final scoped = scopedResultKey(m.categoryId, key);
         final w = winnerName(m);
         final l = loserName(m);
         if (key.isNotEmpty && w != null && w.trim().isNotEmpty && !isPlaceholder(w)) {
-          winners[key] = w.trim();
+          winners[scoped] = w.trim();
         }
         if (key.isNotEmpty && l != null && l.trim().isNotEmpty && !isPlaceholder(l)) {
-          losers[key] = l.trim();
+          losers[scoped] = l.trim();
         }
       }
 
       if (kDebugMode) {
-        String? w(String k) => winners[k];
-        String? l(String k) => losers[k];
+        String? w(String cat, String k) => winners[scopedResultKey(cat, k)];
+        String? l(String cat, String k) => losers[scopedResultKey(cat, k)];
+        final sampleCat = elim.isNotEmpty ? elim.first.categoryId.trim() : '';
         debugPrint(
-          '[elim-resolve] pass=$pass keys=${winners.length}/${losers.length} '
-          'w:sf1=${w('sf1')} sf2=${w('sf2')} sf3=${w('sf3')} sf4=${w('sf4')} '
-          'cf1=${w('cf1')} cf2=${w('cf2')} final=${w('final')} '
-          'l:cf1=${l('cf1')} cf2=${l('cf2')}',
+          '[elim-resolve] pass=$pass keys=${winners.length}/${losers.length} cat=$sampleCat '
+          'w:sf1=${w(sampleCat, 'sf1')} sf2=${w(sampleCat, 'sf2')} '
+          'cf1=${w(sampleCat, 'cf1')} cf2=${w(sampleCat, 'cf2')} '
+          'l:sf1=${l(sampleCat, 'sf1')} sf2=${l(sampleCat, 'sf2')}',
         );
       }
 
@@ -932,11 +968,17 @@ class AppState extends ChangeNotifier {
 
         final key = normalizeRef(m.matchKey.trim().isNotEmpty ? m.matchKey : m.id);
         final expected = expectedPlaceholders(m.roundShort, key, m.categoryId);
+        // Never overwrite a concrete player name with a feeder placeholder.
+        // Only fill empty / placeholder sides from the expected bracket path.
         String baseP1 = m.player1;
         String baseP2 = m.player2;
         if (expected != null && expected.length == 2) {
-          baseP1 = expected[0];
-          baseP2 = expected[1];
+          if (baseP1.trim().isEmpty || isPlaceholder(baseP1)) {
+            baseP1 = expected[0];
+          }
+          if (baseP2.trim().isEmpty || isPlaceholder(baseP2)) {
+            baseP2 = expected[1];
+          }
         }
 
         String resolveSide(String current) {
@@ -944,11 +986,12 @@ class AppState extends ChangeNotifier {
           if (!isPlaceholder(text)) return current;
           final ref = extractRefFromPlaceholder(text);
           if (ref == null || ref.isEmpty) return current;
+          final scoped = scopedResultKey(m.categoryId, ref);
           if (isWinnerPlaceholder(text)) {
-            final found = winners[ref];
+            final found = winners[scoped];
             if (found != null && found.trim().isNotEmpty) return found;
           } else if (isLoserPlaceholder(text)) {
-            final found = losers[ref];
+            final found = losers[scoped];
             if (found != null && found.trim().isNotEmpty) return found;
           }
           return current;
@@ -956,13 +999,30 @@ class AppState extends ChangeNotifier {
 
         final p1 = resolveSide(baseP1);
         final p2 = resolveSide(baseP2);
+        String syncedName(String currentName, String oldPlayer, String newPlayer) {
+          final n = currentName.trim();
+          if (n.isEmpty) return currentName;
+          if (isPlaceholder(n)) return isPlaceholder(newPlayer) ? currentName : newPlayer;
+          // Keep team/display names unless they still mirror the unresolved side.
+          if (oldPlayer != newPlayer && sameName(n, oldPlayer)) return newPlayer;
+          return currentName;
+        }
+
+        final nextName1 = syncedName(m.player1Name, m.player1, p1);
+        final nextName2 = syncedName(m.player2Name, m.player2, p2);
         if (kDebugMode && (m.roundShort.toUpperCase() == 'GOLD' || m.roundShort.toUpperCase() == 'BRONZE')) {
           debugPrint(
-            '[elim-resolve] ${m.roundShort} key=$key before="${m.player1} vs ${m.player2}" '
+            '[elim-resolve] ${m.roundShort} key=$key cat=${m.categoryId} '
+            'before="${m.player1} vs ${m.player2}" '
             'base="$baseP1 vs $baseP2" resolved="$p1 vs $p2"',
           );
         }
-        if (p1 == m.player1 && p2 == m.player2) return m;
+        if (p1 == m.player1 &&
+            p2 == m.player2 &&
+            nextName1 == m.player1Name &&
+            nextName2 == m.player2Name) {
+          return m;
+        }
         changed = true;
         return TournamentMatch(
           id: m.id,
@@ -970,8 +1030,8 @@ class AppState extends ChangeNotifier {
           scheduleFromAssignments: m.scheduleFromAssignments,
           player1: p1,
           player2: p2,
-          player1Name: m.player1Name,
-          player2Name: m.player2Name,
+          player1Name: nextName1,
+          player2Name: nextName2,
           score1: m.score1,
           score2: m.score2,
           game1Status: m.game1Status,
