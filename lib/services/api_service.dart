@@ -4,6 +4,14 @@ import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'package:http/http.dart' as http;
 import '../models.dart';
 
+class AuthException implements Exception {
+  final String message;
+  AuthException([this.message = 'Session expired. Please log in again.']);
+
+  @override
+  String toString() => message;
+}
+
 class ApiResult {
   final bool ok;
   final String? error;
@@ -39,6 +47,14 @@ class ApiService {
   String? _baseUrlOverride;
   String get baseUrl => _baseUrlOverride ?? (dotenv.env['API_BASE_URL'] ?? 'http://localhost:5000');
   String? _token;
+  void Function()? onUnauthorized;
+
+  void _checkAuth(http.Response res) {
+    if (res.statusCode == 401 || res.statusCode == 403) {
+      onUnauthorized?.call();
+      throw AuthException();
+    }
+  }
 
   Map<String, String> get _headers => {
         'Content-Type': 'application/json',
@@ -49,6 +65,10 @@ class ApiService {
 
   void setToken(String token) {
     _token = token;
+  }
+
+  void clearToken() {
+    _token = null;
   }
 
   void setBaseUrl(String? url) {
@@ -136,6 +156,7 @@ class ApiService {
       if (kDebugMode) {
         debugPrint('GET /api/tournaments -> ${res.statusCode}');
       }
+      _checkAuth(res);
       if (res.statusCode == 200) {
         final List<dynamic> jsonList = jsonDecode(res.body);
         final list = jsonList.map((e) => Tournament.fromJson(e)).toList();
@@ -188,6 +209,7 @@ class ApiService {
       if (kDebugMode) {
         debugPrint('[assigned-matches] status=${res.statusCode} path=$primaryPath');
       }
+      _checkAuth(res);
       if (res.statusCode != 200) {
         throw Exception('Status ${res.statusCode}: ${res.body}');
       }
@@ -272,6 +294,7 @@ class ApiService {
           Uri.parse(url),
           headers: _headers,
         );
+        _checkAuth(res);
         if (res.statusCode != 200) {
           throw Exception('Status ${res.statusCode}: ${res.body}');
         }
@@ -353,6 +376,7 @@ class ApiService {
         headers: _headers,
         body: jsonEncode(body),
       );
+      _checkAuth(res);
       if (res.statusCode != 200) {
         throw Exception('Status ${res.statusCode}: ${res.body}');
       }
@@ -418,6 +442,7 @@ class ApiService {
     if (kDebugMode) {
       print('[score-sync][api] RESPONSE ${res.statusCode}: ${res.body}');
     }
+    _checkAuth(res);
     if (res.statusCode != 200 && res.statusCode != 201) {
       throw Exception('Status ${res.statusCode}: ${res.body}');
     }

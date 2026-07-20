@@ -1,6 +1,7 @@
 import 'dart:convert';
 import 'dart:async';
 import 'package:flutter/foundation.dart';
+import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../services/api_service.dart';
 import '../models.dart';
@@ -12,6 +13,12 @@ class AppState extends ChangeNotifier {
   static const bool _useScheduledQueueEndpoint = false;
 
   final ApiService _api = ApiService();
+
+  AppState() {
+    _api.onUnauthorized = _handleUnauthorized;
+  }
+
+  bool _handlingUnauthorized = false;
 
   User? currentUser;
   String apiBaseUrl = '';
@@ -48,8 +55,13 @@ class AppState extends ChangeNotifier {
   Future<void> init() async {
     final prefs = await SharedPreferences.getInstance();
     final savedBaseUrl = prefs.getString(_storageApiBaseUrlKey);
+    final envUrl = dotenv.env['API_BASE_URL'] ?? '';
     if (savedBaseUrl != null && savedBaseUrl.trim().isNotEmpty) {
-      _api.setBaseUrl(savedBaseUrl);
+      if (_isLocalhostUrl(savedBaseUrl) && envUrl.isNotEmpty && !_isLocalhostUrl(envUrl)) {
+        await prefs.remove(_storageApiBaseUrlKey);
+      } else {
+        _api.setBaseUrl(savedBaseUrl);
+      }
     }
     apiBaseUrl = _api.baseUrl;
     final token = prefs.getString(_storageTokenKey);
@@ -61,12 +73,45 @@ class AppState extends ChangeNotifier {
         _api.setToken(token);
         currentUser = User.fromJson(data);
         await loadTournaments();
-      } catch (_) {
-        currentUser = null;
+      } catch (e) {
+        if (e is AuthException) {
+          await logout(reason: e.message);
+        } else {
+          currentUser = null;
+        }
       }
     }
     initialized = true;
     notifyListeners();
+  }
+
+  bool _isLocalhostUrl(String url) {
+    final lower = url.toLowerCase();
+    return lower.contains('localhost') ||
+        lower.contains('127.0.0.1') ||
+        lower.contains('10.0.2.2');
+  }
+
+  void _handleUnauthorized() {
+    if (_handlingUnauthorized || currentUser == null) return;
+    _handlingUnauthorized = true;
+    logout(reason: 'Session expired. Please log in again.').whenComplete(() {
+      _handlingUnauthorized = false;
+    });
+  }
+
+  /// Re-fetch data when the app returns from background after long inactivity.
+  Future<void> refreshOnResume() async {
+    if (currentUser == null || loading) return;
+    try {
+      if (selectedTournament != null) {
+        await refreshSelectedTournament();
+      } else {
+        await loadTournaments();
+      }
+    } on AuthException catch (e) {
+      await logout(reason: e.message);
+    } catch (_) {}
   }
 
   Future<void> setApiBaseUrl(String url) async {
@@ -157,6 +202,8 @@ class AppState extends ChangeNotifier {
       tournaments = allTournaments.where((t) => t.referees.contains(currentUser!.id)).toList();
       // Opportunistic sync when loading
       await trySyncOutbox();
+    } on AuthException catch (e) {
+      await logout(reason: e.message);
     } catch (e) {
       error = 'Failed to load tournaments: $e';
       tournaments = [];
@@ -535,6 +582,8 @@ class AppState extends ChangeNotifier {
       await _refreshScheduledQueueForSelection();
       // Try syncing queued updates after refresh
       await trySyncOutbox();
+    } on AuthException catch (e) {
+      await logout(reason: e.message);
     } catch (e) {
       error = 'Failed to refresh: $e';
     }
@@ -2107,7 +2156,7 @@ class AppState extends ChangeNotifier {
     await prefs.setString(_storageOutboxKey, jsonEncode(_outbox));
   }
 
-  Future<void> logout() async {
+  Future<void> logout({String? reason}) async {
     _ongoingSyncTimer?.cancel();
     currentUser = null;
     tournaments = [];
@@ -2121,6 +2170,8 @@ class AppState extends ChangeNotifier {
     await prefs.remove(_storageTokenKey);
     await prefs.remove(_storageUserKey);
     await prefs.remove(_storageOutboxKey);
+    _api.clearToken();
+    error = reason;
     notifyListeners();
   }
 }

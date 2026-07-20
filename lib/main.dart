@@ -17,13 +17,43 @@ Future<void> main() async {
   runApp(const RefereeApp());
 }
 
-class RefereeApp extends StatelessWidget {
+class RefereeApp extends StatefulWidget {
   const RefereeApp({super.key});
+
+  @override
+  State<RefereeApp> createState() => _RefereeAppState();
+}
+
+class _RefereeAppState extends State<RefereeApp> with WidgetsBindingObserver {
+  AppState? _appState;
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addObserver(this);
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      _appState?.refreshOnResume();
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
     return ChangeNotifierProvider(
-      create: (_) => AppState()..init(),
+      create: (_) {
+        final app = AppState()..init();
+        _appState = app;
+        return app;
+      },
       child: Consumer<AppState>(
         builder: (context, app, _) {
           return MaterialApp(
