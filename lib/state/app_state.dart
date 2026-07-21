@@ -41,6 +41,43 @@ class AppState extends ChangeNotifier {
   Map<String, dynamic>? _pendingOngoingFields;
   String? _pendingOngoingMatchKey;
 
+  // Tutorial simulation mode:
+  // - Uses the exact same RefereeDashboard UI
+  // - Skips all backend writes, but keeps optimistic local state updates
+  bool _tutorialSimulationMode = false;
+  bool get tutorialSimulationMode => _tutorialSimulationMode;
+  Tournament? _savedSelectedTournament;
+  TournamentMatch? _savedSelectedGame;
+  int _savedSelectedGameNumber = 1;
+
+  void enterTutorialSimulation({
+    required Tournament tutorialTournament,
+    required TournamentMatch tutorialMatch,
+    int gameNumber = 1,
+  }) {
+    if (!_tutorialSimulationMode) {
+      _savedSelectedTournament = selectedTournament;
+      _savedSelectedGame = selectedGame;
+      _savedSelectedGameNumber = selectedGameNumber;
+    }
+    _tutorialSimulationMode = true;
+    selectedTournament = tutorialTournament;
+    selectedGame = tutorialMatch;
+    selectedGameNumber = gameNumber;
+    error = null;
+    notifyListeners();
+  }
+
+  void exitTutorialSimulation() {
+    _tutorialSimulationMode = false;
+    selectedTournament = _savedSelectedTournament;
+    selectedGame = _savedSelectedGame;
+    selectedGameNumber = _savedSelectedGameNumber;
+    _savedSelectedTournament = null;
+    _savedSelectedGame = null;
+    notifyListeners();
+  }
+
   // Offline outbox for match updates
   static const _storageOutboxKey = 'referee_outbox_v1';
   List<Map<String, dynamic>> _outbox = [];
@@ -1288,7 +1325,8 @@ class AppState extends ChangeNotifier {
       throw StateError(error!);
     }
 
-    final applyOptimistically = status == null ||
+    final applyOptimistically = tutorialSimulationMode ||
+        status == null ||
         status.isEmpty ||
         isOngoingStatus ||
         status == 'Completed';
@@ -1297,6 +1335,10 @@ class AppState extends ChangeNotifier {
       _replaceSelectedGame(updated, g);
       notifyListeners();
     }
+
+    // Tutorial simulation skips all backend writes. The UI already got the
+    // optimistic local merge above.
+    if (tutorialSimulationMode) return;
 
     if (status == 'Ongoing' && debounceOngoing) {
       _pendingOngoingFields = submitFields;
@@ -2464,6 +2506,9 @@ class AppState extends ChangeNotifier {
 
   Future<void> logout({String? reason}) async {
     _ongoingSyncTimer?.cancel();
+    _tutorialSimulationMode = false;
+    _savedSelectedTournament = null;
+    _savedSelectedGame = null;
     currentUser = null;
     tournaments = [];
     courts = [];

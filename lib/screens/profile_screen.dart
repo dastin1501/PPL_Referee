@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../state/app_state.dart';
 import '../models.dart';
+import 'tutorial_screen.dart';
 
 class ProfileScreen extends StatefulWidget {
   const ProfileScreen({super.key});
@@ -20,7 +21,7 @@ class _ProfileScreenState extends State<ProfileScreen>
   @override
   void initState() {
     super.initState();
-    _tabController = TabController(length: 3, vsync: this);
+    _tabController = TabController(length: 4, vsync: this);
   }
 
   @override
@@ -112,6 +113,7 @@ class _ProfileScreenState extends State<ProfileScreen>
                     Tab(text: 'About'),
                     Tab(text: 'My Club'),
                     Tab(text: 'Tournaments'),
+                    Tab(text: 'Tutorial'),
                   ],
                 ),
               ),
@@ -132,6 +134,7 @@ class _ProfileScreenState extends State<ProfileScreen>
               title: 'Tournaments',
               message: 'No past tournaments found.',
             ),
+            const TutorialTab(),
           ],
         ),
       ),
