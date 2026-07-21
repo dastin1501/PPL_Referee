@@ -1705,7 +1705,14 @@ class _RefereeDashboardScreenState extends State<RefereeDashboardScreen> {
                                                 height: 1.3,
                                               ),
                                               children: [
-                                                TextSpan(text: g.player1),
+                                                TextSpan(
+                                                  text: app.displayPlayerName(
+                                                    g!,
+                                                    g.player1Name.trim().isNotEmpty
+                                                        ? g.player1Name
+                                                        : g.player1,
+                                                  ),
+                                                ),
                                                 const TextSpan(
                                                   text: '  vs  ',
                                                   style: TextStyle(
@@ -1713,7 +1720,14 @@ class _RefereeDashboardScreenState extends State<RefereeDashboardScreen> {
                                                     fontWeight: FontWeight.w800,
                                                   ),
                                                 ),
-                                                TextSpan(text: g.player2),
+                                                TextSpan(
+                                                  text: app.displayPlayerName(
+                                                    g,
+                                                    g.player2Name.trim().isNotEmpty
+                                                        ? g.player2Name
+                                                        : g.player2,
+                                                  ),
+                                                ),
                                               ],
                                             ),
                                             textAlign: TextAlign.center,

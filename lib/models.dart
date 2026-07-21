@@ -333,7 +333,7 @@ class TournamentMatch {
       final r16 = RegExp(r'^(?:round)?16-?(\d+)$').firstMatch(s) ??
           RegExp(r'^r16-?(\d+)$').firstMatch(s);
       if (r16 != null) return 'r16-${r16.group(1)}';
-      final qf = RegExp(r'^(?:quarter|qf)-?(\d+)$').firstMatch(s);
+      final qf = RegExp(r'^(?:quarter|qf|q)-?(\d+)$').firstMatch(s);
       if (qf != null) return 'qf${qf.group(1)}';
       final sf = RegExp(r'^(?:semi|sf)-?(\d+)$').firstMatch(s);
       if (sf != null) return 'sf${sf.group(1)}';
@@ -369,7 +369,8 @@ class TournamentMatch {
         case 'SF':
           return 'Semifinal';
         case 'CF':
-          return 'Crossover Finals';
+          // Round of 32 only: CF is shown as Semis-Finals (logic key stays CF).
+          return 'Semis-Finals';
         case 'GOLD':
           return 'Battle for Gold';
         case 'BRONZE':

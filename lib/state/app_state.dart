@@ -705,7 +705,7 @@ class AppState extends ChangeNotifier {
           RegExp(r'^r16-?(\d+)$').firstMatch(s);
       if (r16 != null) return 'r16-${r16.group(1)}';
 
-      final qf = RegExp(r'^(?:quarter|qf)-?(\d+)$').firstMatch(s);
+      final qf = RegExp(r'^(?:quarter|qf|q)-?(\d+)$').firstMatch(s);
       if (qf != null) return 'qf${qf.group(1)}';
 
       final sf = RegExp(r'^(?:semi|sf)-?(\d+)$').firstMatch(s);
@@ -737,13 +737,24 @@ class AppState extends ChangeNotifier {
     String makeWinnerPlaceholder(String ref) => 'Winner $ref';
     String makeLoserPlaceholder(String ref) => 'Loser $ref';
 
-    // Detect per-category elim shape from matches present (website bracketMode
-    // 1 / 2 / 4 / 8). Do not assume R32/CF unless those rounds actually exist.
+    // Detect per-category elim shape from matches present.
     //
     // 1 bracket: GOLD = A1 vs A2, BRONZE = A3 vs A4 (no SF/QF)
     // 2 brackets: SF seeded from groups → GOLD/BRONZE from SF W/L
     // 4 brackets: QF → SF → GOLD/BRONZE
     // 8 brackets: R16 → QF → SF → GOLD/BRONZE
+    // 16 brackets / Round of 32:
+    //   R32 → R16 → QF → SF → GOLD/BRONZE
+    //   R32 seeds (16 matches):
+    //     1 A1-H2, 2 B1-G2, 3 C1-F2, 4 D1-E2,
+    //     5 E1-D2, 6 F1-C2, 7 G1-B2, 8 H1-A2,
+    //     9 I1-P2, 10 J1-O2, 11 K1-N2, 12 L1-M2,
+    //     13 M1-L2, 14 N1-K2, 15 O1-J2, 16 P1-I2
+    //   R16-N = winners of R32-(2N-1) vs R32-(2N)
+    //   Q-N   = winners of R16-(2N-1) vs R16-(2N)
+    //   SF-1  = Q-1 vs Q-2 winners; SF-2 = Q-3 vs Q-4 winners
+    //   GOLD  = SF winners; BRONZE = SF losers
+    final categoriesWithR32 = <String>{};
     final categoriesWithR16 = <String>{};
     final categoriesWithQF = <String>{};
     final categoriesWithSF = <String>{};
@@ -753,6 +764,9 @@ class AppState extends ChangeNotifier {
       final cat = m.categoryId.trim();
       if (cat.isEmpty) continue;
       switch (m.roundShort.trim().toUpperCase()) {
+        case 'R32':
+          categoriesWithR32.add(cat);
+          break;
         case 'R16':
           categoriesWithR16.add(cat);
           break;
@@ -775,12 +789,46 @@ class AppState extends ChangeNotifier {
     ) {
       final rs = roundShort.trim().toUpperCase();
       final cat = categoryId.trim();
+      final hasR32 = categoriesWithR32.contains(cat);
       final hasCF = categoriesWithCF.contains(cat);
       final hasQF = categoriesWithQF.contains(cat);
       final hasSF = categoriesWithSF.contains(cat);
       final hasR16 = categoriesWithR16.contains(cat);
       // 1-bracket medal matches: standings labels / names already on the match.
-      final isSingleBracketMedals = !hasSF && !hasQF && !hasCF && !hasR16;
+      final isSingleBracketMedals =
+          !hasSF && !hasQF && !hasCF && !hasR16 && !hasR32;
+
+      // Round of 32: R16 is fed by consecutive R32 winners.
+      // R16-1 = W(R32-1)=A1/H2 vs W(R32-2)=B1/G2, ... R16-8 = W(R32-15) vs W(R32-16).
+      if (rs == 'R16' && hasR32) {
+        final n = int.tryParse(
+          RegExp(r'^r16-(\d+)$').firstMatch(matchKeyNorm)?.group(1) ?? '',
+        );
+        if (n != null && n >= 1 && n <= 8) {
+          final a = (n - 1) * 2 + 1;
+          final b = a + 1;
+          return [
+            makeWinnerPlaceholder('R32-$a'),
+            makeWinnerPlaceholder('R32-$b'),
+          ];
+        }
+      }
+
+      // Quarters from R16 winners (8-bracket and Round of 32).
+      if (rs == 'QF' && hasR16) {
+        if (matchKeyNorm == 'qf1') {
+          return [makeWinnerPlaceholder('R16-1'), makeWinnerPlaceholder('R16-2')];
+        }
+        if (matchKeyNorm == 'qf2') {
+          return [makeWinnerPlaceholder('R16-3'), makeWinnerPlaceholder('R16-4')];
+        }
+        if (matchKeyNorm == 'qf3') {
+          return [makeWinnerPlaceholder('R16-5'), makeWinnerPlaceholder('R16-6')];
+        }
+        if (matchKeyNorm == 'qf4') {
+          return [makeWinnerPlaceholder('R16-7'), makeWinnerPlaceholder('R16-8')];
+        }
+      }
 
       if (rs == 'SF') {
         // 2-bracket SF is seeded from group standings (not QF winners).
@@ -809,15 +857,19 @@ class AppState extends ChangeNotifier {
       }
       if (rs == 'BRONZE') {
         if (isSingleBracketMedals) return null;
-        return hasCF
-            ? [makeLoserPlaceholder('CF1'), makeLoserPlaceholder('CF2')]
-            : [makeLoserPlaceholder('SF1'), makeLoserPlaceholder('SF2')];
+        // True Round of 32 (and normal brackets): bronze from SF losers.
+        // Legacy CF (crossover) brackets still use CF losers.
+        if (hasR32 || !hasCF) {
+          return [makeLoserPlaceholder('SF1'), makeLoserPlaceholder('SF2')];
+        }
+        return [makeLoserPlaceholder('CF1'), makeLoserPlaceholder('CF2')];
       }
       if (rs == 'GOLD') {
         if (isSingleBracketMedals) return null;
-        return hasCF
-            ? [makeWinnerPlaceholder('CF1'), makeWinnerPlaceholder('CF2')]
-            : [makeWinnerPlaceholder('SF1'), makeWinnerPlaceholder('SF2')];
+        if (hasR32 || !hasCF) {
+          return [makeWinnerPlaceholder('SF1'), makeWinnerPlaceholder('SF2')];
+        }
+        return [makeWinnerPlaceholder('CF1'), makeWinnerPlaceholder('CF2')];
       }
       return null;
     }
@@ -2154,6 +2206,260 @@ class AppState extends ChangeNotifier {
   Future<void> _saveOutbox() async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString(_storageOutboxKey, jsonEncode(_outbox));
+  }
+
+  String _normalizeBracketRef(String raw) {
+    var s = raw.trim().toLowerCase();
+    s = s.replaceAll(RegExp(r'[\s]+'), '');
+    s = s.replaceAll('_', '-');
+    s = s.replaceAll(RegExp(r'[^a-z0-9-]'), '');
+
+    final r32 = RegExp(r'^(?:round)?32-?(\d+)$').firstMatch(s) ??
+        RegExp(r'^r32-?(\d+)$').firstMatch(s);
+    if (r32 != null) return 'r32-${r32.group(1)}';
+
+    final r16 = RegExp(r'^(?:round)?16-?(\d+)$').firstMatch(s) ??
+        RegExp(r'^r16-?(\d+)$').firstMatch(s);
+    if (r16 != null) return 'r16-${r16.group(1)}';
+
+    final qf = RegExp(r'^(?:quarter|qf|q)-?(\d+)$').firstMatch(s);
+    if (qf != null) return 'qf${qf.group(1)}';
+
+    final sf = RegExp(r'^(?:semi|sf)-?(\d+)$').firstMatch(s);
+    if (sf != null) return 'sf${sf.group(1)}';
+
+    final cf = RegExp(r'^(?:crossover|cf)-?(\d+)$').firstMatch(s);
+    if (cf != null) return 'cf${cf.group(1)}';
+
+    return s;
+  }
+
+  String _formatDisplayBracketRef(String kind, String number) {
+    switch (kind) {
+      case 'r32':
+        return '32-$number';
+      case 'r16':
+        return '16-$number';
+      case 'q':
+        return 'Q-$number';
+      case 'sf':
+        return 'SF-$number';
+      default:
+        return '$kind-$number';
+    }
+  }
+
+  /// Remap internal bracket refs (CF/QF/SF/R16) to user-facing labels.
+  String displayBracketRef(String rawRef, String categoryId) {
+    final ref = _normalizeBracketRef(rawRef);
+    if (ref.isEmpty) return rawRef.trim();
+
+    if (categoryHasRoundOf32(categoryId)) {
+      if (ref.startsWith('r32-')) {
+        return _formatDisplayBracketRef('r32', ref.substring(4));
+      }
+      if (ref.startsWith('r16-')) {
+        return _formatDisplayBracketRef('r16', ref.substring(4));
+      }
+      if (ref.startsWith('qf')) {
+        return _formatDisplayBracketRef('q', ref.substring(2));
+      }
+      if (ref.startsWith('sf')) {
+        return _formatDisplayBracketRef('sf', ref.substring(2));
+      }
+      // Stale crossover refs in a true R32 bracket.
+      if (ref.startsWith('cf')) {
+        return _formatDisplayBracketRef('sf', ref.substring(2));
+      }
+      return rawRef.trim();
+    }
+
+    if (categoryHasCrossover(categoryId)) {
+      if (ref.startsWith('cf')) {
+        return _formatDisplayBracketRef('sf', ref.substring(2));
+      }
+      if (ref.startsWith('sf')) {
+        return _formatDisplayBracketRef('q', ref.substring(2));
+      }
+      if (ref.startsWith('qf')) {
+        return _formatDisplayBracketRef('r16', ref.substring(2));
+      }
+      if (ref.startsWith('r16-')) {
+        return _formatDisplayBracketRef('r32', ref.substring(4));
+      }
+      return rawRef.trim();
+    }
+
+    return rawRef.trim();
+  }
+
+  /// Remap feeder placeholders like "Winner CF1" → "Winner SF-1".
+  String displayPlayerName(TournamentMatch m, String player) {
+    final text = player.trim();
+    if (text.isEmpty || m.type != 'elimination') return player;
+
+    final winner = RegExp(r'^(Winner|Loser)\s+(.+)$', caseSensitive: false).firstMatch(text);
+    if (winner != null) {
+      final prefix = winner.group(1)!;
+      final ref = displayBracketRef(winner.group(2) ?? '', m.categoryId);
+      return '$prefix $ref';
+    }
+
+    final short = RegExp(r'^(W|L)\s+(.+)$', caseSensitive: false).firstMatch(text);
+    if (short != null) {
+      final prefix = short.group(1)!;
+      final ref = displayBracketRef(short.group(2) ?? '', m.categoryId);
+      return '$prefix $ref';
+    }
+
+    return player;
+  }
+
+  /// True Round of 32 (16 first-round matches), not legacy CF remapping.
+  bool categoryHasRoundOf32(String categoryId) {
+    final cat = categoryId.trim();
+    if (cat.isEmpty) return false;
+    return games.any((m) =>
+        m.type == 'elimination' &&
+        m.categoryId.trim() == cat &&
+        m.roundShort.trim().toUpperCase() == 'R32');
+  }
+
+  /// Legacy "double R16" brackets that used CF (Crossover) before true R32.
+  bool categoryHasCrossover(String categoryId) {
+    final cat = categoryId.trim();
+    if (cat.isEmpty) return false;
+    if (categoryHasRoundOf32(cat)) return false;
+    return games.any((m) =>
+        m.type == 'elimination' &&
+        m.categoryId.trim() == cat &&
+        m.roundShort.trim().toUpperCase() == 'CF');
+  }
+
+  int? _elimMatchNumber(TournamentMatch m) {
+    final raw = (m.matchKey.trim().isNotEmpty ? m.matchKey : m.id).trim().toLowerCase();
+    final compact = raw.replaceAll(RegExp(r'[\s_]+'), '-');
+    for (final pattern in [
+      RegExp(r'r32-?(\d+)'),
+      RegExp(r'round32-?(\d+)'),
+      RegExp(r'r16-?(\d+)'),
+      RegExp(r'round16-?(\d+)'),
+      RegExp(r'(?:quarter|qf|q)-?(\d+)'),
+      RegExp(r'(?:semi|sf)-?(\d+)'),
+      RegExp(r'(?:crossover|cf)-?(\d+)'),
+    ]) {
+      final match = pattern.firstMatch(compact);
+      if (match != null) return int.tryParse(match.group(1) ?? '');
+    }
+    return null;
+  }
+
+  /// Compact match badge like the website: 32-1, 16-1, Q-1, SF-1, GOLD.
+  String displayMatchBadge(TournamentMatch m) {
+    if (m.type != 'elimination') return '';
+    final rs = m.roundShort.trim().toUpperCase();
+    final n = _elimMatchNumber(m);
+
+    if (categoryHasRoundOf32(m.categoryId)) {
+      switch (rs) {
+        case 'R32':
+          return n != null ? '32-$n' : '32';
+        case 'R16':
+          return n != null ? '16-$n' : '16';
+        case 'QF':
+          return n != null ? 'Q-$n' : 'Q';
+        case 'SF':
+          return n != null ? 'SF-$n' : 'SF';
+        case 'GOLD':
+          return 'GOLD';
+        case 'BRONZE':
+          return 'BRONZE';
+        default:
+          return m.roundShort;
+      }
+    }
+
+    if (categoryHasCrossover(m.categoryId)) {
+      switch (rs) {
+        case 'R16':
+          return n != null ? '32-$n' : '32';
+        case 'QF':
+          return n != null ? '16-$n' : '16';
+        case 'SF':
+          return n != null ? 'Q-$n' : 'Q';
+        case 'CF':
+          return n != null ? 'SF-$n' : 'SF';
+        case 'GOLD':
+          return 'GOLD';
+        case 'BRONZE':
+          return 'BRONZE';
+        default:
+          return m.roundShort;
+      }
+    }
+
+    switch (rs) {
+      case 'R16':
+        return n != null ? '16-$n' : 'R16';
+      case 'QF':
+        return n != null ? 'Q-$n' : 'QF';
+      case 'SF':
+        return n != null ? 'SF-$n' : 'SF';
+      case 'GOLD':
+        return 'GOLD';
+      case 'BRONZE':
+        return 'BRONZE';
+      default:
+        return m.roundShort;
+    }
+  }
+
+  /// Round of 32 display: 32-N > 16-N > Q-N > SF-N > Gold/Bronze
+  /// Legacy CF display: R16>QF>SF>CF remapped to 32-N>16-N>Q-N>SF-N
+  String displayRoundShort(TournamentMatch m) {
+    final badge = displayMatchBadge(m);
+    if (badge.isNotEmpty && m.type == 'elimination') return badge;
+    return m.roundShort;
+  }
+
+  String displayRoundLabel(TournamentMatch m) {
+    if (m.type != 'elimination') return m.roundLabel;
+    final rs = m.roundShort.trim().toUpperCase();
+
+    if (categoryHasRoundOf32(m.categoryId)) {
+      switch (rs) {
+        case 'R32':
+          return 'Round of 32';
+        case 'R16':
+          return 'Round of 16';
+        case 'QF':
+          return 'Quarter Finals';
+        case 'SF':
+          return 'Semi-Finals';
+        case 'GOLD':
+          return 'Battle for Gold';
+        case 'BRONZE':
+          return 'Battle for Bronze';
+        default:
+          return m.roundLabel;
+      }
+    }
+
+    if (!categoryHasCrossover(m.categoryId)) {
+      return m.roundLabel;
+    }
+    switch (rs) {
+      case 'R16':
+        return 'Round of 32';
+      case 'QF':
+        return 'Round of 16';
+      case 'SF':
+        return 'Quarter Finals';
+      case 'CF':
+        return 'Semi-Finals';
+      default:
+        return m.roundLabel;
+    }
   }
 
   Future<void> logout({String? reason}) async {

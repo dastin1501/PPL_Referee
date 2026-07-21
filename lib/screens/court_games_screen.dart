@@ -676,9 +676,9 @@ Widget _buildGamesList(
 
         String matchTitle() {
           if (g.type == 'elimination') {
-            final rs = g.roundShort.toString().trim();
-            final rl = g.roundLabel.toString().trim();
-            if (rs.isNotEmpty) return '$rs · Game $n';
+            final badge = app.displayMatchBadge(g).trim();
+            if (badge.isNotEmpty) return '$badge · Game $n';
+            final rl = app.displayRoundLabel(g).trim();
             if (rl.isNotEmpty) return '$rl · Game $n';
           }
           final sl = g.seedLabel.toString();
@@ -706,8 +706,14 @@ Widget _buildGamesList(
           s2 = g.game3Player2 ?? 0;
         }
 
-        final p1 = g.player1Name.trim().isNotEmpty ? g.player1Name : g.player1;
-        final p2 = g.player2Name.trim().isNotEmpty ? g.player2Name : g.player2;
+        final p1 = app.displayPlayerName(
+          g,
+          g.player1Name.trim().isNotEmpty ? g.player1Name : g.player1,
+        );
+        final p2 = app.displayPlayerName(
+          g,
+          g.player2Name.trim().isNotEmpty ? g.player2Name : g.player2,
+        );
         final timeLabel = _formatTimeDisplay(start, end);
 
         Color statusBg;
@@ -863,10 +869,10 @@ Widget _buildGamesList(
                                   ),
                                 ),
                                 if (g.type == 'elimination' &&
-                                    g.roundLabel.toString().trim().isNotEmpty) ...[
+                                    app.displayRoundLabel(g).trim().isNotEmpty) ...[
                                   const SizedBox(height: 2),
                                   Text(
-                                    g.roundLabel.toString().trim(),
+                                    app.displayRoundLabel(g).trim(),
                                     style: const TextStyle(
                                       fontSize: 12,
                                       color: Color(0xFF94A3B8),
@@ -1010,6 +1016,7 @@ class _EmptyState extends StatelessWidget {
 }
 
 void _showCompletedSummaryDialog(BuildContext context, TournamentMatch g, int gameNo) {
+  final app = context.read<AppState>();
   final int s1 = (gameNo == 1
       ? (g.game1Player1 ?? 0)
       : (gameNo == 2 ? (g.game2Player1 ?? 0) : (g.game3Player1 ?? 0)));
@@ -1081,12 +1088,22 @@ void _showCompletedSummaryDialog(BuildContext context, TournamentMatch g, int ga
                   Text.rich(
                     TextSpan(
                       children: [
-                        TextSpan(text: g.player1),
+                        TextSpan(
+                          text: app.displayPlayerName(
+                            g,
+                            g.player1Name.trim().isNotEmpty ? g.player1Name : g.player1,
+                          ),
+                        ),
                         const TextSpan(
                           text: '  vs  ',
                           style: TextStyle(color: Color(0xFFDC2626), fontWeight: FontWeight.w700),
                         ),
-                        TextSpan(text: g.player2),
+                        TextSpan(
+                          text: app.displayPlayerName(
+                            g,
+                            g.player2Name.trim().isNotEmpty ? g.player2Name : g.player2,
+                          ),
+                        ),
                       ],
                     ),
                     style: const TextStyle(
