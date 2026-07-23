@@ -555,8 +555,18 @@ Set<String> _makeElimIdAliases(String id) {
   if (s.startsWith('qf')) push('quarter${s.replaceFirst('qf', '')}');
   if (s.startsWith('semi')) push('sf${s.replaceFirst('semi', '')}');
   if (s.startsWith('sf')) push('semi${s.replaceFirst('sf', '')}');
+  if (s.startsWith('round32_')) push('r32-${s.replaceFirst('round32_', '')}');
+  if (s.startsWith('round32-')) push('r32-${s.replaceFirst('round32-', '')}');
+  if (s.startsWith('r32-')) {
+    push('round32_${s.replaceFirst('r32-', '')}');
+    push('round32-${s.replaceFirst('r32-', '')}');
+  }
   if (s.startsWith('round16_')) push('r16-${s.replaceFirst('round16_', '')}');
-  if (s.startsWith('r16-')) push('round16_${s.replaceFirst('r16-', '')}');
+  if (s.startsWith('round16-')) push('r16-${s.replaceFirst('round16-', '')}');
+  if (s.startsWith('r16-')) {
+    push('round16_${s.replaceFirst('r16-', '')}');
+    push('round16-${s.replaceFirst('r16-', '')}');
+  }
   if (s == 'finals') push('final');
   if (s == 'final') push('finals');
   return out;
@@ -564,7 +574,11 @@ Set<String> _makeElimIdAliases(String id) {
 
 String _elimScheduleKeyFromId(String id) {
   final s = id.trim().toLowerCase();
+  if (s.startsWith('round32_')) return 'r32-${s.replaceFirst('round32_', '')}';
+  if (s.startsWith('round32-')) return 'r32-${s.replaceFirst('round32-', '')}';
+  if (s.startsWith('r32-')) return s;
   if (s.startsWith('round16_')) return 'r16-${s.replaceFirst('round16_', '')}';
+  if (s.startsWith('round16-')) return 'r16-${s.replaceFirst('round16-', '')}';
   if (s.startsWith('r16-')) return s;
   if (s.startsWith('quarter')) return 'qf${s.replaceFirst('quarter', '')}';
   if (s.startsWith('qf')) return s;

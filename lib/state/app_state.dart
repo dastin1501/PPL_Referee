@@ -914,6 +914,76 @@ class AppState extends ChangeNotifier {
     String scopedResultKey(String categoryId, String ref) =>
         '${categoryId.trim()}|${ref.trim()}';
 
+    /// Round-of-32 matches may still carry legacy `round16_` / `r16-N` ids while
+    /// placeholders say Winner R32-N (or the reverse). Index + look up under
+    /// every equivalent key so R16-5..8 resolve like R16-1..4.
+    Set<String> identityKeysForMatch(TournamentMatch m) {
+      final keys = <String>{};
+      void addRaw(String raw) {
+        final n = normalizeRef(raw);
+        if (n.isNotEmpty) keys.add(n);
+      }
+
+      addRaw(m.matchKey);
+      addRaw(m.id);
+
+      final rs = m.roundShort.trim().toUpperCase();
+      for (final k in [...keys]) {
+        final n32 = RegExp(r'^r32-(\d+)$').firstMatch(k);
+        if (n32 != null) {
+          keys.add('r32-${n32.group(1)}');
+          keys.add('r16-${n32.group(1)}');
+        }
+        final n16 = RegExp(r'^r16-(\d+)$').firstMatch(k);
+        if (n16 != null) {
+          final num = n16.group(1)!;
+          keys.add('r16-$num');
+          // r16-9..16 cannot be a real Round-of-16 slot (only 1..8 exist).
+          // Also cross-alias when this match is explicitly Round of 32.
+          final n = int.tryParse(num) ?? 0;
+          if (rs == 'R32' || n >= 9) {
+            keys.add('r32-$num');
+          }
+        }
+      }
+
+      // Title / label fallback: "Round of 32 - 9" / "R32_9" / "32-9"
+      final labelBlob =
+          '${m.matchLabel} ${m.seedLabel} ${m.round} ${m.roundLabel} ${m.id} ${m.matchKey}';
+      final fromLabel = RegExp(
+        r'(?:r\s*32|round\s*of\s*32|round\s*32|32)[\s_-]*(\d+)',
+        caseSensitive: false,
+      ).firstMatch(labelBlob);
+      if (fromLabel != null) {
+        final n = fromLabel.group(1);
+        if (n != null && n.isNotEmpty) {
+          keys.add('r32-$n');
+          keys.add('r16-$n');
+        }
+      }
+      return keys;
+    }
+
+    Set<String> lookupAliasesForRef(String ref, String categoryId) {
+      final out = <String>{};
+      final n = normalizeRef(ref);
+      if (n.isEmpty) return out;
+      out.add(n);
+      final n32 = RegExp(r'^r32-(\d+)$').firstMatch(n);
+      if (n32 != null) {
+        out.add('r16-${n32.group(1)}');
+      }
+      final n16 = RegExp(r'^r16-(\d+)$').firstMatch(n);
+      if (n16 != null) {
+        final num = int.tryParse(n16.group(1) ?? '') ?? 0;
+        // Always try R32 alias for high numbers; also when category has R32.
+        if (num >= 9 || categoriesWithR32.contains(categoryId.trim())) {
+          out.add('r32-${n16.group(1)}');
+        }
+      }
+      return out;
+    }
+
     bool sameName(String a, String b) {
       String norm(String s) {
         return s.trim().toLowerCase().replaceAll(RegExp(r'\s+'), ' ');
@@ -1076,15 +1146,17 @@ class AppState extends ChangeNotifier {
       final losers = <String, String>{};
       final elim = games.where((m) => m.type == 'elimination').toList();
       for (final m in elim) {
-        final key = normalizeRef(m.matchKey.trim().isNotEmpty ? m.matchKey : m.id);
-        final scoped = scopedResultKey(m.categoryId, key);
         final w = winnerName(m);
         final l = loserName(m);
-        if (key.isNotEmpty && w != null && w.trim().isNotEmpty && !isPlaceholder(w)) {
-          winners[scoped] = w.trim();
-        }
-        if (key.isNotEmpty && l != null && l.trim().isNotEmpty && !isPlaceholder(l)) {
-          losers[scoped] = l.trim();
+        final identityKeys = identityKeysForMatch(m);
+        for (final key in identityKeys) {
+          final scoped = scopedResultKey(m.categoryId, key);
+          if (w != null && w.trim().isNotEmpty && !isPlaceholder(w)) {
+            winners[scoped] = w.trim();
+          }
+          if (l != null && l.trim().isNotEmpty && !isPlaceholder(l)) {
+            losers[scoped] = l.trim();
+          }
         }
       }
 
@@ -1094,8 +1166,9 @@ class AppState extends ChangeNotifier {
         final sampleCat = elim.isNotEmpty ? elim.first.categoryId.trim() : '';
         debugPrint(
           '[elim-resolve] pass=$pass keys=${winners.length}/${losers.length} cat=$sampleCat '
-          'w:sf1=${w(sampleCat, 'sf1')} sf2=${w(sampleCat, 'sf2')} '
-          'cf1=${w(sampleCat, 'cf1')} cf2=${w(sampleCat, 'cf2')} '
+          'w:r32-1=${w(sampleCat, 'r32-1')} r32-9=${w(sampleCat, 'r32-9')} '
+          'r16-9=${w(sampleCat, 'r16-9')} '
+          'sf1=${w(sampleCat, 'sf1')} sf2=${w(sampleCat, 'sf2')} '
           'l:sf1=${l(sampleCat, 'sf1')} sf2=${l(sampleCat, 'sf2')}',
         );
       }
@@ -1119,18 +1192,25 @@ class AppState extends ChangeNotifier {
           }
         }
 
+        String? lookupResult(Map<String, String> table, String ref) {
+          for (final alias in lookupAliasesForRef(ref, m.categoryId)) {
+            final found = table[scopedResultKey(m.categoryId, alias)];
+            if (found != null && found.trim().isNotEmpty) return found;
+          }
+          return null;
+        }
+
         String resolveSide(String current) {
           final text = current.trim();
           if (!isPlaceholder(text)) return current;
           final ref = extractRefFromPlaceholder(text);
           if (ref == null || ref.isEmpty) return current;
-          final scoped = scopedResultKey(m.categoryId, ref);
           if (isWinnerPlaceholder(text)) {
-            final found = winners[scoped];
-            if (found != null && found.trim().isNotEmpty) return found;
+            final found = lookupResult(winners, ref);
+            if (found != null) return found;
           } else if (isLoserPlaceholder(text)) {
-            final found = losers[scoped];
-            if (found != null && found.trim().isNotEmpty) return found;
+            final found = lookupResult(losers, ref);
+            if (found != null) return found;
           }
           return current;
         }
