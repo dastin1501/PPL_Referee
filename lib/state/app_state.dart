@@ -837,9 +837,13 @@ class AppState extends ChangeNotifier {
 
       // Round of 32: R16 is fed by consecutive R32 winners.
       // R16-1 = W(R32-1)=A1/H2 vs W(R32-2)=B1/G2, ... R16-8 = W(R32-15) vs W(R32-16).
+      // In API data these R16 slots are often stored as quarter1..quarter8.
       if (rs == 'R16' && hasR32) {
-        final n = int.tryParse(
+        var n = int.tryParse(
           RegExp(r'^r16-(\d+)$').firstMatch(matchKeyNorm)?.group(1) ?? '',
+        );
+        n ??= int.tryParse(
+          RegExp(r'^qf(\d+)$').firstMatch(matchKeyNorm)?.group(1) ?? '',
         );
         if (n != null && n >= 1 && n <= 8) {
           final a = (n - 1) * 2 + 1;
@@ -852,22 +856,46 @@ class AppState extends ChangeNotifier {
       }
 
       // Quarters from R16 winners (8-bracket and Round of 32).
+      // In Round of 32, Quarters may be stored as semi1..4 (sf keys).
       if (rs == 'QF' && hasR16) {
-        if (matchKeyNorm == 'qf1') {
+        final key = matchKeyNorm.startsWith('sf')
+            ? 'qf${matchKeyNorm.substring(2)}'
+            : matchKeyNorm;
+        if (key == 'qf1') {
           return [makeWinnerPlaceholder('R16-1'), makeWinnerPlaceholder('R16-2')];
         }
-        if (matchKeyNorm == 'qf2') {
+        if (key == 'qf2') {
           return [makeWinnerPlaceholder('R16-3'), makeWinnerPlaceholder('R16-4')];
         }
-        if (matchKeyNorm == 'qf3') {
+        if (key == 'qf3') {
           return [makeWinnerPlaceholder('R16-5'), makeWinnerPlaceholder('R16-6')];
         }
-        if (matchKeyNorm == 'qf4') {
+        if (key == 'qf4') {
           return [makeWinnerPlaceholder('R16-7'), makeWinnerPlaceholder('R16-8')];
         }
       }
 
       if (rs == 'SF') {
+        // Round of 32: semi1..4 are Quarters (A-H / I-P paths), not true semis.
+        if (hasR32 && hasCF) {
+          final n = int.tryParse(
+                RegExp(r'^sf(\d+)$').firstMatch(matchKeyNorm)?.group(1) ?? '') ??
+              int.tryParse(
+                RegExp(r'^qf(\d+)$').firstMatch(matchKeyNorm)?.group(1) ?? '');
+          if (n == 1) {
+            return [makeWinnerPlaceholder('R16-1'), makeWinnerPlaceholder('R16-2')];
+          }
+          if (n == 2) {
+            return [makeWinnerPlaceholder('R16-3'), makeWinnerPlaceholder('R16-4')];
+          }
+          if (n == 3) {
+            return [makeWinnerPlaceholder('R16-5'), makeWinnerPlaceholder('R16-6')];
+          }
+          if (n == 4) {
+            return [makeWinnerPlaceholder('R16-7'), makeWinnerPlaceholder('R16-8')];
+          }
+          return null;
+        }
         // 2-bracket SF is seeded from group standings (not QF winners).
         if (!hasQF) return null;
         if (matchKeyNorm == 'sf1') {
@@ -884,29 +912,32 @@ class AppState extends ChangeNotifier {
         }
       }
       if (rs == 'CF') {
+        // True Semis (display SF). Website/API placeholders use QF = Quarters
+        // (semi*), not R16 (quarter*):
+        //   SF1 / cf1 = A–H = Winner QF1 vs Winner QF2
+        //   SF2 / cf2 = I–P = Winner QF3 vs Winner QF4
         if (matchKeyNorm == 'cf1') {
-          return [makeWinnerPlaceholder('SF1'), makeWinnerPlaceholder('SF2')];
+          return [makeWinnerPlaceholder('QF1'), makeWinnerPlaceholder('QF2')];
         }
         if (matchKeyNorm == 'cf2') {
-          return [makeWinnerPlaceholder('SF3'), makeWinnerPlaceholder('SF4')];
+          return [makeWinnerPlaceholder('QF3'), makeWinnerPlaceholder('QF4')];
         }
-        return [makeWinnerPlaceholder('SF1'), makeWinnerPlaceholder('SF2')];
+        return [makeWinnerPlaceholder('QF1'), makeWinnerPlaceholder('QF2')];
       }
       if (rs == 'BRONZE') {
         if (isSingleBracketMedals) return null;
-        // True Round of 32 (and normal brackets): bronze from SF losers.
-        // Legacy CF (crossover) brackets still use CF losers.
-        if (hasR32 || !hasCF) {
-          return [makeLoserPlaceholder('SF1'), makeLoserPlaceholder('SF2')];
+        // Round of 32 stores true semis as CF1/CF2; placeholders may say SF.
+        if (hasCF) {
+          return [makeLoserPlaceholder('CF1'), makeLoserPlaceholder('CF2')];
         }
-        return [makeLoserPlaceholder('CF1'), makeLoserPlaceholder('CF2')];
+        return [makeLoserPlaceholder('SF1'), makeLoserPlaceholder('SF2')];
       }
       if (rs == 'GOLD') {
         if (isSingleBracketMedals) return null;
-        if (hasR32 || !hasCF) {
-          return [makeWinnerPlaceholder('SF1'), makeWinnerPlaceholder('SF2')];
+        if (hasCF) {
+          return [makeWinnerPlaceholder('CF1'), makeWinnerPlaceholder('CF2')];
         }
-        return [makeWinnerPlaceholder('CF1'), makeWinnerPlaceholder('CF2')];
+        return [makeWinnerPlaceholder('SF1'), makeWinnerPlaceholder('SF2')];
       }
       return null;
     }
@@ -914,9 +945,11 @@ class AppState extends ChangeNotifier {
     String scopedResultKey(String categoryId, String ref) =>
         '${categoryId.trim()}|${ref.trim()}';
 
-    /// Round-of-32 matches may still carry legacy `round16_` / `r16-N` ids while
-    /// placeholders say Winner R32-N (or the reverse). Index + look up under
-    /// every equivalent key so R16-5..8 resolve like R16-1..4.
+    /// Round of 32 reuses legacy ids — keep winner keys separated by round:
+    ///   round16_* (title R32) → r32-N
+    ///   quarter*  (title R16) → r16-N
+    ///   semi*     (title QF)  → sf-N / qf-N  (website "Winner QF")
+    ///   cf*       (title SF)  → cf-N
     Set<String> identityKeysForMatch(TournamentMatch m) {
       final keys = <String>{};
       void addRaw(String raw) {
@@ -928,21 +961,58 @@ class AppState extends ChangeNotifier {
       addRaw(m.id);
 
       final rs = m.roundShort.trim().toUpperCase();
-      for (final k in [...keys]) {
-        final n32 = RegExp(r'^r32-(\d+)$').firstMatch(k);
-        if (n32 != null) {
-          keys.add('r32-${n32.group(1)}');
-          keys.add('r16-${n32.group(1)}');
+      final hasR32 = categoriesWithR32.contains(m.categoryId.trim());
+
+      if (hasR32 && rs == 'R32') {
+        // round16_N normalizes to r16-N — do not pollute real R16 lookups.
+        for (final k in [...keys]) {
+          final n16 = RegExp(r'^r16-(\d+)$').firstMatch(k);
+          if (n16 != null) {
+            keys.remove(k);
+            keys.add('r32-${n16.group(1)}');
+          }
         }
-        final n16 = RegExp(r'^r16-(\d+)$').firstMatch(k);
-        if (n16 != null) {
-          final num = n16.group(1)!;
-          keys.add('r16-$num');
-          // r16-9..16 cannot be a real Round-of-16 slot (only 1..8 exist).
-          // Also cross-alias when this match is explicitly Round of 32.
-          final n = int.tryParse(num) ?? 0;
-          if (rs == 'R32' || n >= 9) {
-            keys.add('r32-$num');
+      } else if (hasR32 && rs == 'R16') {
+        // quarterN normalizes to qfN — reserve qf for Quarters (Winner QF).
+        for (final k in [...keys]) {
+          final nQf = RegExp(r'^qf(\d+)$').firstMatch(k);
+          if (nQf != null) {
+            keys.remove(k);
+            keys.add('r16-${nQf.group(1)}');
+          }
+        }
+      } else if (hasR32 && (rs == 'QF' || rs == 'SF')) {
+        // Quarters live in semi* ids; website placeholders say Winner QF-N.
+        for (final k in [...keys]) {
+          final nSf = RegExp(r'^sf(\d+)$').firstMatch(k);
+          if (nSf != null) {
+            keys.add('sf${nSf.group(1)}');
+            keys.add('qf${nSf.group(1)}');
+          }
+        }
+      } else {
+        for (final k in [...keys]) {
+          final n32 = RegExp(r'^r32-(\d+)$').firstMatch(k);
+          if (n32 != null) {
+            keys.add('r32-${n32.group(1)}');
+            keys.add('r16-${n32.group(1)}');
+          }
+          final n16 = RegExp(r'^r16-(\d+)$').firstMatch(k);
+          if (n16 != null) {
+            final num = n16.group(1)!;
+            keys.add('r16-$num');
+            final n = int.tryParse(num) ?? 0;
+            if (n >= 9) keys.add('r32-$num');
+          }
+          final nSf = RegExp(r'^sf(\d+)$').firstMatch(k);
+          if (rs == 'QF') {
+            if (nSf != null) keys.add('qf${nSf.group(1)}');
+            final nQf = RegExp(r'^qf(\d+)$').firstMatch(k);
+            if (nQf != null) keys.add('sf${nQf.group(1)}');
+          }
+          if (rs == 'R16') {
+            final nQf = RegExp(r'^qf(\d+)$').firstMatch(k);
+            if (nQf != null) keys.add('r16-${nQf.group(1)}');
           }
         }
       }
@@ -958,7 +1028,6 @@ class AppState extends ChangeNotifier {
         final n = fromLabel.group(1);
         if (n != null && n.isNotEmpty) {
           keys.add('r32-$n');
-          keys.add('r16-$n');
         }
       }
       return keys;
@@ -968,16 +1037,27 @@ class AppState extends ChangeNotifier {
       final out = <String>{};
       final n = normalizeRef(ref);
       if (n.isEmpty) return out;
+      final hasR32 = categoriesWithR32.contains(categoryId.trim());
+
+      // R32: "Winner QF-N" = Quarter-Final N (semi*), never R16 (quarter*).
+      final nQf = RegExp(r'^qf(\d+)$').firstMatch(n);
+      if (nQf != null && hasR32) {
+        out.add('sf${nQf.group(1)}');
+        out.add('qf${nQf.group(1)}');
+        return out;
+      }
+
       out.add(n);
       final n32 = RegExp(r'^r32-(\d+)$').firstMatch(n);
-      if (n32 != null) {
+      if (n32 != null && !hasR32) {
+        // Legacy only: some R32 rows were indexed under r16-*.
         out.add('r16-${n32.group(1)}');
       }
       final n16 = RegExp(r'^r16-(\d+)$').firstMatch(n);
       if (n16 != null) {
         final num = int.tryParse(n16.group(1) ?? '') ?? 0;
-        // Always try R32 alias for high numbers; also when category has R32.
-        if (num >= 9 || categoriesWithR32.contains(categoryId.trim())) {
+        // Never fall back to r32 for real R16 slots (1..8) in Round of 32.
+        if (num >= 9 && !hasR32) {
           out.add('r32-${n16.group(1)}');
         }
       }
@@ -2377,6 +2457,9 @@ class AppState extends ChangeNotifier {
     if (ref.isEmpty) return rawRef.trim();
 
     if (categoryHasRoundOf32(categoryId)) {
+      // Logic = two R16 halves (A–H, I–P); UI names only:
+      // R32→32, R16→16, QF/semi→Q, CF→SF (SF1=A–H, SF2=I–P).
+      // Website "Winner QF" means Quarters (semi*), not R16.
       if (ref.startsWith('r32-')) {
         return _formatDisplayBracketRef('r32', ref.substring(4));
       }
@@ -2387,9 +2470,8 @@ class AppState extends ChangeNotifier {
         return _formatDisplayBracketRef('q', ref.substring(2));
       }
       if (ref.startsWith('sf')) {
-        return _formatDisplayBracketRef('sf', ref.substring(2));
+        return _formatDisplayBracketRef('q', ref.substring(2));
       }
-      // Stale crossover refs in a true R32 bracket.
       if (ref.startsWith('cf')) {
         return _formatDisplayBracketRef('sf', ref.substring(2));
       }
@@ -2491,6 +2573,10 @@ class AppState extends ChangeNotifier {
         case 'QF':
           return n != null ? 'Q-$n' : 'Q';
         case 'SF':
+          // R32: semi* ids are Quarters (A–H / I–P paths).
+          return n != null ? 'Q-$n' : 'Q';
+        case 'CF':
+          // R32: cf* ids are true Semis (SF1 = A–H, SF2 = I–P).
           return n != null ? 'SF-$n' : 'SF';
         case 'GOLD':
           return 'GOLD';
@@ -2557,6 +2643,9 @@ class AppState extends ChangeNotifier {
         case 'QF':
           return 'Quarter Finals';
         case 'SF':
+          // R32: semi* = Quarters even if roundShort still says SF.
+          return 'Quarter Finals';
+        case 'CF':
           return 'Semi-Finals';
         case 'GOLD':
           return 'Battle for Gold';

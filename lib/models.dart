@@ -296,12 +296,36 @@ class TournamentMatch {
       if (direct.isNotEmpty) return direct;
       final round = j['round'];
       if (round is Map) {
-        return pickFirstNonEmpty([
+        final fromMap = pickFirstNonEmpty([
           round['roundShort'],
           round['short'],
           round['code'],
         ]);
+        if (fromMap.isNotEmpty) return fromMap;
       }
+      // Prefer explicit round title over id-derived short codes.
+      // Round of 32 reuses round16_/quarter/semi/cf ids with remapped titles.
+      final roundText = (round is Map)
+          ? pickFirstNonEmpty([
+              round['roundLabel'],
+              round['label'],
+              round['name'],
+            ])
+          : (round?.toString() ?? '');
+      final low = roundText.trim().toLowerCase();
+      if (low.contains('round of 32') || low == 'r32') return 'R32';
+      if (low.contains('round of 16') || low == 'r16') return 'R16';
+      if (low.contains('quarter')) return 'QF';
+      if (low.contains('semis-final') ||
+          low.contains('semi-final') ||
+          low.contains('semifinal') ||
+          low == 'semis') {
+        // In Round of 32, true semis are often stored as CF ids with this title.
+        return 'CF';
+      }
+      if (low.contains('crossover')) return 'CF';
+      if (low.contains('bronze')) return 'BRONZE';
+      if (low.contains('gold') || low.contains('final')) return 'GOLD';
       return '';
     }
 
@@ -555,6 +579,8 @@ Set<String> _makeElimIdAliases(String id) {
   if (s.startsWith('qf')) push('quarter${s.replaceFirst('qf', '')}');
   if (s.startsWith('semi')) push('sf${s.replaceFirst('semi', '')}');
   if (s.startsWith('sf')) push('semi${s.replaceFirst('sf', '')}');
+  if (s.startsWith('crossover')) push('cf${s.replaceFirst('crossover', '')}');
+  if (s.startsWith('cf')) push('crossover${s.replaceFirst('cf', '')}');
   if (s.startsWith('round32_')) push('r32-${s.replaceFirst('round32_', '')}');
   if (s.startsWith('round32-')) push('r32-${s.replaceFirst('round32-', '')}');
   if (s.startsWith('r32-')) {
@@ -584,6 +610,8 @@ String _elimScheduleKeyFromId(String id) {
   if (s.startsWith('qf')) return s;
   if (s.startsWith('semi')) return 'sf${s.replaceFirst('semi', '')}';
   if (s.startsWith('sf')) return s;
+  if (s.startsWith('crossover')) return 'cf${s.replaceFirst('crossover', '')}';
+  if (s.startsWith('cf')) return s;
   if (s == 'final' || s == 'finals') return 'final';
   if (s == 'bronze') return 'bronze';
   return '';
