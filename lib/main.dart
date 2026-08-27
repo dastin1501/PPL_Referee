@@ -7,7 +7,7 @@ import 'screens/signup_screen.dart';
 import 'screens/tournament_list_screen.dart';
 import 'screens/court_games_screen.dart';
 import 'screens/referee_dashboard_screen.dart';
-import 'screens/team_match_confirmation_screen.dart';
+import 'widgets/global_sync_indicator.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -62,6 +62,14 @@ class _RefereeAppState extends State<RefereeApp> with WidgetsBindingObserver {
               colorScheme: ColorScheme.fromSeed(seedColor: Colors.blue),
               useMaterial3: true,
             ),
+            builder: (context, child) {
+              return Stack(
+                children: [
+                  if (child != null) child,
+                  if (app.currentUser != null) const GlobalSyncIndicator(),
+                ],
+              );
+            },
             home: Builder(
               builder: (context) {
                 if (!app.initialized) {

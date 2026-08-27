@@ -4,7 +4,13 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../services/api_service.dart';
+import '../services/socket_service.dart';
+import '../services/score_event_queue.dart';
+import '../services/match_update_queue.dart';
 import '../models.dart';
+import '../models/score_event.dart';
+import '../models/match_update.dart';
+import '../utils/court_slug.dart';
 
 class AppState extends ChangeNotifier {
   static const _storageTokenKey = 'referee_auth_token';
@@ -13,11 +19,31 @@ class AppState extends ChangeNotifier {
   static const bool _useScheduledQueueEndpoint = false;
 
   final ApiService _api = ApiService();
+  final SocketService _socket = SocketService.instance;
+  late final ScoreEventQueue scoreQueue;
+  late final MatchUpdateQueue matchUpdateQueue;
+
+  /// Last known serving side for overlay (`team1` / `team2`) per match identity.
+  final Map<String, String> _servingByMatch = {};
+  String? _joinedCourtSlug;
 
   AppState() {
     _api.onUnauthorized = _handleUnauthorized;
+    scoreQueue = ScoreEventQueue(
+      api: _api,
+      onChanged: () {
+        if (!_disposed) notifyListeners();
+      },
+    );
+    matchUpdateQueue = MatchUpdateQueue(
+      socket: _socket,
+      onChanged: () {
+        if (!_disposed) notifyListeners();
+      },
+    );
   }
 
+  bool _disposed = false;
   bool _handlingUnauthorized = false;
 
   User? currentUser;
@@ -40,6 +66,15 @@ class AppState extends ChangeNotifier {
   Timer? _ongoingSyncTimer;
   Map<String, dynamic>? _pendingOngoingFields;
   String? _pendingOngoingMatchKey;
+  String? _joinedTournamentId;
+  final Set<String> _joinedMatchIds = {};
+  bool _liveListenersAttached = false;
+  Timer? _scheduleRefreshDebounce;
+
+  int get pendingScoreSyncCount => scoreQueue.pendingCount;
+  int get pendingScoreSyncMatchCount => scoreQueue.pendingMatchCount;
+  bool get scoreSyncHasStale => scoreQueue.hasStalePending;
+  bool get socketConnected => _socket.connected;
 
   // Tutorial simulation mode:
   // - Uses the exact same RefereeDashboard UI
@@ -104,11 +139,14 @@ class AppState extends ChangeNotifier {
     final token = prefs.getString(_storageTokenKey);
     final userJson = prefs.getString(_storageUserKey);
     await _loadOutbox();
+    await scoreQueue.load();
+    await matchUpdateQueue.load();
     if (token != null && userJson != null) {
       try {
         final data = jsonDecode(userJson) as Map<String, dynamic>;
         _api.setToken(token);
         currentUser = User.fromJson(data);
+        _ensureLiveSocket();
         await loadTournaments();
       } catch (e) {
         if (e is AuthException) {
@@ -141,6 +179,10 @@ class AppState extends ChangeNotifier {
   Future<void> refreshOnResume() async {
     if (currentUser == null || loading) return;
     try {
+      _ensureLiveSocket();
+      _rejoinLiveRooms();
+      unawaited(scoreQueue.flush());
+      unawaited(matchUpdateQueue.flush());
       if (selectedTournament != null) {
         await refreshSelectedTournament();
       } else {
@@ -165,6 +207,10 @@ class AppState extends ChangeNotifier {
     await prefs.setString(_storageApiBaseUrlKey, normalized);
     _api.setBaseUrl(normalized);
     apiBaseUrl = _api.baseUrl;
+    if (currentUser != null) {
+      _ensureLiveSocket();
+      _rejoinLiveRooms();
+    }
     notifyListeners();
   }
 
@@ -214,6 +260,7 @@ class AppState extends ChangeNotifier {
           await prefs.setString(_storageTokenKey, result.token!);
         }
         await prefs.setString(_storageUserKey, jsonEncode(result.user!.toJson()));
+        _ensureLiveSocket();
         notifyListeners();
         await loadTournaments();
         return true;
@@ -250,6 +297,8 @@ class AppState extends ChangeNotifier {
   }
 
   Future<void> selectTournament(Tournament t) async {
+    leaveLiveMatchRooms();
+    leaveLiveTournament();
     selectedTournament = t;
     _scheduledQueueEtag = null;
     loading = true;
@@ -267,9 +316,11 @@ class AppState extends ChangeNotifier {
         _overlayAssignedMatches(assigned);
       } catch (_) {}
       _resolveEliminationPlaceholdersFromTournamentDetails();
+      _applyQueuedSnapshotsToGames();
       
       selectedCourt = null;
       selectedDate = null;
+      joinLiveTournament(fullTournament.id);
     } catch (e) {
       error = 'Failed to load tournament details: $e';
     }
@@ -278,9 +329,11 @@ class AppState extends ChangeNotifier {
   }
 
   Future<void> selectCourt(String c) async {
+    final prevSlug = courtSlug(selectedCourt);
     selectedCourt = c;
     _scheduledQueueEtag = null;
     _autoPickSelectedDate();
+    _joinSelectedCourtRoom(leavePrevious: prevSlug);
     notifyListeners();
     await refreshSelectedTournament();
     await _refreshScheduledQueueForSelection();
@@ -579,14 +632,24 @@ class AppState extends ChangeNotifier {
 
   void openGame(TournamentMatch g) {
     selectedGame = g;
+    joinLiveMatchForGame(g);
     notifyListeners();
+    // New match on this court — overlay swaps matchId / team names.
+    unawaited(publishCourtMatchUpdate(match: g));
   }
 
   int selectedGameNumber = 1;
   void openGameWithNumber(TournamentMatch g, int gameNo) {
     selectedGame = g;
     selectedGameNumber = gameNo;
+    joinLiveMatchForGame(g);
     notifyListeners();
+    unawaited(publishCourtMatchUpdate(match: g, gameIndex: gameNo));
+  }
+
+  /// Leave match socket room when leaving the referee dashboard.
+  void closeSelectedGameLive() {
+    leaveLiveMatchRooms();
   }
 
   Future<void> refreshSelectedTournament() async {
@@ -604,6 +667,7 @@ class AppState extends ChangeNotifier {
         _overlayAssignedMatches(assigned);
       } catch (_) {}
       _resolveEliminationPlaceholdersFromTournamentDetails();
+      _applyQueuedSnapshotsToGames();
       if (selectedGame != null) {
         final selectedKey = _matchIdentityKey(selectedGame!);
         final refreshedSelected = games.where((m) => _matchIdentityKey(m) == selectedKey).toList();
@@ -1876,7 +1940,7 @@ class AppState extends ChangeNotifier {
 
     Future<SubmitScoreResult> attemptSubmit() async {
       ongoingSyncing = isOngoingStatus;
-      if (ongoingSyncing) notifyListeners();
+      notifyListeners();
       try {
         final result = await _api.submitScore(payload);
         if (kDebugMode) {
@@ -2630,6 +2694,27 @@ class AppState extends ChangeNotifier {
     return m.roundShort;
   }
 
+  /// Same title used on court list cards and the referee dashboard AppBar.
+  String displayMatchTitle(TournamentMatch m, int gameNo) {
+    final n = gameNo.clamp(1, 3);
+    if (m.type == 'elimination') {
+      final badge = displayMatchBadge(m).trim();
+      if (badge.isNotEmpty) return '$badge · Game $n';
+      final rl = displayRoundLabel(m).trim();
+      if (rl.isNotEmpty) return '$rl · Game $n';
+    }
+    final sl = m.seedLabel.trim();
+    if (sl.isNotEmpty) return '$sl · Game $n';
+    var ml = m.matchLabel.trim();
+    ml = ml
+        .replaceAll(
+          RegExp(r'^\s*GA\d+(?:\.\d+)?\s*-\s*', caseSensitive: false),
+          '',
+        )
+        .trim();
+    return ml.isNotEmpty ? '$ml · Game $n' : 'Game $n';
+  }
+
   String displayRoundLabel(TournamentMatch m) {
     if (m.type != 'elimination') return m.roundLabel;
     final rs = m.roundShort.trim().toUpperCase();
@@ -2675,6 +2760,11 @@ class AppState extends ChangeNotifier {
 
   Future<void> logout({String? reason}) async {
     _ongoingSyncTimer?.cancel();
+    _scheduleRefreshDebounce?.cancel();
+    leaveLiveMatchRooms();
+    leaveLiveTournament();
+    _detachLiveListeners();
+    _socket.disconnect();
     _tutorialSimulationMode = false;
     _savedSelectedTournament = null;
     _savedSelectedGame = null;
@@ -2693,5 +2783,500 @@ class AppState extends ChangeNotifier {
     _api.clearToken();
     error = reason;
     notifyListeners();
+  }
+
+  // ---------------------------------------------------------------------------
+  // Live Socket.IO
+  // - score/status/schedule: receive-only (+ room join/leave)
+  // - match_update: local-first emit via MatchUpdateQueue for OBS overlays
+  // ---------------------------------------------------------------------------
+
+  void _ensureLiveSocket() {
+    if (tutorialSimulationMode) return;
+    final s = _socket.ensureConnected(apiBaseUrl.isNotEmpty ? apiBaseUrl : _api.baseUrl);
+    if (s == null) return;
+    _attachLiveListeners();
+  }
+
+  void _attachLiveListeners() {
+    if (_liveListenersAttached) return;
+    final s = _socket.socket;
+    if (s == null) return;
+    _liveListenersAttached = true;
+    s.on('score-updated', _onLiveScoreUpdated);
+    s.on('status-updated', _onLiveStatusUpdated);
+    s.on('schedule-updated', _onLiveScheduleUpdated);
+    s.on('connect', _onSocketConnect);
+    s.on('reconnect', _onSocketReconnect);
+  }
+
+  void _detachLiveListeners() {
+    if (!_liveListenersAttached) return;
+    _liveListenersAttached = false;
+    _socket.off('score-updated', _onLiveScoreUpdated);
+    _socket.off('status-updated', _onLiveStatusUpdated);
+    _socket.off('schedule-updated', _onLiveScheduleUpdated);
+    _socket.off('connect', _onSocketConnect);
+    _socket.off('reconnect', _onSocketReconnect);
+  }
+
+  void _onSocketConnect(dynamic _) => _rejoinLiveRooms(refetch: true);
+  void _onSocketReconnect(dynamic _) => _rejoinLiveRooms(refetch: true);
+
+  void _rejoinLiveRooms({bool refetch = false}) {
+    final tid = _joinedTournamentId;
+    if (tid != null && tid.isNotEmpty) {
+      _socket.joinTournament(tid);
+    }
+    for (final mid in [..._joinedMatchIds]) {
+      _socket.joinMatch(mid);
+    }
+    _joinSelectedCourtRoom();
+    // Flush local queues after rooms are rejoined.
+    unawaited(scoreQueue.flush());
+    unawaited(matchUpdateQueue.requeueAllForReconnect());
+    if (refetch && selectedTournament != null && !loading) {
+      unawaited(refreshSelectedTournament());
+    }
+  }
+
+  void _joinSelectedCourtRoom({String? leavePrevious}) {
+    final slug = courtSlug(selectedCourt);
+    final leave = (leavePrevious ?? _joinedCourtSlug ?? '').trim();
+    if (leave.isNotEmpty && leave != slug) {
+      _socket.leaveCourt(leave);
+    }
+    if (slug.isEmpty) {
+      _joinedCourtSlug = null;
+      return;
+    }
+    _socket.joinCourt(slug);
+    _joinedCourtSlug = slug;
+  }
+
+  /// Overlay match id — stable per match for the broadcast consumer.
+  String overlayMatchIdFor(TournamentMatch g) {
+    final doc = g.documentId.trim();
+    if (doc.isNotEmpty) return doc;
+    final id = g.id.trim();
+    if (id.isNotEmpty) return id;
+    if (g.type == 'group') {
+      final parts = [g.categoryId, g.groupId, g.matchKey]
+          .map((e) => e.trim())
+          .where((e) => e.isNotEmpty);
+      return parts.join(':');
+    }
+    final key = g.matchKey.trim();
+    if (key.isNotEmpty) return key;
+    return _matchIdentityKey(g);
+  }
+
+  /// Remember serving side from the dashboard (`team1` / `team2`).
+  void setMatchServingSide({
+    TournamentMatch? match,
+    required String serving,
+  }) {
+    final g = match ?? selectedGame;
+    if (g == null) return;
+    final mid = _matchIdentityKey(g);
+    if (mid.isEmpty) return;
+    final side = serving == 'team2' ? 'team2' : 'team1';
+    _servingByMatch[mid] = side;
+  }
+
+  String servingSideFor(TournamentMatch g) {
+    final mid = _matchIdentityKey(g);
+    return _servingByMatch[mid] ?? 'team1';
+  }
+
+  /// Infer team1/team2 from a player display name on the match.
+  String servingSideFromPlayer(TournamentMatch g, String? playerName) {
+    final name = (playerName ?? '').trim();
+    if (name.isEmpty) return servingSideFor(g);
+    final left = g.player1.toLowerCase();
+    final right = g.player2.toLowerCase();
+    final n = name.toLowerCase();
+    if (left.contains(n) || n.contains(left.split('/').first.trim())) {
+      return 'team1';
+    }
+    if (right.contains(n) || n.contains(right.split('/').first.trim())) {
+      return 'team2';
+    }
+    // Fallback: check split team names
+    for (final part in g.player1.split(RegExp(r'[/,|&]'))) {
+      if (part.trim().isNotEmpty && n.contains(part.trim().toLowerCase())) {
+        return 'team1';
+      }
+    }
+    for (final part in g.player2.split(RegExp(r'[/,|&]'))) {
+      if (part.trim().isNotEmpty && n.contains(part.trim().toLowerCase())) {
+        return 'team2';
+      }
+    }
+    return servingSideFor(g);
+  }
+
+  List<bool> _gamesWonFlags(TournamentMatch g, {required bool team1}) {
+    final gpm = gamesPerMatchFor(g).clamp(1, 3);
+    final winsNeeded = (gpm + 1) ~/ 2;
+    var wins = 0;
+    for (int i = 1; i <= gpm; i++) {
+      final a = _scoreForGame(g, i, true) ?? 0;
+      final b = _scoreForGame(g, i, false) ?? 0;
+      final status = normalizeGameStatusKey(
+        i == 1 ? g.game1Status : (i == 2 ? g.game2Status : g.game3Status),
+      );
+      final finished = status == 'completed' ||
+          (a >= 11 && (a - b) >= 2) ||
+          (b >= 11 && (b - a) >= 2);
+      if (!finished) continue;
+      if (team1 && a > b) wins += 1;
+      if (!team1 && b > a) wins += 1;
+    }
+    return List<bool>.generate(winsNeeded, (i) => i < wins);
+  }
+
+  int _currentGamePointScore(TournamentMatch g, int gameIndex, bool team1) {
+    return _scoreForGame(g, gameIndex.clamp(1, 3), team1) ?? 0;
+  }
+
+  /// Build + enqueue a court-scoped match_update (never blocks UI).
+  Future<void> publishCourtMatchUpdate({
+    TournamentMatch? match,
+    int? gameIndex,
+    int? score1,
+    int? score2,
+    String? serving,
+    String? servingPlayer,
+  }) async {
+    if (tutorialSimulationMode) return;
+    final t = selectedTournament;
+    final g = match ?? selectedGame;
+    if (t == null || g == null) return;
+
+    final courtName = (selectedCourt ?? g.court).trim();
+    final slug = courtSlug(courtName);
+    if (slug.isEmpty) return;
+
+    _joinSelectedCourtRoom();
+
+    final gi = (gameIndex ?? selectedGameNumber).clamp(1, 3);
+    if (serving != null && serving.isNotEmpty) {
+      setMatchServingSide(match: g, serving: serving);
+    } else if (servingPlayer != null) {
+      setMatchServingSide(
+        match: g,
+        serving: servingSideFromPlayer(g, servingPlayer),
+      );
+    }
+
+    final team1Name = displayPlayerName(
+      g,
+      g.player1Name.trim().isNotEmpty ? g.player1Name : g.player1,
+    );
+    final team2Name = displayPlayerName(
+      g,
+      g.player2Name.trim().isNotEmpty ? g.player2Name : g.player2,
+    );
+
+    final payload = MatchUpdatePayload(
+      court: slug,
+      matchId: overlayMatchIdFor(g),
+      tournament: t.name,
+      tournamentId: t.id,
+      team1Name: team1Name,
+      team1Score: score1 ?? _currentGamePointScore(g, gi, true),
+      team1Games: _gamesWonFlags(g, team1: true),
+      team2Name: team2Name,
+      team2Score: score2 ?? _currentGamePointScore(g, gi, false),
+      team2Games: _gamesWonFlags(g, team1: false),
+      serving: servingSideFor(g),
+    );
+
+    // Fire-and-forget local-first queue.
+    unawaited(matchUpdateQueue.enqueue(payload));
+  }
+
+  void joinLiveTournament(String tournamentId) {
+    if (tutorialSimulationMode) return;
+    _ensureLiveSocket();
+    final id = tournamentId.trim();
+    if (id.isEmpty) return;
+    if (_joinedTournamentId != null && _joinedTournamentId != id) {
+      leaveLiveTournament();
+    }
+    _joinedTournamentId = id;
+    _socket.joinTournament(id);
+  }
+
+  void leaveLiveTournament() {
+    final id = _joinedTournamentId;
+    if (id != null && id.isNotEmpty) {
+      _socket.leaveTournament(id);
+    }
+    _joinedTournamentId = null;
+  }
+
+  /// Room ids the server may use for `match:{id}` (elim id / doc id / matchKey).
+  List<String> liveMatchRoomIdsFor(TournamentMatch g) {
+    final ids = <String>{};
+    void add(String? v) {
+      final t = (v ?? '').trim();
+      if (t.isNotEmpty) ids.add(t);
+    }
+
+    add(g.documentId);
+    add(g.id);
+    add(g.matchKey);
+    if (g.type == 'group' &&
+        g.groupId.trim().isNotEmpty &&
+        g.matchKey.trim().isNotEmpty) {
+      add('${g.groupId.trim()}:${g.matchKey.trim()}');
+    }
+    return ids.toList();
+  }
+
+  void joinLiveMatchForGame(TournamentMatch g) {
+    if (tutorialSimulationMode) return;
+    _ensureLiveSocket();
+    final tid = selectedTournament?.id.trim() ?? '';
+    if (tid.isNotEmpty) joinLiveTournament(tid);
+
+    leaveLiveMatchRooms();
+    for (final mid in liveMatchRoomIdsFor(g)) {
+      _joinedMatchIds.add(mid);
+      _socket.joinMatch(mid);
+    }
+    if (kDebugMode) {
+      debugPrint('[socket] join-match ids=${_joinedMatchIds.toList()}');
+    }
+  }
+
+  void leaveLiveMatchRooms() {
+    for (final mid in [..._joinedMatchIds]) {
+      _socket.leaveMatch(mid);
+    }
+    _joinedMatchIds.clear();
+  }
+
+  bool _livePayloadForSelectedTournament(Map<String, dynamic> payload) {
+    final tid = selectedTournament?.id.trim() ?? '';
+    if (tid.isEmpty) return false;
+    var pid = (payload['tournamentId'] ?? '').toString().trim();
+    if (pid.isEmpty) {
+      final nested = payload['tournament'];
+      if (nested is Map) {
+        pid = (nested['_id'] ?? nested['id'] ?? '').toString().trim();
+      }
+    }
+    return pid.isEmpty || pid == tid;
+  }
+
+  void _onLiveScoreUpdated(dynamic data) {
+    _handleLiveMatchPayload(data, source: 'score-updated');
+  }
+
+  void _onLiveStatusUpdated(dynamic data) {
+    _handleLiveMatchPayload(data, source: 'status-updated');
+  }
+
+  void _onLiveScheduleUpdated(dynamic data) {
+    if (tutorialSimulationMode) return;
+    Map<String, dynamic>? payload;
+    if (data is Map) {
+      payload = Map<String, dynamic>.from(data);
+    }
+    if (payload == null || !_livePayloadForSelectedTournament(payload)) return;
+    if (kDebugMode) debugPrint('[socket] schedule-updated');
+    _scheduleRefreshDebounce?.cancel();
+    _scheduleRefreshDebounce = Timer(const Duration(milliseconds: 400), () {
+      if (selectedTournament != null && !loading) {
+        unawaited(refreshSelectedTournament());
+      }
+    });
+  }
+
+  void _handleLiveMatchPayload(dynamic data, {required String source}) {
+    if (tutorialSimulationMode) return;
+    if (data is! Map) return;
+    final payload = Map<String, dynamic>.from(data);
+    if (!_livePayloadForSelectedTournament(payload)) return;
+
+    final matchIdentity = _identityFromLivePayload(payload);
+    // Local queue is source of truth until acked — ignore peer/server absolute
+    // overwrites for matches we still have pending delta events for.
+    if (matchIdentity != null && scoreQueue.hasPendingForMatch(matchIdentity)) {
+      if (kDebugMode) {
+        debugPrint('[socket] $source ignored — local pending for $matchIdentity');
+      }
+      return;
+    }
+    if (matchIdentity != null &&
+        _inFlightSubmitSeqByMatch.keys.any((k) => k.startsWith('$matchIdentity:'))) {
+      return;
+    }
+
+    final updateFields = payload['updateFields'];
+    final matchObj = payload['match'];
+    Map<String, dynamic> fields = {};
+    if (updateFields is Map) {
+      fields = Map<String, dynamic>.from(updateFields);
+    } else if (matchObj is Map) {
+      fields = Map<String, dynamic>.from(matchObj);
+    }
+
+    if (fields.isEmpty) {
+      if (kDebugMode) debugPrint('[socket] $source thin payload → refresh');
+      _scheduleRefreshDebounce?.cancel();
+      _scheduleRefreshDebounce = Timer(const Duration(milliseconds: 350), () {
+        if (selectedTournament != null && !loading) {
+          unawaited(refreshSelectedTournament());
+        }
+      });
+      return;
+    }
+
+    TournamentMatch? target;
+    if (matchIdentity != null) {
+      target = _findMatchByIdentity(matchIdentity);
+    }
+    target ??= _findMatchFromLivePayload(payload);
+    if (target == null) {
+      if (kDebugMode) debugPrint('[socket] $source no local match match');
+      return;
+    }
+
+    final merged = _mergeMatchWithFields(target, fields);
+    _replaceMatchByIdentity(_matchIdentityKey(target), merged);
+    if (kDebugMode) {
+      debugPrint(
+        '[socket] $source applied identity=${_matchIdentityKey(target)} '
+        'status=${fields['status']} score=${fields['game1Player1']}-${fields['game1Player2']}',
+      );
+    }
+    notifyListeners();
+  }
+
+  String? _identityFromLivePayload(Map<String, dynamic> payload) {
+    final categoryId = (payload['categoryId'] ?? '').toString().trim();
+    final type = (payload['type'] ?? '').toString().trim().toLowerCase();
+    final groupId = (payload['groupId'] ?? '').toString().trim();
+    final matchKey = (payload['matchKey'] ?? '').toString().trim();
+    final matchId = (payload['matchId'] ?? '').toString().trim();
+    final docId = (payload['documentId'] ??
+            payload['_id'] ??
+            (payload['match'] is Map ? payload['match']['_id'] : null) ??
+            '')
+        .toString()
+        .trim();
+
+    if (type == 'group' &&
+        categoryId.isNotEmpty &&
+        groupId.isNotEmpty &&
+        matchKey.isNotEmpty) {
+      return 'group:$categoryId:$groupId:$matchKey';
+    }
+    if ((type == 'elimination' || matchId.isNotEmpty) &&
+        categoryId.isNotEmpty &&
+        matchId.isNotEmpty) {
+      return 'elim:$categoryId:$matchId';
+    }
+    if (docId.isNotEmpty) return 'doc:$docId';
+    return null;
+  }
+
+  TournamentMatch? _findMatchFromLivePayload(Map<String, dynamic> payload) {
+    final categoryId = (payload['categoryId'] ?? '').toString().trim();
+    final groupId = (payload['groupId'] ?? '').toString().trim();
+    final matchKey = (payload['matchKey'] ?? '').toString().trim();
+    final matchId = (payload['matchId'] ?? '').toString().trim();
+    final docId = (payload['documentId'] ?? '').toString().trim();
+
+    for (final m in games) {
+      if (docId.isNotEmpty && m.documentId.trim() == docId) return m;
+      if (categoryId.isNotEmpty && m.categoryId.trim() != categoryId) continue;
+      if (matchId.isNotEmpty && m.id.trim() == matchId) return m;
+      if (groupId.isNotEmpty &&
+          matchKey.isNotEmpty &&
+          m.groupId.trim() == groupId &&
+          m.matchKey.trim() == matchKey) {
+        return m;
+      }
+    }
+    return null;
+  }
+
+  /// Local-first: UI already updated. Persist delta event and flush in background.
+  /// Never awaits network — referee can keep scoring / leave the match immediately.
+  Future<void> enqueueScoreEvent({
+    required ScoreEventAction action,
+    required int gameIndex,
+    required Map<String, dynamic> snapshot,
+    TournamentMatch? match,
+    int? side,
+  }) async {
+    if (tutorialSimulationMode) {
+      final g = match ?? selectedGame;
+      if (g != null) {
+        final updated = _mergeMatchWithFields(g, snapshot);
+        _replaceSelectedGame(updated, g);
+        notifyListeners();
+      }
+      return;
+    }
+    final t = selectedTournament;
+    final g = match ?? selectedGame;
+    if (t == null || g == null) return;
+
+    final matchIdentity = _matchIdentityKey(g);
+    final gameIdentity = _matchGameIdentityKey(g, gameIndex.clamp(1, 3));
+    if (matchIdentity.isEmpty || gameIdentity.isEmpty) return;
+
+    // Optimistic local merge so court list / selectedGame stay consistent.
+    final updated = _mergeMatchWithFields(g, snapshot);
+    _replaceSelectedGame(updated, g);
+    notifyListeners();
+
+    await scoreQueue.enqueue(
+      matchIdentity: matchIdentity,
+      gameIdentity: gameIdentity,
+      tournamentId: t.id,
+      categoryId: g.categoryId,
+      matchType: g.type,
+      groupId: g.groupId,
+      matchKey: g.matchKey,
+      matchId: g.id,
+      documentId: g.documentId,
+      action: action,
+      gameIndex: gameIndex.clamp(1, 3),
+      side: side,
+      snapshot: snapshot,
+    );
+
+    // Court-scoped overlay broadcast (same local-first / retry pattern).
+    final s1 = int.tryParse('${snapshot['game${gameIndex.clamp(1, 3)}Player1']}') ??
+        int.tryParse('${snapshot['score1']}');
+    final s2 = int.tryParse('${snapshot['game${gameIndex.clamp(1, 3)}Player2']}') ??
+        int.tryParse('${snapshot['score2']}');
+    unawaited(publishCourtMatchUpdate(
+      match: updated,
+      gameIndex: gameIndex,
+      score1: s1,
+      score2: s2,
+      serving: snapshot['serving']?.toString(),
+      servingPlayer: snapshot['servingPlayer']?.toString(),
+    ));
+  }
+
+  /// Apply any persisted local snapshots over refreshed server matches.
+  void _applyQueuedSnapshotsToGames() {
+    for (final mid in scoreQueue.knownMatchIdentities) {
+      final snap = scoreQueue.latestSnapshotFor(mid);
+      if (snap == null || snap.isEmpty) continue;
+      final existing = _findMatchByIdentity(mid);
+      if (existing == null) continue;
+      final merged = _mergeMatchWithFields(existing, snap);
+      _replaceMatchByIdentity(mid, merged);
+    }
   }
 }

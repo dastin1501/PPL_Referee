@@ -674,24 +674,7 @@ Widget _buildGamesList(
         final isRallyScoring = g.isRallyScoring;
         final scoringLabel = isRallyScoring ? 'Rally' : 'Side-Out';
 
-        String matchTitle() {
-          if (g.type == 'elimination') {
-            final badge = app.displayMatchBadge(g).trim();
-            if (badge.isNotEmpty) return '$badge · Game $n';
-            final rl = app.displayRoundLabel(g).trim();
-            if (rl.isNotEmpty) return '$rl · Game $n';
-          }
-          final sl = g.seedLabel.toString();
-          if (sl.isNotEmpty) return '$sl · Game $n';
-          var ml = g.matchLabel.toString();
-          ml = ml
-              .replaceAll(
-                RegExp(r'^\s*GA\d+(?:\.\d+)?\s*-\s*', caseSensitive: false),
-                '',
-              )
-              .trim();
-          return ml.isNotEmpty ? '$ml · Game $n' : 'Game $n';
-        }
+        String matchTitle() => app.displayMatchTitle(g, n);
 
         int s1 = 0;
         int s2 = 0;

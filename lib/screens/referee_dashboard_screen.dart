@@ -9,6 +9,7 @@ import 'package:flutter/rendering.dart';
 import 'package:provider/provider.dart';
 import '../state/app_state.dart';
 import '../models.dart';
+import '../models/score_event.dart';
 import '../widgets/coin_toss_dialog.dart';
 
 class RefereeDashboardScreen extends StatefulWidget {
@@ -51,6 +52,7 @@ class _RefereeDashboardScreenState extends State<RefereeDashboardScreen> {
   bool _endsSwitched = false;
   final GlobalKey _appBarTitleKey = GlobalKey();
   double? _appBarTitleWidth;
+  AppState? _app;
 
   String _fmt(int s) {
     final m = s ~/ 60;
@@ -195,7 +197,21 @@ class _RefereeDashboardScreenState extends State<RefereeDashboardScreen> {
       });
     });
     try {
-      await app.updateSelectedMatchFields({'status': 'Ongoing'});
+      if (g == null) return;
+      await app.enqueueScoreEvent(
+        action: ScoreEventAction.statusOngoing,
+        gameIndex: _currentGame,
+        snapshot: {
+          'status': 'Ongoing',
+          'game${_currentGame}Status': 'Ongoing',
+          'score1': _score1,
+          'score2': _score2,
+          'game${_currentGame}Player1': _score1,
+          'game${_currentGame}Player2': _score2,
+          'serving': _serverOnTeam1(g) ? 'team1' : 'team2',
+          'servingPlayer': _servingPlayer,
+        },
+      );
     } catch (_) {}
   }
 
@@ -547,7 +563,14 @@ class _RefereeDashboardScreenState extends State<RefereeDashboardScreen> {
   }
 
   @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    _app ??= context.read<AppState>();
+  }
+
+  @override
   void dispose() {
+    _app?.closeSelectedGameLive();
     _timer?.cancel();
     SystemChrome.setPreferredOrientations([
       DeviceOrientation.portraitUp,
@@ -563,6 +586,7 @@ class _RefereeDashboardScreenState extends State<RefereeDashboardScreen> {
               setState(() {
                 _servingPlayer = name;
               });
+              _publishCourtOverlay();
             }
           : null,
       child: Padding(
@@ -742,6 +766,11 @@ class _RefereeDashboardScreenState extends State<RefereeDashboardScreen> {
     final courtTitle = courtRaw.toLowerCase().contains('court')
         ? courtRaw
         : (courtRaw.isEmpty ? '' : 'Court $courtRaw');
+    final matchTitle = g != null ? app.displayMatchTitle(g, _currentGame) : '';
+    // Prefer the same match name as the court list (e.g. SF-1 · Game 1 / A2 vs A5 · Game 1).
+    final appBarTitle = matchTitle.isNotEmpty
+        ? (courtTitle.isNotEmpty ? '$matchTitle · $courtTitle' : matchTitle)
+        : courtTitle;
 
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _measureAppBarTitle();
@@ -775,11 +804,18 @@ class _RefereeDashboardScreenState extends State<RefereeDashboardScreen> {
                   child: Row(
                     mainAxisSize: MainAxisSize.min,
                     children: [
-                      SizedBox(
-                        key: _appBarTitleKey,
-                        child: Text(
-                          courtTitle,
-                          style: const TextStyle(color: Colors.white, fontSize: 20),
+                      ConstrainedBox(
+                        constraints: BoxConstraints(
+                          maxWidth: MediaQuery.of(context).size.width * 0.42,
+                        ),
+                        child: SizedBox(
+                          key: _appBarTitleKey,
+                          child: Text(
+                            appBarTitle,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(color: Colors.white, fontSize: 18),
+                          ),
                         ),
                       ),
                       if (_gameStarted) const SizedBox(width: 8),
@@ -847,16 +883,34 @@ class _RefereeDashboardScreenState extends State<RefereeDashboardScreen> {
                   child: Row(
                     mainAxisSize: MainAxisSize.min,
                     children: [
-                      if (app.ongoingSyncing)
-                        const Padding(
-                          padding: EdgeInsets.only(right: 8.0),
+                      if (app.pendingScoreSyncMatchCount > 0)
+                        Padding(
+                          padding: const EdgeInsets.only(right: 8.0),
                           child: Center(
                             child: Text(
-                              'syncing...',
-                              style: TextStyle(color: Colors.white70, fontSize: 11),
+                              app.scoreSyncHasStale
+                                  ? 'Sync delayed'
+                                  : 'Syncing…',
+                              style: TextStyle(
+                                color: app.scoreSyncHasStale
+                                    ? const Color(0xFFFCA5A5)
+                                    : Colors.white70,
+                                fontSize: 11,
+                              ),
                             ),
                           ),
                         ),
+                      Container(
+                        width: 8,
+                        height: 8,
+                        margin: const EdgeInsets.only(right: 8),
+                        decoration: BoxDecoration(
+                          shape: BoxShape.circle,
+                          color: app.socketConnected
+                              ? const Color(0xFF34D399)
+                              : const Color(0xFFFBBF24),
+                        ),
+                      ),
                       IconButton(
                         onPressed: _undoLast,
                         icon: const Icon(Icons.replay, color: Colors.white),
@@ -1127,19 +1181,25 @@ class _RefereeDashboardScreenState extends State<RefereeDashboardScreen> {
                                                     children: [
                                                       Expanded(
                                                         child: InkWell(
-                                                          onTap: () => setState(() {
-                                                            _servingPlayer = leftTop;
-                                                            _applyDoublesInitialServerLayout(g);
-                                                          }),
+                                                          onTap: () {
+                                                            setState(() {
+                                                              _servingPlayer = leftTop;
+                                                              _applyDoublesInitialServerLayout(g);
+                                                            });
+                                                            _publishCourtOverlay(serving: 'team1');
+                                                          },
                                                           splashColor: Colors.white10,
                                                         ),
                                                       ),
                                                       Expanded(
                                                         child: InkWell(
-                                                          onTap: () => setState(() {
-                                                            _servingPlayer = leftBottom.isNotEmpty ? leftBottom : leftTop;
-                                                            _applyDoublesInitialServerLayout(g);
-                                                          }),
+                                                          onTap: () {
+                                                            setState(() {
+                                                              _servingPlayer = leftBottom.isNotEmpty ? leftBottom : leftTop;
+                                                              _applyDoublesInitialServerLayout(g);
+                                                            });
+                                                            _publishCourtOverlay(serving: 'team1');
+                                                          },
                                                           splashColor: Colors.white10,
                                                         ),
                                                       ),
@@ -1151,19 +1211,25 @@ class _RefereeDashboardScreenState extends State<RefereeDashboardScreen> {
                                                     children: [
                                                       Expanded(
                                                         child: InkWell(
-                                                          onTap: () => setState(() {
-                                                            _servingPlayer = rightTop;
-                                                            _applyDoublesInitialServerLayout(g);
-                                                          }),
+                                                          onTap: () {
+                                                            setState(() {
+                                                              _servingPlayer = rightTop;
+                                                              _applyDoublesInitialServerLayout(g);
+                                                            });
+                                                            _publishCourtOverlay(serving: 'team2');
+                                                          },
                                                           splashColor: Colors.white10,
                                                         ),
                                                       ),
                                                       Expanded(
                                                         child: InkWell(
-                                                          onTap: () => setState(() {
-                                                            _servingPlayer = rightBottom.isNotEmpty ? rightBottom : rightTop;
-                                                            _applyDoublesInitialServerLayout(g);
-                                                          }),
+                                                          onTap: () {
+                                                            setState(() {
+                                                              _servingPlayer = rightBottom.isNotEmpty ? rightBottom : rightTop;
+                                                              _applyDoublesInitialServerLayout(g);
+                                                            });
+                                                            _publishCourtOverlay(serving: 'team2');
+                                                          },
                                                           splashColor: Colors.white10,
                                                         ),
                                                       ),
@@ -1176,19 +1242,25 @@ class _RefereeDashboardScreenState extends State<RefereeDashboardScreen> {
                                               children: [
                                                 Expanded(
                                                   child: InkWell(
-                                                    onTap: () => setState(() {
-                                                      _servingPlayer = leftTop;
-                                                      _serverTop = false;
-                                                    }),
+                                                    onTap: () {
+                                                      setState(() {
+                                                        _servingPlayer = leftTop;
+                                                        _serverTop = false;
+                                                      });
+                                                      _publishCourtOverlay(serving: 'team1');
+                                                    },
                                                     splashColor: Colors.white10,
                                                   ),
                                                 ),
                                                 Expanded(
                                                   child: InkWell(
-                                                    onTap: () => setState(() {
-                                                      _servingPlayer = rightTop;
-                                                      _serverTop = true;
-                                                    }),
+                                                    onTap: () {
+                                                      setState(() {
+                                                        _servingPlayer = rightTop;
+                                                        _serverTop = true;
+                                                      });
+                                                      _publishCourtOverlay(serving: 'team2');
+                                                    },
                                                     splashColor: Colors.white10,
                                                   ),
                                                 ),
@@ -1401,7 +1473,7 @@ class _RefereeDashboardScreenState extends State<RefereeDashboardScreen> {
                         child: isRallyScoring
                                 ? LayoutBuilder(
                                     builder: (context, c) {
-                                      final buttonW = (c.maxWidth * 0.42).clamp(240, 440).toDouble();
+                                      final buttonW = (c.maxWidth * 0.36).clamp(180, 360).toDouble();
                                       return Row(
                                         children: [
                                           SizedBox(
@@ -1412,7 +1484,49 @@ class _RefereeDashboardScreenState extends State<RefereeDashboardScreen> {
                                               onPressed: _endsSwitched ? _awardRallyPointRight : _awardRallyPointLeft,
                                             ),
                                           ),
-                                          const Expanded(child: SizedBox.shrink()),
+                                          Expanded(
+                                            child: Center(
+                                              child: SizedBox(
+                                                width: 160,
+                                                height: 56,
+                                                child: _Pressable3D(
+                                                  onPressed: _sideOut,
+                                                  borderRadius: 24,
+                                                  backgroundColor: const Color(0xFF1F2937),
+                                                  borderColor: Colors.white.withValues(alpha: 0.14),
+                                                  shadowColor: Colors.black.withValues(alpha: 0.55),
+                                                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                                                  child: Builder(builder: (_) {
+                                                    var label = 'SIDE OUT';
+                                                    final leftTeam = _splitTeam(g.player1);
+                                                    final rightTeam = _splitTeam(g.player2);
+                                                    final isDoubles =
+                                                        leftTeam.length > 1 || rightTeam.length > 1;
+                                                    if (isDoubles && _servingPlayer != null) {
+                                                      if (leftTeam.contains(_servingPlayer)) {
+                                                        label = _leftServeStage <= 1
+                                                            ? 'SECOND SERVER'
+                                                            : 'SIDE OUT';
+                                                      } else if (rightTeam.contains(_servingPlayer)) {
+                                                        label = _rightServeStage <= 1
+                                                            ? 'SECOND SERVER'
+                                                            : 'SIDE OUT';
+                                                      }
+                                                    }
+                                                    return Text(
+                                                      label,
+                                                      textAlign: TextAlign.center,
+                                                      style: const TextStyle(
+                                                        fontSize: 13,
+                                                        fontWeight: FontWeight.w700,
+                                                        letterSpacing: 0.3,
+                                                      ),
+                                                    );
+                                                  }),
+                                                ),
+                                              ),
+                                            ),
+                                          ),
                                           SizedBox(
                                             width: buttonW,
                                             child: _buildRallyPointButton(
@@ -2352,18 +2466,769 @@ class _RefereeDashboardScreenState extends State<RefereeDashboardScreen> {
     if (includeNote && _refereeNote.trim().isNotEmpty) {
       fields['refereeNote'] = _refereeNote.trim();
     }
-    try {
-      await app.updateSelectedMatchFields(fields);
-      if (mounted) {
-        setState(() {
-          _gameStarted = false;
-        });
-      }
-      return matchCompleted ? 'completed' : 'ongoing';
-    } catch (_) {
-      // Caller (Submit Match dialog) shows the failure inline.
-      return null;
+    // Ensure all game scores are in the snapshot for ordered flush.
+    fields['game1Player1'] = fields['game1Player1'] ?? g.game1Player1 ?? 0;
+    fields['game1Player2'] = fields['game1Player2'] ?? g.game1Player2 ?? 0;
+    fields['game2Player1'] = fields['game2Player1'] ?? g.game2Player1 ?? 0;
+    fields['game2Player2'] = fields['game2Player2'] ?? g.game2Player2 ?? 0;
+    fields['game3Player1'] = fields['game3Player1'] ?? g.game3Player1 ?? 0;
+    fields['game3Player2'] = fields['game3Player2'] ?? g.game3Player2 ?? 0;
+    fields['game${_currentGame}Player1'] = _score1;
+    fields['game${_currentGame}Player2'] = _score2;
+
+    // Local-first submit: queue + return immediately so ref can open next match.
+    unawaited(app.enqueueScoreEvent(
+      action: ScoreEventAction.submit,
+      gameIndex: _currentGame,
+      snapshot: fields,
+      match: g,
+    ));
+    if (mounted) {
+      setState(() {
+        _gameStarted = false;
+      });
     }
+    return matchCompleted ? 'completed' : 'ongoing';
+  }
+
+  void _swapLeftTeamDisplay(TournamentMatch g) {
+    final leftTeam = _splitTeam(g.player1);
+    if (leftTeam.length <= 1) return;
+    final currentTop = _leftTopOverride.isNotEmpty ? _leftTopOverride : leftTeam[0];
+    final currentBottom = _leftBottomOverride.isNotEmpty
+        ? _leftBottomOverride
+        : (leftTeam.length > 1 ? leftTeam[1] : leftTeam[0]);
+    _leftTopOverride = currentBottom;
+    _leftBottomOverride = currentTop;
+  }
+
+  void _swapRightTeamDisplay(TournamentMatch g) {
+    final rightTeam = _splitTeam(g.player2);
+    if (rightTeam.length <= 1) return;
+    final currentTop = _rightTopOverride.isNotEmpty
+        ? _rightTopOverride
+        : (rightTeam.length > 1 ? rightTeam[1] : rightTeam[0]);
+    final currentBottom = _rightBottomOverride.isNotEmpty
+        ? _rightBottomOverride
+        : (rightTeam.length > 1 ? rightTeam[0] : '');
+    _rightTopOverride = currentBottom.isNotEmpty ? currentBottom : currentTop;
+    _rightBottomOverride = currentTop;
+  }
+
+  String _rallyServerForTeam(TournamentMatch g, {required bool team1}) {
+    final team = _splitTeam(team1 ? g.player1 : g.player2);
+    if (team.isEmpty) return '';
+    if (team.length <= 1) return team.first;
+
+    final score = team1 ? _score1 : _score2;
+    final even = (score % 2 == 0);
+
+    String currentTop;
+    String currentBottom;
+    if (team1) {
+      currentTop = _leftTopOverride.isNotEmpty ? _leftTopOverride : team[0];
+      currentBottom = _leftBottomOverride.isNotEmpty ? _leftBottomOverride : team[1];
+    } else {
+      currentTop = _rightTopOverride.isNotEmpty ? _rightTopOverride : team[1];
+      currentBottom = _rightBottomOverride.isNotEmpty ? _rightBottomOverride : team[0];
+    }
+
+    final rightSlotIsTop = !team1;
+    final serveSlotIsTop = even ? rightSlotIsTop : !rightSlotIsTop;
+    return serveSlotIsTop ? currentTop : currentBottom;
+  }
+
+  void _pushSnapshot() {
+    _history.add(_Snapshot(_score1, _score2, _servingPlayer, _serverTop, _timeouts1, _timeouts2, _medTimeouts1, _medTimeouts2, _leftServeStage, _rightServeStage));
+  }
+
+  void _switchCourt() {
+    setState(() {
+      _endsSwitched = !_endsSwitched;
+    });
+  }
+
+  bool _serverOnTeam1(TournamentMatch g) {
+    final leftTeam = _splitTeam(g.player1);
+    return _servingPlayer != null && leftTeam.contains(_servingPlayer);
+  }
+
+  void _secondServe() {
+    final app = context.read<AppState>();
+    final g = app.selectedGame;
+    if (!_gameStarted || g == null || _servingPlayer == null) return;
+    final leftTeam = _splitTeam(g.player1);
+    final rightTeam = _splitTeam(g.player2);
+    setState(() {
+      if (leftTeam.contains(_servingPlayer) && leftTeam.length > 1) {
+        _servingPlayer = _servingPlayer == leftTeam[0] ? leftTeam[1] : leftTeam[0];
+        // Keep anchors: left base stays bottom, right base stays top
+        _leftBottomOverride = _leftBase.isNotEmpty ? _leftBase : (_leftBottomOverride.isNotEmpty ? _leftBottomOverride : (leftTeam.length > 1 ? leftTeam[1] : leftTeam[0]));
+        _leftTopOverride = _leftSecond.isNotEmpty ? _leftSecond : (_leftTopOverride.isNotEmpty ? _leftTopOverride : leftTeam[0]);
+        _rightTopOverride = _rightBase.isNotEmpty ? _rightBase : (_rightTopOverride.isNotEmpty ? _rightTopOverride : (rightTeam.length > 1 ? rightTeam[1] : rightTeam[0]));
+        _rightBottomOverride = _rightSecond.isNotEmpty ? _rightSecond : (_rightBottomOverride.isNotEmpty ? _rightBottomOverride : (rightTeam.length > 1 ? rightTeam[0] : ''));
+      } else if (rightTeam.contains(_servingPlayer) && rightTeam.length > 1) {
+        _servingPlayer = _servingPlayer == rightTeam[0] ? (rightTeam.length > 1 ? rightTeam[1] : rightTeam[0]) : rightTeam[0];
+        // Keep anchors
+        _leftBottomOverride = _leftBase.isNotEmpty ? _leftBase : (_leftBottomOverride.isNotEmpty ? _leftBottomOverride : (leftTeam.length > 1 ? leftTeam[1] : leftTeam[0]));
+        _leftTopOverride = _leftSecond.isNotEmpty ? _leftSecond : (_leftTopOverride.isNotEmpty ? _leftTopOverride : leftTeam[0]);
+        _rightTopOverride = _rightBase.isNotEmpty ? _rightBase : (_rightTopOverride.isNotEmpty ? _rightTopOverride : (rightTeam.length > 1 ? rightTeam[1] : rightTeam[0]));
+        _rightBottomOverride = _rightSecond.isNotEmpty ? _rightSecond : (_rightBottomOverride.isNotEmpty ? _rightBottomOverride : (rightTeam.length > 1 ? rightTeam[0] : ''));
+      }
+    });
+    _publishCourtOverlay();
+  }
+
+  void _undoLast() {
+    if (_history.isEmpty) return;
+    final last = _history.removeLast();
+    setState(() {
+      _score1 = last.s1;
+      _score2 = last.s2;
+      _servingPlayer = last.server;
+      _serverTop = last.serverTop;
+      _timeouts1 = last.t1;
+      _timeouts2 = last.t2;
+      _medTimeouts1 = last.mt1;
+      _medTimeouts2 = last.mt2;
+      _leftServeStage = last.ls;
+      _rightServeStage = last.rs;
+    });
+  }
+
+  void _awardRallyPointLeft() => _awardRallyPoint(team1Wins: true);
+
+  void _awardRallyPointRight() => _awardRallyPoint(team1Wins: false);
+
+  void _awardRallyPoint({required bool team1Wins}) {
+    final app = context.read<AppState>();
+    final g = app.selectedGame;
+    if (!_gameStarted || g == null) return;
+    _pushSnapshot();
+    setState(() {
+      if (team1Wins) {
+        _score1 += 1;
+        _servingPlayer = _rallyServerForTeam(g, team1: true);
+        _leftServeStage = 1;
+        _rightServeStage = 0;
+        final leftTeam = _splitTeam(g.player1);
+        final currentTop = _leftTopOverride.isNotEmpty ? _leftTopOverride : (leftTeam.isNotEmpty ? leftTeam[0] : g.player1);
+        _serverTop = _servingPlayer == currentTop;
+      } else {
+        _score2 += 1;
+        _servingPlayer = _rallyServerForTeam(g, team1: false);
+        _leftServeStage = 0;
+        _rightServeStage = 1;
+        final rightTeam = _splitTeam(g.player2);
+        final currentTop = _rightTopOverride.isNotEmpty
+            ? _rightTopOverride
+            : (rightTeam.length > 1 ? rightTeam[1] : (rightTeam.isNotEmpty ? rightTeam[0] : g.player2));
+        _serverTop = _servingPlayer == currentTop;
+      }
+    });
+    _syncLiveScoreTick(
+      action: ScoreEventAction.pointPlus,
+      side: team1Wins ? 1 : 2,
+    );
+  }
+
+  void _incrementPoint() {
+    final app = context.read<AppState>();
+    final g = app.selectedGame;
+    if (!_gameStarted || g == null || _servingPlayer == null) return;
+    _pushSnapshot();
+    final onTeam1 = _serverOnTeam1(g);
+    setState(() {
+      if (onTeam1) {
+        _score1 += 1;
+        _swapLeftTeamDisplay(g);
+      } else {
+        _score2 += 1;
+        _swapRightTeamDisplay(g);
+      }
+      _serverTop = !_serverTop;
+    });
+    _syncLiveScoreTick(
+      action: ScoreEventAction.pointPlus,
+      side: onTeam1 ? 1 : 2,
+    );
+  }
+
+  void _decrementPoint() {
+    final app = context.read<AppState>();
+    final g = app.selectedGame;
+    if (!_gameStarted || g == null || _servingPlayer == null) return;
+    _pushSnapshot();
+    final onTeam1 = _serverOnTeam1(g);
+    setState(() {
+      if (onTeam1 && _score1 > 0) {
+        _score1 -= 1;
+        final leftTeam = _splitTeam(g.player1);
+        if (leftTeam.length > 1) {
+          // Keep anchors
+          if (_leftBase.isNotEmpty && _leftSecond.isNotEmpty) {
+            _leftBottomOverride = _leftBase;
+            _leftTopOverride = _leftSecond;
+          }
+        }
+      } else if (!onTeam1 && _score2 > 0) {
+        _score2 -= 1;
+        final rightTeam = _splitTeam(g.player2);
+        if (rightTeam.length > 1) {
+          // Keep anchors
+          if (_rightBase.isNotEmpty && _rightSecond.isNotEmpty) {
+            _rightTopOverride = _rightBase;
+            _rightBottomOverride = _rightSecond;
+          }
+        }
+      }
+      _serverTop = !_serverTop;
+    });
+    _syncLiveScoreTick(
+      action: ScoreEventAction.pointMinus,
+      side: onTeam1 ? 1 : 2,
+    );
+  }
+
+  Future<void> _confirmDecrementPoint() async {
+    final g = context.read<AppState>().selectedGame;
+    if (!_gameStarted || g == null || _servingPlayer == null) return;
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (_) => AlertDialog(
+        title: Row(
+          children: [
+            const Icon(Icons.remove_circle, color: Color(0xFFB91C1C), size: 26),
+            const SizedBox(width: 10),
+            Text(
+              'Confirm Deduction',
+              style: TextStyle(color: Color(0xFFB91C1C), fontWeight: FontWeight.bold),
+            ),
+          ],
+        ),
+        content: Text(
+          'Are you sure you want to deduct one point from the serving side?\n\n'
+          'Current server: $_servingPlayer',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: const Text('Cancel'),
+          ),
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(
+              backgroundColor: const Color(0xFFB91C1C),
+              foregroundColor: Colors.white,
+            ),
+            onPressed: () => Navigator.of(context).pop(true),
+            child: const Text('Deduct'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed == true) {
+      _decrementPoint();
+    }
+  }
+
+  void _sideOut() {
+    final app = context.read<AppState>();
+    final g = app.selectedGame;
+    if (!_gameStarted || g == null || _servingPlayer == null) return;
+    _pushSnapshot();
+    setState(() {
+      final leftTeam = _splitTeam(g.player1);
+      final rightTeam = _splitTeam(g.player2);
+      final wasOnLeft = leftTeam.contains(_servingPlayer);
+      final isDoubles = leftTeam.length > 1 || rightTeam.length > 1;
+      if (isDoubles) {
+        if (wasOnLeft) {
+          if (_leftServeStage <= 1) {
+            _leftServeStage = 2;
+            _servingPlayer = _servingPlayer == leftTeam[0] ? (leftTeam.length > 1 ? leftTeam[1] : leftTeam[0]) : leftTeam[0];
+          } else {
+            _leftServeStage = 0;
+            _rightServeStage = 1;
+            final rightSide = _rightTopOverride.isNotEmpty ? _rightTopOverride : (rightTeam.length > 1 ? rightTeam[1] : rightTeam[0]);
+            _servingPlayer = rightSide;
+            _serverTop = true;
+          }
+        } else {
+          if (_rightServeStage <= 1) {
+            _rightServeStage = 2;
+            _servingPlayer = _servingPlayer == rightTeam[0] ? (rightTeam.length > 1 ? rightTeam[1] : rightTeam[0]) : rightTeam[0];
+          } else {
+            _rightServeStage = 0;
+            _leftServeStage = 1;
+            final rightSide = _leftBottomOverride.isNotEmpty ? _leftBottomOverride : (leftTeam.length > 1 ? leftTeam[1] : (leftTeam.isNotEmpty ? leftTeam[0] : g.player1));
+            _servingPlayer = rightSide;
+            _serverTop = false;
+          }
+        }
+      } else {
+        // Singles: previous behavior
+        if (wasOnLeft) {
+          _servingPlayer = rightTeam.length > 1 ? rightTeam[1] : rightTeam[0];
+          _serverTop = (_score2 % 2 == 0);
+        } else {
+          _servingPlayer = leftTeam[0];
+          _serverTop = (_score1 % 2 != 0);
+        }
+      }
+    });
+    _syncLiveScoreTick(action: ScoreEventAction.sideOut);
+  }
+
+  void _syncLiveScoreTick({
+    ScoreEventAction action = ScoreEventAction.pointPlus,
+    int? side,
+  }) {
+    final app = context.read<AppState>();
+    final g = app.selectedGame;
+    if (g == null) return;
+    final serving = _servingPlayer == null
+        ? null
+        : (_serverOnTeam1(g) ? 'team1' : 'team2');
+    final fields = <String, dynamic>{
+      'status': 'Ongoing',
+      'game${_currentGame}Status': 'Ongoing',
+      'score1': _score1,
+      'score2': _score2,
+      'game${_currentGame}Player1': _score1,
+      'game${_currentGame}Player2': _score2,
+      if (serving != null) 'serving': serving,
+      if (_servingPlayer != null) 'servingPlayer': _servingPlayer,
+    };
+    if (kDebugMode) {
+      final matchRef = g.type == 'group'
+          ? 'groupId=${g.groupId}, matchKey=${g.matchKey}'
+          : 'matchId=${g.id}, docId=${g.documentId}, alias=${g.matchKey}';
+      debugPrint(
+        '[score-sync][tap] $matchRef selectedGame=$_currentGame '
+        'score=$_score1-$_score2 action=${action.wire} serving=$serving',
+      );
+    }
+    // Fire-and-forget local-first queue — never blocks scoring.
+    unawaited(app.enqueueScoreEvent(
+      action: action,
+      gameIndex: _currentGame,
+      side: side,
+      snapshot: fields,
+    ));
+  }
+
+  /// Serve / assignment change for OBS overlay (no REST write required).
+  void _publishCourtOverlay({String? serving}) {
+    final app = context.read<AppState>();
+    final g = app.selectedGame;
+    if (g == null) return;
+    final side = serving ??
+        (_servingPlayer == null
+            ? null
+            : (_serverOnTeam1(g) ? 'team1' : 'team2'));
+    unawaited(app.publishCourtMatchUpdate(
+      match: g,
+      gameIndex: _currentGame,
+      score1: _score1,
+      score2: _score2,
+      serving: side,
+      servingPlayer: _servingPlayer,
+    ));
+  }
+
+  Future<void> _noShow(TournamentMatch g, String noShowPlayer, String winner) async {
+    final app = context.read<AppState>();
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (_) => AlertDialog(
+        title: const Text('Confirm No Show'),
+        content: Text('$noShowPlayer did not show up. Award to $winner?'),
+        actions: [
+          TextButton(onPressed: () => Navigator.of(context).pop(false), child: const Text('Cancel')),
+          ElevatedButton(onPressed: () => Navigator.of(context).pop(true), child: const Text('Confirm')),
+        ],
+      ),
+    );
+    if (ok != true) return;
+    final fields = <String, dynamic>{
+      'winner': winner,
+      'status': 'Completed',
+      'score1': _score1,
+      'score2': _score2,
+      'finalScorePlayer1': _score1,
+      'finalScorePlayer2': _score2,
+    };
+    unawaited(app.enqueueScoreEvent(
+      action: ScoreEventAction.submit,
+      gameIndex: _currentGame,
+      snapshot: fields,
+      match: g,
+    ));
+    if (mounted) {
+      setState(() {
+        _gameStarted = false;
+      });
+    }
+  }
+
+  void _onTimeout() async {
+    final app = context.read<AppState>();
+    final g = app.selectedGame;
+    if (g == null) return;
+    final who = await showDialog<String>(
+      context: context,
+      builder: (_) {
+        final p1Disabled = _timeouts1 >= 1;
+        final p2Disabled = _timeouts2 >= 1;
+        return AlertDialog(
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+          title: const Row(
+            children: [
+              Icon(Icons.timer, color: Color.fromARGB(255, 26, 161, 123)),
+              SizedBox(width: 8),
+              Text('Timeout'),
+            ],
+          ),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              SizedBox(
+                width: double.infinity,
+                child: ElevatedButton(
+                  onPressed: p1Disabled ? null : () => Navigator.pop(context, 'p1'),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: const Color.fromARGB(255, 26, 161, 123),
+                    foregroundColor: Colors.white,
+                    padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 16),
+                  ),
+                  child: Align(
+                    alignment: Alignment.center,
+                    child: Text(
+                      g.player1,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      textAlign: TextAlign.center,
+                    ),
+                  ),
+                ),
+              ),
+              const SizedBox(height: 8),
+              SizedBox(
+                width: double.infinity,
+                child: ElevatedButton(
+                  onPressed: p2Disabled ? null : () => Navigator.pop(context, 'p2'),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: const Color.fromARGB(255, 26, 161, 123),
+                    foregroundColor: Colors.white,
+                    padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 16),
+                  ),
+                  child: Align(
+                    alignment: Alignment.center,
+                    child: Text(
+                      g.player2,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      textAlign: TextAlign.center,
+                    ),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        );
+      },
+    );
+    if (who == null) return;
+    final name = who == 'p1' ? g.player1 : g.player2;
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder: (_) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        title: const Row(
+          children: [
+            Icon(Icons.timer_outlined, color: Color.fromARGB(255, 26, 161, 123)),
+            SizedBox(width: 8),
+            Text('Confirm Timeout'),
+          ],
+        ),
+        content: Text('Are you sure you want to timeout $name?'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: const Text('Cancel'),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.of(context).pop(true),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: const Color.fromARGB(255, 26, 161, 123),
+              foregroundColor: Colors.white,
+            ),
+            child: const Text('OK'),
+          ),
+        ],
+      ),
+    );
+    if (confirm != true) return;
+    _pushSnapshot();
+    if (who == 'p1') {
+      setState(() {
+        _timeouts1 += 1;
+      });
+    } else if (who == 'p2') {
+      setState(() {
+        _timeouts2 += 1;
+      });
+    }
+    int remaining = 60;
+    _timer?.cancel();
+    setState(() {
+      _inTimeout = true;
+      _timeoutSecondsLeft = remaining;
+    });
+    Timer? localTimer;
+    await showDialog<void>(
+      context: context,
+      barrierDismissible: false,
+      builder: (_) {
+        return StatefulBuilder(builder: (context, setLocal) {
+          localTimer ??= Timer.periodic(const Duration(seconds: 1), (t) {
+            if (!mounted) return;
+            if (remaining <= 1) {
+              t.cancel();
+              Navigator.of(context).pop();
+              return;
+            }
+            remaining -= 1;
+            setLocal(() {
+              _timeoutSecondsLeft = remaining;
+            });
+          });
+          return AlertDialog(
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+            title: const Row(
+              children: [
+                Icon(Icons.timer, color: Color.fromARGB(255, 26, 161, 123)),
+                SizedBox(width: 8),
+                Text('Timeout'),
+              ],
+            ),
+            content: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(
+                  _fmt(_timeoutSecondsLeft),
+                  style: const TextStyle(fontSize: 48, fontWeight: FontWeight.w900),
+                ),
+                const SizedBox(height: 8),
+                LinearProgressIndicator(
+                  value: remaining / 60.0,
+                  valueColor: const AlwaysStoppedAnimation(Color.fromARGB(255, 26, 161, 123)),
+                  backgroundColor: Colors.grey.shade300,
+                  minHeight: 6,
+                ),
+                const SizedBox(height: 8),
+                const Text('remaining'),
+              ],
+            ),
+            actions: [
+              ElevatedButton(
+                onPressed: () => Navigator.of(context).pop(),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: const Color.fromARGB(255, 26, 161, 123),
+                  foregroundColor: Colors.white,
+                ),
+                child: const Text('Resume'),
+              ),
+            ],
+          );
+        });
+      },
+    );
+    localTimer?.cancel();
+    setState(() {
+      _inTimeout = false;
+    });
+    _resumeTimerIfNeeded();
+  }
+
+  void _onMedicalTimeout() async {
+    final app = context.read<AppState>();
+    final g = app.selectedGame;
+    if (g == null) return;
+    final who = await showDialog<String>(
+      context: context,
+      builder: (_) {
+        final p1Disabled = _medTimeouts1 >= 1;
+        final p2Disabled = _medTimeouts2 >= 1;
+        return AlertDialog(
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+          title: const Row(
+            children: [
+              Icon(Icons.medical_services_outlined, color: Color.fromARGB(255, 26, 161, 123)),
+              SizedBox(width: 8),
+              Text('Medical Timeout'),
+            ],
+          ),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              SizedBox(
+                width: double.infinity,
+                child: ElevatedButton(
+                  onPressed: p1Disabled ? null : () => Navigator.pop(context, 'p1'),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: const Color.fromARGB(255, 26, 161, 123),
+                    foregroundColor: Colors.white,
+                    padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 16),
+                  ),
+                  child: Align(
+                    alignment: Alignment.center,
+                    child: Text(
+                      g.player1,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      textAlign: TextAlign.center,
+                    ),
+                  ),
+                ),
+              ),
+              const SizedBox(height: 8),
+              SizedBox(
+                width: double.infinity,
+                child: ElevatedButton(
+                  onPressed: p2Disabled ? null : () => Navigator.pop(context, 'p2'),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: const Color.fromARGB(255, 26, 161, 123),
+                    foregroundColor: Colors.white,
+                    padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 16),
+                  ),
+                  child: Align(
+                    alignment: Alignment.center,
+                    child: Text(
+                      g.player2,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      textAlign: TextAlign.center,
+                    ),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        );
+      },
+    );
+    if (who == null) return;
+    final name = who == 'p1' ? g.player1 : g.player2;
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder: (_) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        title: const Row(
+          children: [
+            Icon(Icons.medical_services_outlined, color: Color.fromARGB(255, 26, 161, 123)),
+            SizedBox(width: 8),
+            Text('Confirm Medical Timeout'),
+          ],
+        ),
+        content: Text('Are you sure you want to start a medical timeout for $name?'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: const Text('Cancel'),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.of(context).pop(true),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: const Color.fromARGB(255, 26, 161, 123),
+              foregroundColor: Colors.white,
+            ),
+            child: const Text('OK'),
+          ),
+        ],
+      ),
+    );
+    if (confirm != true) return;
+    _pushSnapshot();
+    if (who == 'p1') {
+      setState(() {
+        _medTimeouts1 += 1;
+      });
+    } else if (who == 'p2') {
+      setState(() {
+        _medTimeouts2 += 1;
+      });
+    }
+    int remaining = 300;
+    _timer?.cancel();
+    setState(() {
+      _inTimeout = true;
+      _timeoutSecondsLeft = remaining;
+    });
+    Timer? localTimer;
+    await showDialog<void>(
+      context: context,
+      barrierDismissible: false,
+      builder: (_) {
+        return StatefulBuilder(builder: (context, setLocal) {
+          localTimer ??= Timer.periodic(const Duration(seconds: 1), (t) {
+            if (!mounted) return;
+            if (remaining <= 1) {
+              t.cancel();
+              Navigator.of(context).pop();
+              return;
+            }
+            remaining -= 1;
+            setLocal(() {
+              _timeoutSecondsLeft = remaining;
+            });
+          });
+          return AlertDialog(
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+            title: const Row(
+              children: [
+                Icon(Icons.medical_services_outlined, color: Color.fromARGB(255, 26, 161, 123)),
+                SizedBox(width: 8),
+                Text('Medical Timeout'),
+              ],
+            ),
+            content: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(
+                  _fmt(_timeoutSecondsLeft),
+                  style: const TextStyle(fontSize: 48, fontWeight: FontWeight.w900),
+                ),
+                const SizedBox(height: 8),
+                LinearProgressIndicator(
+                  value: remaining / 300.0,
+                  valueColor: const AlwaysStoppedAnimation(Color.fromARGB(255, 26, 161, 123)),
+                  backgroundColor: Colors.grey.shade300,
+                  minHeight: 6,
+                ),
+                const SizedBox(height: 8),
+                const Text('remaining'),
+              ],
+            ),
+            actions: [
+              ElevatedButton(
+                onPressed: () => Navigator.of(context).pop(),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: const Color.fromARGB(255, 26, 161, 123),
+                  foregroundColor: Colors.white,
+                ),
+                child: const Text('Resume'),
+              ),
+            ],
+          );
+        });
+      },
+    );
+    localTimer?.cancel();
+    setState(() {
+      _inTimeout = false;
+    });
+    _resumeTimerIfNeeded();
   }
 }
 
@@ -2918,698 +3783,6 @@ class _SpinnerRingPainter extends CustomPainter {
   bool shouldRepaint(covariant CustomPainter oldDelegate) => false;
 }
 
-extension on _RefereeDashboardScreenState {
-  void _swapLeftTeamDisplay(TournamentMatch g) {
-    final leftTeam = _splitTeam(g.player1);
-    if (leftTeam.length <= 1) return;
-    final currentTop = _leftTopOverride.isNotEmpty ? _leftTopOverride : leftTeam[0];
-    final currentBottom = _leftBottomOverride.isNotEmpty
-        ? _leftBottomOverride
-        : (leftTeam.length > 1 ? leftTeam[1] : leftTeam[0]);
-    _leftTopOverride = currentBottom;
-    _leftBottomOverride = currentTop;
-  }
-
-  void _swapRightTeamDisplay(TournamentMatch g) {
-    final rightTeam = _splitTeam(g.player2);
-    if (rightTeam.length <= 1) return;
-    final currentTop = _rightTopOverride.isNotEmpty
-        ? _rightTopOverride
-        : (rightTeam.length > 1 ? rightTeam[1] : rightTeam[0]);
-    final currentBottom = _rightBottomOverride.isNotEmpty
-        ? _rightBottomOverride
-        : (rightTeam.length > 1 ? rightTeam[0] : '');
-    _rightTopOverride = currentBottom.isNotEmpty ? currentBottom : currentTop;
-    _rightBottomOverride = currentTop;
-  }
-
-  String _rallyServerForTeam(TournamentMatch g, {required bool team1}) {
-    final team = _splitTeam(team1 ? g.player1 : g.player2);
-    if (team.isEmpty) return '';
-    if (team.length <= 1) return team.first;
-
-    final score = team1 ? _score1 : _score2;
-    final even = (score % 2 == 0);
-
-    String currentTop;
-    String currentBottom;
-    if (team1) {
-      currentTop = _leftTopOverride.isNotEmpty ? _leftTopOverride : team[0];
-      currentBottom = _leftBottomOverride.isNotEmpty ? _leftBottomOverride : team[1];
-    } else {
-      currentTop = _rightTopOverride.isNotEmpty ? _rightTopOverride : team[1];
-      currentBottom = _rightBottomOverride.isNotEmpty ? _rightBottomOverride : team[0];
-    }
-
-    final rightSlotIsTop = !team1;
-    final serveSlotIsTop = even ? rightSlotIsTop : !rightSlotIsTop;
-    return serveSlotIsTop ? currentTop : currentBottom;
-  }
-
-  void _pushSnapshot() {
-    _history.add(_Snapshot(_score1, _score2, _servingPlayer, _serverTop, _timeouts1, _timeouts2, _medTimeouts1, _medTimeouts2, _leftServeStage, _rightServeStage));
-  }
-
-  void _switchCourt() {
-    setState(() {
-      _endsSwitched = !_endsSwitched;
-    });
-  }
-
-  bool _serverOnTeam1(TournamentMatch g) {
-    final leftTeam = _splitTeam(g.player1);
-    return _servingPlayer != null && leftTeam.contains(_servingPlayer);
-  }
-
-  void _secondServe() {
-    final app = context.read<AppState>();
-    final g = app.selectedGame;
-    if (!_gameStarted || g == null || _servingPlayer == null) return;
-    final leftTeam = _splitTeam(g.player1);
-    final rightTeam = _splitTeam(g.player2);
-    setState(() {
-      if (leftTeam.contains(_servingPlayer) && leftTeam.length > 1) {
-        _servingPlayer = _servingPlayer == leftTeam[0] ? leftTeam[1] : leftTeam[0];
-        // Keep anchors: left base stays bottom, right base stays top
-        _leftBottomOverride = _leftBase.isNotEmpty ? _leftBase : (_leftBottomOverride.isNotEmpty ? _leftBottomOverride : (leftTeam.length > 1 ? leftTeam[1] : leftTeam[0]));
-        _leftTopOverride = _leftSecond.isNotEmpty ? _leftSecond : (_leftTopOverride.isNotEmpty ? _leftTopOverride : leftTeam[0]);
-        _rightTopOverride = _rightBase.isNotEmpty ? _rightBase : (_rightTopOverride.isNotEmpty ? _rightTopOverride : (rightTeam.length > 1 ? rightTeam[1] : rightTeam[0]));
-        _rightBottomOverride = _rightSecond.isNotEmpty ? _rightSecond : (_rightBottomOverride.isNotEmpty ? _rightBottomOverride : (rightTeam.length > 1 ? rightTeam[0] : ''));
-      } else if (rightTeam.contains(_servingPlayer) && rightTeam.length > 1) {
-        _servingPlayer = _servingPlayer == rightTeam[0] ? (rightTeam.length > 1 ? rightTeam[1] : rightTeam[0]) : rightTeam[0];
-        // Keep anchors
-        _leftBottomOverride = _leftBase.isNotEmpty ? _leftBase : (_leftBottomOverride.isNotEmpty ? _leftBottomOverride : (leftTeam.length > 1 ? leftTeam[1] : leftTeam[0]));
-        _leftTopOverride = _leftSecond.isNotEmpty ? _leftSecond : (_leftTopOverride.isNotEmpty ? _leftTopOverride : leftTeam[0]);
-        _rightTopOverride = _rightBase.isNotEmpty ? _rightBase : (_rightTopOverride.isNotEmpty ? _rightTopOverride : (rightTeam.length > 1 ? rightTeam[1] : rightTeam[0]));
-        _rightBottomOverride = _rightSecond.isNotEmpty ? _rightSecond : (_rightBottomOverride.isNotEmpty ? _rightBottomOverride : (rightTeam.length > 1 ? rightTeam[0] : ''));
-      }
-    });
-  }
-
-  void _undoLast() {
-    if (_history.isEmpty) return;
-    final last = _history.removeLast();
-    setState(() {
-      _score1 = last.s1;
-      _score2 = last.s2;
-      _servingPlayer = last.server;
-      _serverTop = last.serverTop;
-      _timeouts1 = last.t1;
-      _timeouts2 = last.t2;
-      _medTimeouts1 = last.mt1;
-      _medTimeouts2 = last.mt2;
-      _leftServeStage = last.ls;
-      _rightServeStage = last.rs;
-    });
-  }
-
-  void _awardRallyPointLeft() => _awardRallyPoint(team1Wins: true);
-
-  void _awardRallyPointRight() => _awardRallyPoint(team1Wins: false);
-
-  void _awardRallyPoint({required bool team1Wins}) {
-    final app = context.read<AppState>();
-    final g = app.selectedGame;
-    if (!_gameStarted || g == null) return;
-    _pushSnapshot();
-    setState(() {
-      if (team1Wins) {
-        _score1 += 1;
-        _servingPlayer = _rallyServerForTeam(g, team1: true);
-        _leftServeStage = 1;
-        _rightServeStage = 0;
-        final leftTeam = _splitTeam(g.player1);
-        final currentTop = _leftTopOverride.isNotEmpty ? _leftTopOverride : (leftTeam.isNotEmpty ? leftTeam[0] : g.player1);
-        _serverTop = _servingPlayer == currentTop;
-      } else {
-        _score2 += 1;
-        _servingPlayer = _rallyServerForTeam(g, team1: false);
-        _leftServeStage = 0;
-        _rightServeStage = 1;
-        final rightTeam = _splitTeam(g.player2);
-        final currentTop = _rightTopOverride.isNotEmpty
-            ? _rightTopOverride
-            : (rightTeam.length > 1 ? rightTeam[1] : (rightTeam.isNotEmpty ? rightTeam[0] : g.player2));
-        _serverTop = _servingPlayer == currentTop;
-      }
-    });
-    _syncLiveScoreTick();
-  }
-
-  void _incrementPoint() {
-    final app = context.read<AppState>();
-    final g = app.selectedGame;
-    if (!_gameStarted || g == null || _servingPlayer == null) return;
-    _pushSnapshot();
-    setState(() {
-      if (_serverOnTeam1(g)) {
-        _score1 += 1;
-        _swapLeftTeamDisplay(g);
-      } else {
-        _score2 += 1;
-        _swapRightTeamDisplay(g);
-      }
-      _serverTop = !_serverTop;
-    });
-    _syncLiveScoreTick();
-  }
-
-  void _decrementPoint() {
-    final app = context.read<AppState>();
-    final g = app.selectedGame;
-    if (!_gameStarted || g == null || _servingPlayer == null) return;
-    _pushSnapshot();
-    setState(() {
-      if (_serverOnTeam1(g) && _score1 > 0) {
-        _score1 -= 1;
-        final leftTeam = _splitTeam(g.player1);
-        if (leftTeam.length > 1) {
-          // Keep anchors
-          if (_leftBase.isNotEmpty && _leftSecond.isNotEmpty) {
-            _leftBottomOverride = _leftBase;
-            _leftTopOverride = _leftSecond;
-          }
-        }
-      } else if (!_serverOnTeam1(g) && _score2 > 0) {
-        _score2 -= 1;
-        final rightTeam = _splitTeam(g.player2);
-        if (rightTeam.length > 1) {
-          // Keep anchors
-          if (_rightBase.isNotEmpty && _rightSecond.isNotEmpty) {
-            _rightTopOverride = _rightBase;
-            _rightBottomOverride = _rightSecond;
-          }
-        }
-      }
-      _serverTop = !_serverTop;
-    });
-    _syncLiveScoreTick();
-  }
-
-  Future<void> _confirmDecrementPoint() async {
-    final g = context.read<AppState>().selectedGame;
-    if (!_gameStarted || g == null || _servingPlayer == null) return;
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (_) => AlertDialog(
-        title: Row(
-          children: [
-            const Icon(Icons.remove_circle, color: Color(0xFFB91C1C), size: 26),
-            const SizedBox(width: 10),
-            Text(
-              'Confirm Deduction',
-              style: TextStyle(color: Color(0xFFB91C1C), fontWeight: FontWeight.bold),
-            ),
-          ],
-        ),
-        content: Text(
-          'Are you sure you want to deduct one point from the serving side?\n\n'
-          'Current server: $_servingPlayer',
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(context).pop(false),
-            child: const Text('Cancel'),
-          ),
-          ElevatedButton(
-            style: ElevatedButton.styleFrom(
-              backgroundColor: const Color(0xFFB91C1C),
-              foregroundColor: Colors.white,
-            ),
-            onPressed: () => Navigator.of(context).pop(true),
-            child: const Text('Deduct'),
-          ),
-        ],
-      ),
-    );
-    if (confirmed == true) {
-      _decrementPoint();
-    }
-  }
-
-  void _sideOut() {
-    final app = context.read<AppState>();
-    final g = app.selectedGame;
-    if (!_gameStarted || g == null || _servingPlayer == null) return;
-    _pushSnapshot();
-    setState(() {
-      final leftTeam = _splitTeam(g.player1);
-      final rightTeam = _splitTeam(g.player2);
-      final wasOnLeft = leftTeam.contains(_servingPlayer);
-      final isDoubles = leftTeam.length > 1 || rightTeam.length > 1;
-      if (isDoubles) {
-        if (wasOnLeft) {
-          if (_leftServeStage <= 1) {
-            _leftServeStage = 2;
-            _servingPlayer = _servingPlayer == leftTeam[0] ? (leftTeam.length > 1 ? leftTeam[1] : leftTeam[0]) : leftTeam[0];
-          } else {
-            _leftServeStage = 0;
-            _rightServeStage = 1;
-            final rightSide = _rightTopOverride.isNotEmpty ? _rightTopOverride : (rightTeam.length > 1 ? rightTeam[1] : rightTeam[0]);
-            _servingPlayer = rightSide;
-            _serverTop = true;
-          }
-        } else {
-          if (_rightServeStage <= 1) {
-            _rightServeStage = 2;
-            _servingPlayer = _servingPlayer == rightTeam[0] ? (rightTeam.length > 1 ? rightTeam[1] : rightTeam[0]) : rightTeam[0];
-          } else {
-            _rightServeStage = 0;
-            _leftServeStage = 1;
-            final rightSide = _leftBottomOverride.isNotEmpty ? _leftBottomOverride : (leftTeam.length > 1 ? leftTeam[1] : (leftTeam.isNotEmpty ? leftTeam[0] : g.player1));
-            _servingPlayer = rightSide;
-            _serverTop = false;
-          }
-        }
-      } else {
-        // Singles: previous behavior
-        if (wasOnLeft) {
-          _servingPlayer = rightTeam.length > 1 ? rightTeam[1] : rightTeam[0];
-          _serverTop = (_score2 % 2 == 0);
-        } else {
-          _servingPlayer = leftTeam[0];
-          _serverTop = (_score1 % 2 != 0);
-        }
-      }
-    });
-    _syncLiveScoreTick();
-  }
-
-  void _syncLiveScoreTick() {
-    final app = context.read<AppState>();
-    final g = app.selectedGame;
-    if (g == null) return;
-    final fields = <String, dynamic>{
-      'status': 'Ongoing',
-      'score1': _score1,
-      'score2': _score2,
-      'game${_currentGame}Player1': _score1,
-      'game${_currentGame}Player2': _score2,
-    };
-    if (kDebugMode) {
-      final matchRef = g.type == 'group'
-          ? 'groupId=${g.groupId}, matchKey=${g.matchKey}'
-          : 'matchId=${g.id}, docId=${g.documentId}, alias=${g.matchKey}';
-      debugPrint(
-        '[score-sync][tap] $matchRef selectedGame=$_currentGame '
-        'score=$_score1-$_score2 action=score-interaction',
-      );
-    }
-    app.updateSelectedMatchFields(fields, debounceOngoing: true);
-  }
-
-  Future<void> _noShow(TournamentMatch g, String noShowPlayer, String winner) async {
-    final app = context.read<AppState>();
-    final ok = await showDialog<bool>(
-      context: context,
-      builder: (_) => AlertDialog(
-        title: const Text('Confirm No Show'),
-        content: Text('$noShowPlayer did not show up. Award to $winner?'),
-        actions: [
-          TextButton(onPressed: () => Navigator.of(context).pop(false), child: const Text('Cancel')),
-          ElevatedButton(onPressed: () => Navigator.of(context).pop(true), child: const Text('Confirm')),
-        ],
-      ),
-    );
-    if (ok != true) return;
-    final fields = <String, dynamic>{
-      'winner': winner,
-      'status': 'Completed',
-      'score1': _score1,
-      'score2': _score2,
-      'finalScorePlayer1': _score1,
-      'finalScorePlayer2': _score2,
-    };
-    try {
-      await app.updateSelectedMatchFields(fields);
-      if (mounted) {
-        setState(() {
-          _gameStarted = false;
-        });
-      }
-    } catch (_) {}
-  }
-
-  void _onTimeout() async {
-    final app = context.read<AppState>();
-    final g = app.selectedGame;
-    if (g == null) return;
-    final who = await showDialog<String>(
-      context: context,
-      builder: (_) {
-        final p1Disabled = _timeouts1 >= 1;
-        final p2Disabled = _timeouts2 >= 1;
-        return AlertDialog(
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-          title: const Row(
-            children: [
-              Icon(Icons.timer, color: Color.fromARGB(255, 26, 161, 123)),
-              SizedBox(width: 8),
-              Text('Timeout'),
-            ],
-          ),
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              SizedBox(
-                width: double.infinity,
-                child: ElevatedButton(
-                  onPressed: p1Disabled ? null : () => Navigator.pop(context, 'p1'),
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: const Color.fromARGB(255, 26, 161, 123),
-                    foregroundColor: Colors.white,
-                    padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 16),
-                  ),
-                  child: Align(
-                    alignment: Alignment.center,
-                    child: Text(
-                      g.player1,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      textAlign: TextAlign.center,
-                    ),
-                  ),
-                ),
-              ),
-              const SizedBox(height: 8),
-              SizedBox(
-                width: double.infinity,
-                child: ElevatedButton(
-                  onPressed: p2Disabled ? null : () => Navigator.pop(context, 'p2'),
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: const Color.fromARGB(255, 26, 161, 123),
-                    foregroundColor: Colors.white,
-                    padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 16),
-                  ),
-                  child: Align(
-                    alignment: Alignment.center,
-                    child: Text(
-                      g.player2,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      textAlign: TextAlign.center,
-                    ),
-                  ),
-                ),
-              ),
-            ],
-          ),
-        );
-      },
-    );
-    if (who == null) return;
-    final name = who == 'p1' ? g.player1 : g.player2;
-    final confirm = await showDialog<bool>(
-      context: context,
-      builder: (_) => AlertDialog(
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-        title: const Row(
-          children: [
-            Icon(Icons.timer_outlined, color: Color.fromARGB(255, 26, 161, 123)),
-            SizedBox(width: 8),
-            Text('Confirm Timeout'),
-          ],
-        ),
-        content: Text('Are you sure you want to timeout $name?'),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(context).pop(false),
-            child: const Text('Cancel'),
-          ),
-          ElevatedButton(
-            onPressed: () => Navigator.of(context).pop(true),
-            style: ElevatedButton.styleFrom(
-              backgroundColor: const Color.fromARGB(255, 26, 161, 123),
-              foregroundColor: Colors.white,
-            ),
-            child: const Text('OK'),
-          ),
-        ],
-      ),
-    );
-    if (confirm != true) return;
-    _pushSnapshot();
-    if (who == 'p1') {
-      setState(() {
-        _timeouts1 += 1;
-      });
-    } else if (who == 'p2') {
-      setState(() {
-        _timeouts2 += 1;
-      });
-    }
-    int remaining = 60;
-    _timer?.cancel();
-    setState(() {
-      _inTimeout = true;
-      _timeoutSecondsLeft = remaining;
-    });
-    Timer? localTimer;
-    await showDialog<void>(
-      context: context,
-      barrierDismissible: false,
-      builder: (_) {
-        return StatefulBuilder(builder: (context, setLocal) {
-          localTimer ??= Timer.periodic(const Duration(seconds: 1), (t) {
-            if (!mounted) return;
-            if (remaining <= 1) {
-              t.cancel();
-              Navigator.of(context).pop();
-              return;
-            }
-            remaining -= 1;
-            setLocal(() {
-              _timeoutSecondsLeft = remaining;
-            });
-          });
-          return AlertDialog(
-            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-            title: const Row(
-              children: [
-                Icon(Icons.timer, color: Color.fromARGB(255, 26, 161, 123)),
-                SizedBox(width: 8),
-                Text('Timeout'),
-              ],
-            ),
-            content: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Text(
-                  _fmt(_timeoutSecondsLeft),
-                  style: const TextStyle(fontSize: 48, fontWeight: FontWeight.w900),
-                ),
-                const SizedBox(height: 8),
-                LinearProgressIndicator(
-                  value: remaining / 60.0,
-                  valueColor: const AlwaysStoppedAnimation(Color.fromARGB(255, 26, 161, 123)),
-                  backgroundColor: Colors.grey.shade300,
-                  minHeight: 6,
-                ),
-                const SizedBox(height: 8),
-                const Text('remaining'),
-              ],
-            ),
-            actions: [
-              ElevatedButton(
-                onPressed: () => Navigator.of(context).pop(),
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: const Color.fromARGB(255, 26, 161, 123),
-                  foregroundColor: Colors.white,
-                ),
-                child: const Text('Resume'),
-              ),
-            ],
-          );
-        });
-      },
-    );
-    localTimer?.cancel();
-    setState(() {
-      _inTimeout = false;
-    });
-    _resumeTimerIfNeeded();
-  }
-
-  void _onMedicalTimeout() async {
-    final app = context.read<AppState>();
-    final g = app.selectedGame;
-    if (g == null) return;
-    final who = await showDialog<String>(
-      context: context,
-      builder: (_) {
-        final p1Disabled = _medTimeouts1 >= 1;
-        final p2Disabled = _medTimeouts2 >= 1;
-        return AlertDialog(
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-          title: const Row(
-            children: [
-              Icon(Icons.medical_services_outlined, color: Color.fromARGB(255, 26, 161, 123)),
-              SizedBox(width: 8),
-              Text('Medical Timeout'),
-            ],
-          ),
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              SizedBox(
-                width: double.infinity,
-                child: ElevatedButton(
-                  onPressed: p1Disabled ? null : () => Navigator.pop(context, 'p1'),
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: const Color.fromARGB(255, 26, 161, 123),
-                    foregroundColor: Colors.white,
-                    padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 16),
-                  ),
-                  child: Align(
-                    alignment: Alignment.center,
-                    child: Text(
-                      g.player1,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      textAlign: TextAlign.center,
-                    ),
-                  ),
-                ),
-              ),
-              const SizedBox(height: 8),
-              SizedBox(
-                width: double.infinity,
-                child: ElevatedButton(
-                  onPressed: p2Disabled ? null : () => Navigator.pop(context, 'p2'),
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: const Color.fromARGB(255, 26, 161, 123),
-                    foregroundColor: Colors.white,
-                    padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 16),
-                  ),
-                  child: Align(
-                    alignment: Alignment.center,
-                    child: Text(
-                      g.player2,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      textAlign: TextAlign.center,
-                    ),
-                  ),
-                ),
-              ),
-            ],
-          ),
-        );
-      },
-    );
-    if (who == null) return;
-    final name = who == 'p1' ? g.player1 : g.player2;
-    final confirm = await showDialog<bool>(
-      context: context,
-      builder: (_) => AlertDialog(
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-        title: const Row(
-          children: [
-            Icon(Icons.medical_services_outlined, color: Color.fromARGB(255, 26, 161, 123)),
-            SizedBox(width: 8),
-            Text('Confirm Medical Timeout'),
-          ],
-        ),
-        content: Text('Are you sure you want to start a medical timeout for $name?'),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(context).pop(false),
-            child: const Text('Cancel'),
-          ),
-          ElevatedButton(
-            onPressed: () => Navigator.of(context).pop(true),
-            style: ElevatedButton.styleFrom(
-              backgroundColor: const Color.fromARGB(255, 26, 161, 123),
-              foregroundColor: Colors.white,
-            ),
-            child: const Text('OK'),
-          ),
-        ],
-      ),
-    );
-    if (confirm != true) return;
-    _pushSnapshot();
-    if (who == 'p1') {
-      setState(() {
-        _medTimeouts1 += 1;
-      });
-    } else if (who == 'p2') {
-      setState(() {
-        _medTimeouts2 += 1;
-      });
-    }
-    int remaining = 300;
-    _timer?.cancel();
-    setState(() {
-      _inTimeout = true;
-      _timeoutSecondsLeft = remaining;
-    });
-    Timer? localTimer;
-    await showDialog<void>(
-      context: context,
-      barrierDismissible: false,
-      builder: (_) {
-        return StatefulBuilder(builder: (context, setLocal) {
-          localTimer ??= Timer.periodic(const Duration(seconds: 1), (t) {
-            if (!mounted) return;
-            if (remaining <= 1) {
-              t.cancel();
-              Navigator.of(context).pop();
-              return;
-            }
-            remaining -= 1;
-            setLocal(() {
-              _timeoutSecondsLeft = remaining;
-            });
-          });
-          return AlertDialog(
-            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-            title: const Row(
-              children: [
-                Icon(Icons.medical_services_outlined, color: Color.fromARGB(255, 26, 161, 123)),
-                SizedBox(width: 8),
-                Text('Medical Timeout'),
-              ],
-            ),
-            content: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Text(
-                  _fmt(_timeoutSecondsLeft),
-                  style: const TextStyle(fontSize: 48, fontWeight: FontWeight.w900),
-                ),
-                const SizedBox(height: 8),
-                LinearProgressIndicator(
-                  value: remaining / 300.0,
-                  valueColor: const AlwaysStoppedAnimation(Color.fromARGB(255, 26, 161, 123)),
-                  backgroundColor: Colors.grey.shade300,
-                  minHeight: 6,
-                ),
-                const SizedBox(height: 8),
-                const Text('remaining'),
-              ],
-            ),
-            actions: [
-              ElevatedButton(
-                onPressed: () => Navigator.of(context).pop(),
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: const Color.fromARGB(255, 26, 161, 123),
-                  foregroundColor: Colors.white,
-                ),
-                child: const Text('Resume'),
-              ),
-            ],
-          );
-        });
-      },
-    );
-    localTimer?.cancel();
-    setState(() {
-      _inTimeout = false;
-    });
-    _resumeTimerIfNeeded();
-  }
-}
 
 class SignaturePad extends StatefulWidget {
   const SignaturePad({super.key});
@@ -3620,20 +3793,34 @@ class SignaturePad extends StatefulWidget {
 
 class _SignaturePadState extends State<SignaturePad> {
   final List<Offset?> _points = [];
-  final GlobalKey _repaintKey = GlobalKey();
+  Size _padSize = Size.zero;
 
   bool get hasInk => _points.where((p) => p != null).length >= 2;
 
+  /// Rasterize strokes directly (avoids RepaintBoundary / infinite-size failures).
   Future<Uint8List?> export() async {
     if (!hasInk) return null;
-    for (int i = 0; i < 2; i++) {
-      await Future<void>.delayed(Duration.zero);
-      if (!mounted) return null;
-      await WidgetsBinding.instance.endOfFrame;
+    var size = _padSize;
+    if (size.width < 1 || size.height < 1) {
+      final box = context.findRenderObject() as RenderBox?;
+      if (box != null && box.hasSize) size = box.size;
     }
-    final boundary = _repaintKey.currentContext?.findRenderObject() as RenderRepaintBoundary?;
-    if (boundary == null) return null;
-    final image = await boundary.toImage(pixelRatio: 3.0);
+    if (size.width < 1 || size.height < 1) return null;
+
+    const pixelRatio = 2.0;
+    final recorder = ui.PictureRecorder();
+    final canvas = Canvas(recorder);
+    canvas.scale(pixelRatio);
+    canvas.drawRect(
+      Rect.fromLTWH(0, 0, size.width, size.height),
+      Paint()..color = Colors.white,
+    );
+    _SignaturePainter(_points).paint(canvas, size);
+    final picture = recorder.endRecording();
+    final image = await picture.toImage(
+      (size.width * pixelRatio).round().clamp(1, 4096),
+      (size.height * pixelRatio).round().clamp(1, 4096),
+    );
     final byteData = await image.toByteData(format: ui.ImageByteFormat.png);
     return byteData?.buffer.asUint8List();
   }
@@ -3644,41 +3831,40 @@ class _SignaturePadState extends State<SignaturePad> {
     });
   }
 
+  void _addPoint(Offset global) {
+    final box = context.findRenderObject() as RenderBox?;
+    if (box == null || !box.hasSize) return;
+    final local = box.globalToLocal(global);
+    setState(() {
+      _points.add(local);
+    });
+  }
+
   @override
   Widget build(BuildContext context) {
-    return RepaintBoundary(
-      key: _repaintKey,
-      child: Container(
-        color: Colors.white,
-        child: GestureDetector(
-          behavior: HitTestBehavior.opaque,
-          onPanDown: (details) {
-            final box = context.findRenderObject() as RenderBox?;
-            if (box == null) return;
-            final local = box.globalToLocal(details.globalPosition);
-            setState(() {
-              _points.add(local);
-            });
-          },
-          onPanUpdate: (details) {
-            final box = context.findRenderObject() as RenderBox?;
-            if (box == null) return;
-            final local = box.globalToLocal(details.globalPosition);
-            setState(() {
-              _points.add(local);
-            });
-          },
-          onPanEnd: (_) {
-            setState(() {
-              _points.add(null);
-            });
-          },
-          child: CustomPaint(
-            painter: _SignaturePainter(_points),
-            size: const Size(double.infinity, double.infinity),
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        _padSize = Size(constraints.maxWidth, constraints.maxHeight);
+        return Container(
+          width: constraints.maxWidth,
+          height: constraints.maxHeight,
+          color: Colors.white,
+          child: GestureDetector(
+            behavior: HitTestBehavior.opaque,
+            onPanDown: (details) => _addPoint(details.globalPosition),
+            onPanUpdate: (details) => _addPoint(details.globalPosition),
+            onPanEnd: (_) {
+              setState(() {
+                _points.add(null);
+              });
+            },
+            child: CustomPaint(
+              painter: _SignaturePainter(_points),
+              size: _padSize,
+            ),
           ),
-        ),
-      ),
+        );
+      },
     );
   }
 }
