@@ -3,11 +3,8 @@ import 'package:socket_io_client/socket_io_client.dart' as io;
 
 /// Shared Socket.IO singleton — mirrors website `src/utils/socket.js`.
 ///
-/// Score **writes** go through the local-first [ScoreEventQueue] → REST ack.
-/// Court-scoped **match_update** overlays go through [MatchUpdateQueue] → socket emit
-/// (server relays to `court:{slug}` / tournament rooms).
-/// This client also joins rooms + receives score/status/schedule events.
-/// Never open a second connection.
+/// Score taps emit live:point / live:score-set (Ongoing) only — never REST.
+/// Match Complete uses [ScoreEventQueue] → REST submit-score + live:submit.
 class SocketService {
   SocketService._();
   static final SocketService instance = SocketService._();
@@ -137,6 +134,42 @@ class SocketService {
       throw StateError('socket not connected');
     }
     s.emit('match_update', payload);
+  }
+
+  /// Absolute live score (plus / minus / side / serve). Always Ongoing.
+  void emitLiveScoreSet(Map<String, dynamic> payload) {
+    final s = _socket;
+    if (s == null || !s.connected) {
+      throw StateError('socket not connected');
+    }
+    s.emit('live:score-set', payload);
+  }
+
+  /// Delta live point. Always Ongoing. Do not use after Complete.
+  void emitLivePoint(Map<String, dynamic> payload) {
+    final s = _socket;
+    if (s == null || !s.connected) {
+      throw StateError('socket not connected');
+    }
+    s.emit('live:point', payload);
+  }
+
+  /// Match Complete only. Never emit on score taps.
+  void emitLiveSubmit(Map<String, dynamic> payload) {
+    final s = _socket;
+    if (s == null || !s.connected) {
+      throw StateError('socket not connected');
+    }
+    s.emit('live:submit', payload);
+  }
+
+  /// Marks the live Match doc confirmed/Completed so OBS / live-scores clear.
+  void emitLiveFlushComplete(Map<String, dynamic> payload) {
+    final s = _socket;
+    if (s == null || !s.connected) {
+      throw StateError('socket not connected');
+    }
+    s.emit('live:flush-complete', payload);
   }
 
   void on(String event, void Function(dynamic) handler) {

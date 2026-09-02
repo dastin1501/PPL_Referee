@@ -790,6 +790,8 @@ class Tournament {
   final List<String> courts;
   final Map<String, String> categoryNames;
   final Map<String, int> categoryGamesPerMatch;
+  /// Per-category elimination stage GPM, e.g. { finals: 1, bronze: 1, semis: 3 }.
+  final Map<String, Map<String, int>> categoryEliminationGpm;
   final Map<String, String> categoryScoringTypes;
   final Map<String, String> categoryDivisions;
   final bool hasAuthoritativeSchedule;
@@ -807,6 +809,7 @@ class Tournament {
     this.courts = const [],
     this.categoryNames = const {},
     this.categoryGamesPerMatch = const {},
+    this.categoryEliminationGpm = const {},
     this.categoryScoringTypes = const {},
     this.categoryDivisions = const {},
     this.hasAuthoritativeSchedule = false,
@@ -822,6 +825,7 @@ class Tournament {
     final courts = <String>{};
     final categoryNames = <String, String>{};
     final categoryGPM = <String, int>{};
+    final categoryElimGpm = <String, Map<String, int>>{};
     final categoryScoringTypes = <String, String>{};
     final categoryDivisions = <String, String>{};
     final idToDisplay = <String, String>{};
@@ -1512,6 +1516,34 @@ class Tournament {
           categoryDivisions[catId] = division;
           final gpm = int.tryParse(c['gamesPerMatch']?.toString() ?? '') ?? 1;
           categoryGPM[catId] = gpm.clamp(1, 3);
+          final elimGpmRaw = c['eliminationGpm'];
+          if (elimGpmRaw is Map) {
+            final staged = <String, int>{};
+            for (final entry in elimGpmRaw.entries) {
+              final key = entry.key.toString().trim().toLowerCase();
+              final val = int.tryParse(entry.value?.toString() ?? '');
+              if (key.isEmpty || val == null) continue;
+              staged[key] = val.clamp(1, 3);
+            }
+            if (staged.containsKey('finals_bronze')) {
+              final v = staged['finals_bronze']!;
+              staged.putIfAbsent('finals', () => v);
+              staged.putIfAbsent('bronze', () => v);
+            }
+            if (staged.isNotEmpty) categoryElimGpm[catId] = staged;
+          }
+          final elimBlock = c['eliminationMatches'];
+          if (elimBlock is Map) {
+            final legacy = int.tryParse(elimBlock['gamesPerMatch']?.toString() ?? '');
+            if (legacy != null) {
+              final staged = Map<String, int>.from(categoryElimGpm[catId] ?? const {});
+              final v = legacy.clamp(1, 3);
+              staged.putIfAbsent('elimination', () => v);
+              staged.putIfAbsent('finals', () => v);
+              staged.putIfAbsent('bronze', () => v);
+              categoryElimGpm[catId] = staged;
+            }
+          }
           final scoringType = c['scoringType']?.toString().trim();
           if (scoringType != null && scoringType.isNotEmpty) {
             categoryScoringTypes[catId] = scoringType;
@@ -1659,6 +1691,7 @@ class Tournament {
       ),
       categoryNames: categoryNames,
       categoryGamesPerMatch: categoryGPM,
+      categoryEliminationGpm: categoryElimGpm,
       categoryScoringTypes: categoryScoringTypes,
       categoryDivisions: categoryDivisions,
       hasAuthoritativeSchedule: hasAuthoritativeSchedule,

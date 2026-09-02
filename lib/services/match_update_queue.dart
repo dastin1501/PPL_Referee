@@ -197,14 +197,39 @@ class MatchUpdateQueue {
     }
   }
 
-  /// On reconnect: mark all courts pending again so latest state is re-broadcast.
+  /// Drop overlay snapshots for a court so Complete cannot be followed by a
+  /// stale 0-0 `match_update` (that empties OBS).
+  Future<void> clearCourt(String courtSlug) async {
+    await load();
+    final court = courtSlug.trim();
+    if (court.isEmpty) return;
+    if (_byCourt.remove(court) == null) return;
+    await _persist();
+    _notify();
+    if (kDebugMode) {
+      debugPrint('[match-update-queue] cleared court=$court');
+    }
+  }
+
+  /// On reconnect: re-broadcast the latest overlay snapshot, but never a 0-0
+  /// leftover from match open (that flickers OBS empty after live scores).
   Future<void> requeueAllForReconnect() async {
     await load();
     var any = false;
-    for (final e in _byCourt.values) {
-      e.acked = false;
-      e.nextRetryAt = null;
-      e.lastError = null;
+    final drop = <String>[];
+    for (final e in _byCourt.entries) {
+      final p = e.value.payload;
+      if (p.team1Score + p.team2Score <= 0) {
+        drop.add(e.key);
+        continue;
+      }
+      e.value.acked = false;
+      e.value.nextRetryAt = null;
+      e.value.lastError = null;
+      any = true;
+    }
+    for (final court in drop) {
+      _byCourt.remove(court);
       any = true;
     }
     if (any) {

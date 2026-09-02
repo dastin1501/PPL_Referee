@@ -6,6 +6,7 @@ import 'package:path_provider/path_provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../models/score_event.dart';
 import 'api_service.dart';
+import 'socket_service.dart';
 
 typedef ScoreQueueListener = void Function();
 
@@ -15,19 +16,25 @@ typedef ScoreQueueListener = void Function();
 /// - Each event is persisted, then flushed in per-match sequence order.
 /// - Large signatures are stored as files (not SharedPreferences) so they
 ///   don't get silently dropped when prefs overflow.
-/// - Ack = successful authenticated REST `submit-score`.
+/// - Score taps (plus / minus / side / serve): socket `live:point` or
+///   `live:score-set` only. status Ongoing. Never REST, never Completed.
+/// - Complete / Submit: REST `submit-score` with actual scores, then
+///   `live:submit` + `live:flush-complete` with markCompleted.
 /// - Never blocks the referee; retries with exponential backoff in background.
 class ScoreEventQueue {
   ScoreEventQueue({
     required ApiService api,
+    SocketService? socket,
     this.onChanged,
-  }) : _api = api;
+  })  : _api = api,
+        _socket = socket ?? SocketService.instance;
 
   static const _storageKey = 'referee_score_event_queue_v1';
   static const _seqKey = 'referee_score_event_seq_v1';
   static const _sigKeys = {'signatureData', 'gameSignatures'};
 
   final ApiService _api;
+  final SocketService _socket;
   final ScoreQueueListener? onChanged;
 
   final List<ScoreEvent> _events = [];
@@ -271,6 +278,10 @@ class ScoreEventQueue {
     _seqByMatch[mid] = nextSeq;
 
     final fullSnap = Map<String, dynamic>.from(snapshot);
+    if (action != ScoreEventAction.submit) {
+      fullSnap['status'] = 'Ongoing';
+      fullSnap.remove('markCompleted');
+    }
     final extras = _extractSignatureExtras(fullSnap);
     final leanSnap = _snapshotWithoutSignatures(fullSnap);
 
@@ -298,6 +309,11 @@ class ScoreEventQueue {
     }
     // Keep full snapshot in-memory for immediate flush / UI merges.
     event.snapshot.addAll(extras);
+    // Completed submit must not be followed by older live/point snapshots
+    // that would REST-write status Ongoing and keep OBS on.
+    if (_isCompletedSubmit(event)) {
+      await _dropPendingBeforeCompletedSubmit(event);
+    }
     await _persist();
     _notify();
     if (kDebugMode) {
@@ -353,6 +369,7 @@ class ScoreEventQueue {
     for (final e in _events) {
       if (!e.isPending) continue;
       if (_inFlightEventIds.contains(e.id)) continue;
+      if (_isSupersededByCompletedSubmit(e)) continue;
       final ready = e.nextRetryAt == null ||
           !e.nextRetryAt!.isAfter(DateTime.now());
       if (!ready) continue;
@@ -374,15 +391,52 @@ class ScoreEventQueue {
 
   Future<void> _sendOne(ScoreEvent event) async {
     if (_inFlightEventIds.contains(event.id) || event.acked) return;
+    if (_isSupersededByCompletedSubmit(event)) {
+      event.acked = true;
+      event.lastError = null;
+      event.nextRetryAt = null;
+      await _persist();
+      return;
+    }
     _inFlightEventIds.add(event.id);
     _notify();
     try {
       await _loadSignatureExtras(event.id);
-      final payload = _buildSubmitPayload(event);
-      await _api.submitScore(payload);
-      event.acked = true;
-      event.lastError = null;
-      event.nextRetryAt = null;
+      // Re-check after in-flight start: Complete may have landed while we waited.
+      if (_isSupersededByCompletedSubmit(event)) {
+        event.acked = true;
+        event.lastError = null;
+        event.nextRetryAt = null;
+        await _persist();
+        return;
+      }
+      if (_isCompletedSubmit(event)) {
+        final payload = _buildCompletedPayloadFrom(event);
+        await _api.submitScore(payload);
+        event.acked = true;
+        event.lastError = null;
+        event.nextRetryAt = null;
+        _emitCompletedLive(event, payload);
+      } else if (event.action == ScoreEventAction.submit) {
+        // Mid-match Finish & Submit (not last game): persist signature, stay Ongoing.
+        final payload = _buildOngoingSubmitPayload(event);
+        await _api.submitScore(payload);
+        event.acked = true;
+        event.lastError = null;
+        event.nextRetryAt = null;
+      } else if (event.action == ScoreEventAction.note) {
+        final payload = _buildNotePayload(event);
+        await _api.submitScore(payload);
+        event.acked = true;
+        event.lastError = null;
+        event.nextRetryAt = null;
+      } else {
+        // Score tap / start / serve: socket only. Never REST, never Complete.
+        _emitLiveScore(event);
+        event.acked = true;
+        event.lastError = null;
+        event.nextRetryAt = null;
+      }
       if (kDebugMode) {
         debugPrint(
           '[score-queue] acked ${event.id} seq=${event.seq} '
@@ -409,6 +463,100 @@ class ScoreEventQueue {
     }
   }
 
+  bool _snapshotStatusIsCompleted(Map<String, dynamic> snap) {
+    return snap['status']?.toString().trim().toLowerCase() == 'completed';
+  }
+
+  bool _isCompletedSubmit(ScoreEvent event) {
+    return event.action == ScoreEventAction.submit &&
+        _snapshotStatusIsCompleted(event.snapshot);
+  }
+
+  bool _isSupersededByCompletedSubmit(ScoreEvent event) {
+    if (_isCompletedSubmit(event)) return false;
+    // Any live/point/note after (or still pending before) Complete must not
+    // emit zeros or keep OBS on.
+    return _events.any(
+      (e) => e.matchIdentity == event.matchIdentity && _isCompletedSubmit(e),
+    );
+  }
+
+  Future<void> _dropPendingBeforeCompletedSubmit(ScoreEvent submit) async {
+    final drop = _events
+        .where(
+          (e) =>
+              e.matchIdentity == submit.matchIdentity &&
+              e.id != submit.id &&
+              e.isPending &&
+              e.seq < submit.seq,
+        )
+        .toList();
+    for (final e in drop) {
+      e.acked = true;
+      e.lastError = null;
+      e.nextRetryAt = null;
+      await _deleteSignatureExtras(e.id);
+    }
+    if (drop.isNotEmpty && kDebugMode) {
+      debugPrint(
+        '[score-queue] dropped ${drop.length} pending events before '
+        'Completed submit seq=${submit.seq}',
+      );
+    }
+  }
+
+  void _emitCompletedLive(ScoreEvent event, Map<String, dynamic> payload) {
+    try {
+      if (!_socket.connected) return;
+      // Do not copy `game` / `side` / `delta` onto live:submit — the backend
+      // treats those as a live tick and refuses to mark Completed.
+      final live = <String, dynamic>{
+        'eventId': event.id,
+        'clientSeq': event.seq,
+        'clientAction': 'submit',
+        'tournamentId': event.tournamentId,
+        'categoryId': event.categoryId,
+        'type': event.matchType,
+        'status': 'Completed',
+        'markCompleted': true,
+        'gameIndex': event.gameIndex.clamp(1, 3),
+        if (payload['game1Player1'] != null) 'game1Player1': payload['game1Player1'],
+        if (payload['game1Player2'] != null) 'game1Player2': payload['game1Player2'],
+        if (payload['game2Player1'] != null) 'game2Player1': payload['game2Player1'],
+        if (payload['game2Player2'] != null) 'game2Player2': payload['game2Player2'],
+        if (payload['game3Player1'] != null) 'game3Player1': payload['game3Player1'],
+        if (payload['game3Player2'] != null) 'game3Player2': payload['game3Player2'],
+        if (payload['games'] != null) 'games': payload['games'],
+        if (payload['score1'] != null) 'score1': payload['score1'],
+        if (payload['score2'] != null) 'score2': payload['score2'],
+        if (payload['finalScorePlayer1'] != null)
+          'finalScorePlayer1': payload['finalScorePlayer1'],
+        if (payload['finalScorePlayer2'] != null)
+          'finalScorePlayer2': payload['finalScorePlayer2'],
+        if (payload['winner'] != null) 'winner': payload['winner'],
+      };
+      _stripScheduleFields(live);
+      _attachMatchIdentity(live, event);
+      _socket.emitLiveSubmit(live);
+      final flush = <String, dynamic>{
+        'eventId': 'flush-${event.id}',
+        'clientSeq': event.seq,
+        'markCompleted': true,
+        'status': 'Completed',
+        'tournamentId': event.tournamentId,
+        'categoryId': event.categoryId,
+        'type': event.matchType,
+      };
+      _attachMatchIdentity(flush, event);
+      _stripScheduleFields(flush);
+      _socket.emitLiveFlushComplete(flush);
+    } catch (e) {
+      if (kDebugMode) {
+        debugPrint('[score-queue] live:submit/flush-complete emit failed: $e');
+      }
+    }
+  }
+
   Future<void> _compactAcked(String matchIdentity) async {
     final forMatch = _events
         .where((e) => e.matchIdentity == matchIdentity)
@@ -423,7 +571,11 @@ class ScoreEventQueue {
     final dropIds = forMatch.take(contiguousAcked).map((e) => e.id).toSet();
     // Keep the latest acked snapshot event so restart can restore state.
     if (dropIds.length > 1) {
-      final keep = forMatch[contiguousAcked - 1].id;
+      ScoreEvent? keepCompleted;
+      for (final e in forMatch.take(contiguousAcked)) {
+        if (_isCompletedSubmit(e)) keepCompleted = e;
+      }
+      final keep = (keepCompleted ?? forMatch[contiguousAcked - 1]).id;
       dropIds.remove(keep);
       for (final id in dropIds) {
         await _deleteSignatureExtras(id);
@@ -443,6 +595,31 @@ class ScoreEventQueue {
     return _fullSnapshot(best);
   }
 
+  /// Drop all queued events for a match after staff unlock/clear on the website.
+  /// Without this, cold start / refresh re-applies local Completed over Scheduled.
+  Future<void> discardMatch(String matchIdentity) async {
+    final id = matchIdentity.trim();
+    if (id.isEmpty) return;
+    await load();
+    final removed = <ScoreEvent>[];
+    _events.removeWhere((e) {
+      final drop = e.matchIdentity == id;
+      if (drop) removed.add(e);
+      return drop;
+    });
+    if (removed.isEmpty) return;
+    for (final e in removed) {
+      _inFlightEventIds.remove(e.id);
+      await _deleteSignatureExtras(e.id);
+    }
+    _seqByMatch.remove(id);
+    await _persist();
+    _notify();
+    if (kDebugMode) {
+      debugPrint('[score-queue] discarded ${removed.length} event(s) for $id');
+    }
+  }
+
   Iterable<String> get knownMatchIdentities sync* {
     final seen = <String>{};
     for (final e in _events) {
@@ -450,7 +627,67 @@ class ScoreEventQueue {
     }
   }
 
-  Map<String, dynamic> _buildSubmitPayload(ScoreEvent event) {
+  Map<String, dynamic> _buildCompletedPayloadFrom(ScoreEvent event) {
+    final snap = _fullSnapshot(event);
+    final gameIndex = event.gameIndex.clamp(1, 3);
+    final s1 = _asInt(snap['game${gameIndex}Player1']) ?? 0;
+    final s2 = _asInt(snap['game${gameIndex}Player2']) ?? 0;
+    return _buildCompletedPayload(event, snap, gameIndex, s1, s2);
+  }
+
+  Map<String, dynamic> _buildNotePayload(ScoreEvent event) {
+    final snap = _fullSnapshot(event);
+    final payload = <String, dynamic>{
+      'tournamentId': event.tournamentId,
+      'categoryId': event.categoryId,
+      'type': event.matchType,
+      'gameIndex': event.gameIndex.clamp(1, 3),
+      'clientEventId': event.id,
+      'clientSeq': event.seq,
+      'clientAction': event.action.wire,
+      if (snap['refereeNote'] != null) 'refereeNote': snap['refereeNote'],
+    };
+    _attachMatchIdentity(payload, event);
+    _stripScheduleFields(payload);
+    payload.remove('markCompleted');
+    payload.remove('status');
+    return payload;
+  }
+
+  void _emitLiveScore(ScoreEvent event) {
+    if (_isSupersededByCompletedSubmit(event)) return;
+    if (event.action == ScoreEventAction.pointPlus ||
+        event.action == ScoreEventAction.pointMinus) {
+      final side = event.side;
+      if (side == 1 || side == 2) {
+        final point = <String, dynamic>{
+          'eventId': event.id,
+          'clientSeq': event.seq,
+          'tournamentId': event.tournamentId,
+          'categoryId': event.categoryId,
+          'type': event.matchType,
+          'game': event.gameIndex.clamp(1, 3),
+          'gameIndex': event.gameIndex.clamp(1, 3),
+          'side': side,
+          'delta': event.action == ScoreEventAction.pointPlus ? 1 : -1,
+          'status': 'Ongoing',
+        };
+        final snap = _fullSnapshot(event);
+        if (snap['serving'] != null) point['serving'] = snap['serving'];
+        if (snap['servingPlayer'] != null) {
+          point['servingPlayer'] = snap['servingPlayer'];
+        }
+        _attachMatchIdentity(point, event);
+        _prepareLiveTickPayload(point);
+        _socket.emitLivePoint(point);
+        return;
+      }
+    }
+    final payload = _buildLiveScoreSetPayload(event);
+    _socket.emitLiveScoreSet(payload);
+  }
+
+  Map<String, dynamic> _buildLiveScoreSetPayload(ScoreEvent event) {
     final snap = _fullSnapshot(event);
     final gameIndex = event.gameIndex.clamp(1, 3);
     final s1 = _asInt(snap['game${gameIndex}Player1']) ??
@@ -459,13 +696,134 @@ class ScoreEventQueue {
     final s2 = _asInt(snap['game${gameIndex}Player2']) ??
         _asInt(snap['score2']) ??
         0;
-    final gamesArray = List.generate(3, (i) {
-      final idx = i + 1;
-      return {
-        'a': _asInt(snap['game${idx}Player1']) ?? 0,
-        'b': _asInt(snap['game${idx}Player2']) ?? 0,
-      };
-    });
+    final scores = <String, dynamic>{
+      'game$gameIndex': {'team1': s1, 'team2': s2},
+    };
+    final payload = <String, dynamic>{
+      'eventId': event.id,
+      'clientSeq': event.seq,
+      'tournamentId': event.tournamentId,
+      'categoryId': event.categoryId,
+      'type': event.matchType,
+      'game': gameIndex,
+      'gameIndex': gameIndex,
+      'status': 'Ongoing',
+      'game${gameIndex}Player1': s1,
+      'game${gameIndex}Player2': s2,
+      'scores': scores,
+      if (snap['serving'] != null) 'serving': snap['serving'],
+      if (snap['servingPlayer'] != null) 'servingPlayer': snap['servingPlayer'],
+    };
+    // Include other played games from the snapshot only — never pad 0-0
+    // (that would wipe earlier games on live:score-set).
+    for (int i = 1; i <= 3; i++) {
+      if (i == gameIndex) continue;
+      final a = _asInt(snap['game${i}Player1']);
+      final b = _asInt(snap['game${i}Player2']);
+      if (a == null || b == null || a + b <= 0) continue;
+      payload['game${i}Player1'] = a;
+      payload['game${i}Player2'] = b;
+      scores['game$i'] = {'team1': a, 'team2': b};
+    }
+    _attachMatchIdentity(payload, event);
+    _prepareLiveTickPayload(payload);
+    return payload;
+  }
+
+  Map<String, dynamic> _buildOngoingSubmitPayload(ScoreEvent event) {
+    final snap = _fullSnapshot(event);
+    final gameIndex = event.gameIndex.clamp(1, 3);
+    final s1 = _asInt(snap['game${gameIndex}Player1']) ??
+        _asInt(snap['score1']) ??
+        0;
+    final s2 = _asInt(snap['game${gameIndex}Player2']) ??
+        _asInt(snap['score2']) ??
+        0;
+    final payload = <String, dynamic>{
+      'tournamentId': event.tournamentId,
+      'categoryId': event.categoryId,
+      'type': event.matchType,
+      'selectedGame': gameIndex,
+      'assignedGame': gameIndex,
+      'gameIndex': gameIndex,
+      'status': 'Ongoing',
+      'game${gameIndex}Status': 'Completed',
+      'game': {'a': s1, 'b': s2},
+      'clientEventId': event.id,
+      'clientSeq': event.seq,
+      'clientAction': event.action.wire,
+      if (snap['signatureData'] != null) 'signatureData': snap['signatureData'],
+      if (snap['gameSignatures'] != null) 'gameSignatures': snap['gameSignatures'],
+      if (snap['refereeNote'] != null) 'refereeNote': snap['refereeNote'],
+    };
+    payload.remove('markCompleted');
+    for (int i = 1; i <= 3; i++) {
+      final a = _asInt(snap['game${i}Player1']);
+      final b = _asInt(snap['game${i}Player2']);
+      if (a != null && b != null && (a + b) > 0) {
+        payload['game${i}Player1'] = a;
+        payload['game${i}Player2'] = b;
+      }
+    }
+    payload['game${gameIndex}Player1'] = s1;
+    payload['game${gameIndex}Player2'] = s2;
+    _attachMatchIdentity(payload, event);
+    _stripScheduleFields(payload);
+    return payload;
+  }
+
+  void _prepareLiveTickPayload(Map<String, dynamic> payload) {
+    payload['status'] = 'Ongoing';
+    payload.remove('markCompleted');
+    payload.remove('winner');
+    payload.remove('finalScorePlayer1');
+    payload.remove('finalScorePlayer2');
+    _stripScheduleFields(payload);
+  }
+
+  void _stripScheduleFields(Map<String, dynamic> payload) {
+    const keys = {
+      'date',
+      'time',
+      'court',
+      'venue',
+      'mdDate',
+      'mdTime',
+      'wdDate',
+      'wdTime',
+      'xdDate',
+      'xdTime',
+    };
+    for (final key in keys) {
+      payload.remove(key);
+    }
+    final status = payload['status']?.toString().trim().toLowerCase() ?? '';
+    if (status == 'scheduled' ||
+        status == 'unschedule' ||
+        status == 'unscheduled' ||
+        status == 'called') {
+      payload.remove('status');
+    }
+  }
+
+  Map<String, dynamic> _buildCompletedPayload(
+    ScoreEvent event,
+    Map<String, dynamic> snap,
+    int gameIndex,
+    int s1,
+    int s2,
+  ) {
+    final gamesArray = <Map<String, int>>[];
+    for (int i = 1; i <= 3; i++) {
+      final a = i == gameIndex ? s1 : (_asInt(snap['game${i}Player1']) ?? 0);
+      final b = i == gameIndex ? s2 : (_asInt(snap['game${i}Player2']) ?? 0);
+      if (a + b > 0) {
+        gamesArray.add({'a': a, 'b': b});
+      }
+    }
+    if (gamesArray.isEmpty && (s1 + s2) > 0) {
+      gamesArray.add({'a': s1, 'b': s2});
+    }
 
     final payload = <String, dynamic>{
       'tournamentId': event.tournamentId,
@@ -474,14 +832,41 @@ class ScoreEventQueue {
       'selectedGame': gameIndex,
       'assignedGame': gameIndex,
       'gameIndex': gameIndex,
+      'status': 'Completed',
+      'markCompleted': true,
+      'game${gameIndex}Status': 'Completed',
       'game': {'a': s1, 'b': s2},
       'games': gamesArray,
       'clientEventId': event.id,
       'clientSeq': event.seq,
       'clientAction': event.action.wire,
-      ...snap,
+      if (snap['winner'] != null) 'winner': snap['winner'],
+      if (snap['finalScorePlayer1'] != null)
+        'finalScorePlayer1': snap['finalScorePlayer1'],
+      if (snap['finalScorePlayer2'] != null)
+        'finalScorePlayer2': snap['finalScorePlayer2'],
+      if (snap['score1'] != null) 'score1': snap['score1'],
+      if (snap['score2'] != null) 'score2': snap['score2'],
+      if (snap['signatureData'] != null) 'signatureData': snap['signatureData'],
+      if (snap['gameSignatures'] != null) 'gameSignatures': snap['gameSignatures'],
+      if (snap['refereeNote'] != null) 'refereeNote': snap['refereeNote'],
     };
+    for (int i = 1; i <= 3; i++) {
+      final a = _asInt(snap['game${i}Player1']);
+      final b = _asInt(snap['game${i}Player2']);
+      if (a != null && b != null && (a + b) > 0) {
+        payload['game${i}Player1'] = a;
+        payload['game${i}Player2'] = b;
+      }
+    }
+    payload['game${gameIndex}Player1'] = s1;
+    payload['game${gameIndex}Player2'] = s2;
+    _attachMatchIdentity(payload, event);
+    _stripScheduleFields(payload);
+    return payload;
+  }
 
+  void _attachMatchIdentity(Map<String, dynamic> payload, ScoreEvent event) {
     if (event.matchType == 'group') {
       payload['groupId'] = event.groupId;
       payload['matchKey'] = event.matchKey;
@@ -494,7 +879,6 @@ class ScoreEventQueue {
         payload['_id'] = event.documentId;
       }
     }
-    return payload;
   }
 
   int? _asInt(dynamic v) {

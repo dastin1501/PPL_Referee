@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+import '../models.dart';
 import '../state/app_state.dart';
 import 'profile_screen.dart';
 
@@ -12,9 +13,42 @@ class TournamentListScreen extends StatefulWidget {
 
 class _TournamentListScreenState extends State<TournamentListScreen> {
   bool _navigating = false;
+  String? _openingTournamentId;
 
   static const _brand = Color(0xFF0F766E);
   static const _bg = Color(0xFFF4F7F6);
+
+  Future<void> _openTournament(AppState app, Tournament t) async {
+    if (_navigating) return;
+    setState(() {
+      _navigating = true;
+      _openingTournamentId = t.id;
+    });
+    try {
+      await app.selectTournament(t);
+      if (!mounted) return;
+      if (app.error != null &&
+          app.error!.startsWith('Failed to load tournament details')) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(app.error!)),
+        );
+        return;
+      }
+      await Navigator.of(context).pushNamed('/courtGames');
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Could not open tournament: $e')),
+      );
+    } finally {
+      if (mounted) {
+        setState(() {
+          _navigating = false;
+          _openingTournamentId = null;
+        });
+      }
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -216,18 +250,11 @@ class _TournamentListScreenState extends State<TournamentListScreen> {
                           separatorBuilder: (_, __) => const SizedBox(height: 12),
                           itemBuilder: (_, i) {
                             final t = app.tournaments[i];
+                            final opening = _openingTournamentId == t.id;
                             return Material(
                               color: Colors.transparent,
                               child: InkWell(
-                                onTap: () async {
-                                  if (_navigating) return;
-                                  setState(() => _navigating = true);
-                                  await app.selectTournament(t);
-                                  if (!mounted) return;
-                                  final nav = Navigator.of(context);
-                                  await nav.pushNamed('/courtGames');
-                                  if (mounted) setState(() => _navigating = false);
-                                },
+                                onTap: _navigating ? null : () => _openTournament(app, t),
                                 borderRadius: BorderRadius.circular(18),
                                 child: Ink(
                                   decoration: BoxDecoration(
@@ -300,9 +327,9 @@ class _TournamentListScreenState extends State<TournamentListScreen> {
                                                           color: const Color(0xFFECFDF5),
                                                           borderRadius: BorderRadius.circular(999),
                                                         ),
-                                                        child: const Text(
-                                                          'Open schedule',
-                                                          style: TextStyle(
+                                                        child: Text(
+                                                          opening ? 'Opening…' : 'Open schedule',
+                                                          style: const TextStyle(
                                                             fontSize: 11,
                                                             fontWeight: FontWeight.w700,
                                                             color: _brand,
@@ -319,11 +346,19 @@ class _TournamentListScreenState extends State<TournamentListScreen> {
                                                     color: const Color(0xFFF0FDFA),
                                                     borderRadius: BorderRadius.circular(10),
                                                   ),
-                                                  child: const Icon(
-                                                    Icons.arrow_forward_ios_rounded,
-                                                    size: 14,
-                                                    color: _brand,
-                                                  ),
+                                                  child: opening
+                                                      ? const Padding(
+                                                          padding: EdgeInsets.all(8),
+                                                          child: CircularProgressIndicator(
+                                                            strokeWidth: 2,
+                                                            color: _brand,
+                                                          ),
+                                                        )
+                                                      : const Icon(
+                                                          Icons.arrow_forward_ios_rounded,
+                                                          size: 14,
+                                                          color: _brand,
+                                                        ),
                                                 ),
                                               ],
                                             ),

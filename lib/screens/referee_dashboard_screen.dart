@@ -804,20 +804,35 @@ class _RefereeDashboardScreenState extends State<RefereeDashboardScreen> {
                   child: Row(
                     mainAxisSize: MainAxisSize.min,
                     children: [
-                      ConstrainedBox(
-                        constraints: BoxConstraints(
-                          maxWidth: MediaQuery.of(context).size.width * 0.42,
-                        ),
-                        child: SizedBox(
-                          key: _appBarTitleKey,
+                      if (!_gameStarted)
+                        ConstrainedBox(
+                          constraints: BoxConstraints(
+                            maxWidth: MediaQuery.of(context).size.width * 0.42,
+                          ),
+                          child: SizedBox(
+                            key: _appBarTitleKey,
+                            child: Text(
+                              appBarTitle,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(color: Colors.white, fontSize: 18),
+                            ),
+                          ),
+                        )
+                      else if (app.pendingScoreSyncMatchCount > 0)
+                        Padding(
+                          padding: const EdgeInsets.only(right: 4),
                           child: Text(
-                            appBarTitle,
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: const TextStyle(color: Colors.white, fontSize: 18),
+                            app.scoreSyncHasStale ? 'Sync delayed' : 'Syncing…',
+                            style: TextStyle(
+                              color: app.scoreSyncHasStale
+                                  ? const Color(0xFFFCA5A5)
+                                  : Colors.white70,
+                              fontSize: 13,
+                              fontWeight: FontWeight.w600,
+                            ),
                           ),
                         ),
-                      ),
                       if (_gameStarted) const SizedBox(width: 8),
                       if (_gameStarted)
                         IconButton(
@@ -883,23 +898,6 @@ class _RefereeDashboardScreenState extends State<RefereeDashboardScreen> {
                   child: Row(
                     mainAxisSize: MainAxisSize.min,
                     children: [
-                      if (app.pendingScoreSyncMatchCount > 0)
-                        Padding(
-                          padding: const EdgeInsets.only(right: 8.0),
-                          child: Center(
-                            child: Text(
-                              app.scoreSyncHasStale
-                                  ? 'Sync delayed'
-                                  : 'Syncing…',
-                              style: TextStyle(
-                                color: app.scoreSyncHasStale
-                                    ? const Color(0xFFFCA5A5)
-                                    : Colors.white70,
-                                fontSize: 11,
-                              ),
-                            ),
-                          ),
-                        ),
                       Container(
                         width: 8,
                         height: 8,
@@ -1820,12 +1818,7 @@ class _RefereeDashboardScreenState extends State<RefereeDashboardScreen> {
                                               ),
                                               children: [
                                                 TextSpan(
-                                                  text: app.displayPlayerName(
-                                                    g!,
-                                                    g.player1Name.trim().isNotEmpty
-                                                        ? g.player1Name
-                                                        : g.player1,
-                                                  ),
+                                                  text: app.sideDisplayName(g!, team1: true),
                                                 ),
                                                 const TextSpan(
                                                   text: '  vs  ',
@@ -1835,12 +1828,7 @@ class _RefereeDashboardScreenState extends State<RefereeDashboardScreen> {
                                                   ),
                                                 ),
                                                 TextSpan(
-                                                  text: app.displayPlayerName(
-                                                    g,
-                                                    g.player2Name.trim().isNotEmpty
-                                                        ? g.player2Name
-                                                        : g.player2,
-                                                  ),
+                                                  text: app.sideDisplayName(g, team1: false),
                                                 ),
                                               ],
                                             ),
@@ -2373,16 +2361,6 @@ class _RefereeDashboardScreenState extends State<RefereeDashboardScreen> {
 
   Future<String?> _finishSubmit(TournamentMatch g, Uint8List? signatureBytes, {bool includeNote = true}) async {
     final app = context.read<AppState>();
-    bool isGameFinished(int a, int b) {
-      final maxScore = a > b ? a : b;
-      final minScore = a > b ? b : a;
-      if (maxScore < 11) return false;
-      return (maxScore - minScore) >= 2;
-    }
-
-    final winnerName = _score1 > _score2
-        ? g.player1
-        : (_score2 > _score1 ? g.player2 : '');
     String? signatureData;
     if (signatureBytes != null && signatureBytes.isNotEmpty) {
       final encoded = base64Encode(signatureBytes);
@@ -2402,8 +2380,9 @@ class _RefereeDashboardScreenState extends State<RefereeDashboardScreen> {
           context.read<AppState>().selectedTournament?.categoryGamesPerMatch[g.categoryId] ?? 1;
     }
     final bool lastGame = _currentGame >= scheduledCount;
-    final bool gameFinished = isGameFinished(_score1, _score2);
-    final bool matchCompleted = lastGame && gameFinished;
+    // Finish & Submit is a declared result (including dispute / retired / DNF).
+    // Do not require 11-and-win-by-2 — 10-2 or 4-6 must still complete.
+    final bool matchCompleted = lastGame;
 
     final fields = <String, dynamic>{};
     final gKey1 = 'game${_currentGame}Player1';
@@ -2411,7 +2390,7 @@ class _RefereeDashboardScreenState extends State<RefereeDashboardScreen> {
     fields[gKey1] = _score1;
     fields[gKey2] = _score2;
     fields['status'] = matchCompleted ? 'Completed' : 'Ongoing';
-    fields['game${_currentGame}Status'] = gameFinished ? 'Completed' : 'Ongoing';
+    fields['game${_currentGame}Status'] = 'Completed';
     if (signatureData != null) {
       fields['signatureData'] = signatureData;
       final base = List<String?>.filled(3, null);
@@ -2466,13 +2445,18 @@ class _RefereeDashboardScreenState extends State<RefereeDashboardScreen> {
     if (includeNote && _refereeNote.trim().isNotEmpty) {
       fields['refereeNote'] = _refereeNote.trim();
     }
-    // Ensure all game scores are in the snapshot for ordered flush.
-    fields['game1Player1'] = fields['game1Player1'] ?? g.game1Player1 ?? 0;
-    fields['game1Player2'] = fields['game1Player2'] ?? g.game1Player2 ?? 0;
-    fields['game2Player1'] = fields['game2Player1'] ?? g.game2Player1 ?? 0;
-    fields['game2Player2'] = fields['game2Player2'] ?? g.game2Player2 ?? 0;
-    fields['game3Player1'] = fields['game3Player1'] ?? g.game3Player1 ?? 0;
-    fields['game3Player2'] = fields['game3Player2'] ?? g.game3Player2 ?? 0;
+    // Copy real scores only — never pad unplayed games as 0-0 (that unschedules).
+    void copyPlayed(int n, int? a, int? b) {
+      if (n == _currentGame) return;
+      final aa = a ?? 0;
+      final bb = b ?? 0;
+      if (aa + bb <= 0) return;
+      fields['game${n}Player1'] = aa;
+      fields['game${n}Player2'] = bb;
+    }
+    copyPlayed(1, g.game1Player1, g.game1Player2);
+    copyPlayed(2, g.game2Player1, g.game2Player2);
+    copyPlayed(3, g.game3Player1, g.game3Player2);
     fields['game${_currentGame}Player1'] = _score1;
     fields['game${_currentGame}Player2'] = _score2;
 
@@ -2808,7 +2792,7 @@ class _RefereeDashboardScreenState extends State<RefereeDashboardScreen> {
         'score=$_score1-$_score2 action=${action.wire} serving=$serving',
       );
     }
-    // Fire-and-forget local-first queue — never blocks scoring.
+    // Score tap — live:point / live:score-set only. Never Complete / REST.
     unawaited(app.enqueueScoreEvent(
       action: action,
       gameIndex: _currentGame,
@@ -2817,7 +2801,7 @@ class _RefereeDashboardScreenState extends State<RefereeDashboardScreen> {
     ));
   }
 
-  /// Serve / assignment change for OBS overlay (no REST write required).
+  /// Serve / assignment change — live:score-set only (Ongoing). No REST.
   void _publishCourtOverlay({String? serving}) {
     final app = context.read<AppState>();
     final g = app.selectedGame;
@@ -2826,13 +2810,19 @@ class _RefereeDashboardScreenState extends State<RefereeDashboardScreen> {
         (_servingPlayer == null
             ? null
             : (_serverOnTeam1(g) ? 'team1' : 'team2'));
-    unawaited(app.publishCourtMatchUpdate(
-      match: g,
+    unawaited(app.enqueueScoreEvent(
+      action: ScoreEventAction.sideOut,
       gameIndex: _currentGame,
-      score1: _score1,
-      score2: _score2,
-      serving: side,
-      servingPlayer: _servingPlayer,
+      snapshot: {
+        'status': 'Ongoing',
+        'game${_currentGame}Status': 'Ongoing',
+        'score1': _score1,
+        'score2': _score2,
+        'game${_currentGame}Player1': _score1,
+        'game${_currentGame}Player2': _score2,
+        if (side != null) 'serving': side,
+        if (_servingPlayer != null) 'servingPlayer': _servingPlayer,
+      },
     ));
   }
 

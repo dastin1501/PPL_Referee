@@ -43,6 +43,86 @@ class SubmitScoreResult {
   });
 }
 
+const _scheduleWriteKeys = {
+  'date',
+  'time',
+  'court',
+  'venue',
+  'mdDate',
+  'mdTime',
+  'wdDate',
+  'wdTime',
+  'xdDate',
+  'xdTime',
+  'mdTime2',
+  'mdEnd2',
+  'mdTime3',
+  'mdEnd3',
+};
+
+bool _isSchedulerOwnedStatus(dynamic raw) {
+  final s = raw?.toString().trim().toLowerCase() ?? '';
+  return s == 'scheduled' ||
+      s == 'unschedule' ||
+      s == 'unscheduled' ||
+      s == 'called';
+}
+
+bool _isZeroZeroGame(dynamic game) {
+  if (game is! Map) return false;
+  final a = int.tryParse('${game['a']}') ?? 0;
+  final b = int.tryParse('${game['b']}') ?? 0;
+  return a == 0 && b == 0;
+}
+
+/// Last-line filter for referee writes: never send schedule fields, scheduler
+/// statuses, or 0-0 games that would unschedule / wipe scores on the website.
+Map<String, dynamic> sanitizeRefereeWritePayload(Map<String, dynamic> payload) {
+  final out = Map<String, dynamic>.from(payload);
+  out.removeWhere((key, value) {
+    if (_scheduleWriteKeys.contains(key)) return true;
+    if (value == null) return true;
+    if (value is String && value.trim().isEmpty) return true;
+    return false;
+  });
+
+  if (_isSchedulerOwnedStatus(out['status'])) {
+    out.remove('status');
+  }
+  for (final key in ['game1Status', 'game2Status', 'game3Status']) {
+    if (_isSchedulerOwnedStatus(out[key])) {
+      out.remove(key);
+    }
+  }
+
+  final nested = out['fields'];
+  if (nested is Map) {
+    final cleaned = sanitizeRefereeWritePayload(Map<String, dynamic>.from(nested));
+    if (cleaned.isEmpty) {
+      out.remove('fields');
+    } else {
+      out['fields'] = cleaned;
+    }
+  }
+
+  final games = out['games'];
+  if (games is List) {
+    final kept = games.where((g) => !_isZeroZeroGame(g)).toList();
+    if (kept.isEmpty) {
+      out.remove('games');
+    } else {
+      out['games'] = kept;
+    }
+  }
+
+  final game = out['game'];
+  if (_isZeroZeroGame(game)) {
+    out.remove('game');
+  }
+
+  return out;
+}
+
 class ApiService {
   String? _baseUrlOverride;
   String get baseUrl => _baseUrlOverride ?? (dotenv.env['API_BASE_URL'] ?? 'http://localhost:5000');
@@ -145,27 +225,37 @@ class ApiService {
   Future<List<Tournament>> getRefereeTournaments() async {
     try {
       final ts = DateTime.now().millisecondsSinceEpoch;
-      final url = '$baseUrl/api/tournaments?_ts=$ts';
+      // Light roster endpoint — never pull full /api/tournaments (can be 50MB+ and freeze startup).
+      final url = '$baseUrl/api/referees/tournaments?_ts=$ts';
       if (kDebugMode) {
         debugPrint('GET $url');
       }
-      final res = await http.get(
-        Uri.parse(url),
-        headers: _headers,
-      );
+      final res = await http
+          .get(
+            Uri.parse(url),
+            headers: _headers,
+          )
+          .timeout(const Duration(seconds: 20));
       if (kDebugMode) {
-        debugPrint('GET /api/tournaments -> ${res.statusCode}');
+        debugPrint('GET /api/referees/tournaments -> ${res.statusCode} (${res.body.length} bytes)');
       }
       _checkAuth(res);
       if (res.statusCode == 200) {
-        final List<dynamic> jsonList = jsonDecode(res.body);
-        final list = jsonList.map((e) => Tournament.fromJson(e)).toList();
-        return list;
+        final decoded = jsonDecode(res.body);
+        final List<dynamic> jsonList = decoded is List
+            ? decoded
+            : (decoded is Map && decoded['tournaments'] is List)
+                ? decoded['tournaments'] as List
+                : <dynamic>[];
+        return jsonList
+            .whereType<Map>()
+            .map((e) => Tournament.fromJson(Map<String, dynamic>.from(e)))
+            .toList();
       }
       throw Exception('Status ${res.statusCode}: ${res.body}');
     } catch (e) {
       if (kDebugMode) {
-        debugPrint('Error fetching tournaments: $e');
+        debugPrint('Error fetching referee tournaments: $e');
       }
       rethrow;
     }
@@ -271,9 +361,45 @@ class ApiService {
     }
   }
 
-  Future<Tournament> getTournamentDetails(String id) async {
+  Future<Tournament> getTournamentDetails(
+    String id, {
+    bool includeRegistrations = false,
+  }) async {
     try {
       final ts = DateTime.now().millisecondsSinceEpoch;
+
+      // Fast open path for referees: schedule + brackets only.
+      // Registrations are optional and can be loaded in a second pass.
+      if (!includeRegistrations) {
+        final url =
+            '$baseUrl/api/tournaments/$id'
+            '?includeRegistrations=false'
+            '&includeAssets=false'
+            '&includeComputed=true'
+            '&_ts=$ts';
+        if (kDebugMode) {
+          debugPrint('GET tournament details (fast) $id');
+        }
+        final res = await http
+            .get(
+              Uri.parse(url),
+              headers: _headers,
+            )
+            .timeout(const Duration(seconds: 45));
+        _checkAuth(res);
+        if (res.statusCode != 200) {
+          throw Exception('Status ${res.statusCode}: ${res.body}');
+        }
+        final json = jsonDecode(res.body);
+        final data = Map<String, dynamic>.from(json['tournament'] ?? json);
+        if (kDebugMode) {
+          debugPrint(
+            'Tournament details fast OK bytes=${res.body.length}',
+          );
+        }
+        return Tournament.fromJson(data);
+      }
+
       final allRegistrations = <dynamic>[];
       Map<String, dynamic>? tournamentData;
       int page = 1;
@@ -290,10 +416,12 @@ class ApiService {
         if (kDebugMode) {
           debugPrint('GET tournament details page=$page');
         }
-        final res = await http.get(
-          Uri.parse(url),
-          headers: _headers,
-        );
+        final res = await http
+            .get(
+              Uri.parse(url),
+              headers: _headers,
+            )
+            .timeout(const Duration(seconds: 45));
         _checkAuth(res);
         if (res.statusCode != 200) {
           throw Exception('Status ${res.statusCode}: ${res.body}');
@@ -309,7 +437,9 @@ class ApiService {
         final pagination = data['registrationPagination'] as Map?;
         final total = int.tryParse(pagination?['total']?.toString() ?? '') ?? 0;
         final limit = int.tryParse(pagination?['limit']?.toString() ?? '') ?? 200;
-        final hasMore = total > 0 ? allRegistrations.length < total : regs.length >= limit;
+        final hasMore = total > 0
+            ? allRegistrations.length < total
+            : (regs.length >= limit && page < 5); // hard cap when total missing
         if (kDebugMode) {
           debugPrint(
             'Tournament details page=$page status=${res.statusCode} '
@@ -321,7 +451,7 @@ class ApiService {
         }
 
         page += 1;
-        if (page > 200) {
+        if (page > 10) {
           break;
         }
       }
@@ -344,44 +474,13 @@ class ApiService {
     required String matchKey,
     required Map<String, dynamic> fields,
   }) async {
-    try {
-      final scheduleKeys = <String>{
-        'date','time','court','venue','mdDate','mdTime','wdDate','wdTime','xdDate','xdTime'
-      };
-      final safeFields = Map<String, dynamic>.from(fields)
-        ..removeWhere((key, value) {
-          if (scheduleKeys.contains(key)) return true;
-          if (value == null) return true;
-          if (value is String && value.trim().isEmpty) return true;
-          return false;
-        });
-      final url = '$baseUrl/api/tournaments/$tournamentId/categories/$categoryId/groups/$groupId/matches';
-      final body = {
-        'matches': {
-          matchKey: safeFields,
-        },
-      };
-      if (kDebugMode) {
-        try {
-          final preview = jsonEncode({
-            'url': url,
-            'matchKey': matchKey,
-            'fields': safeFields.keys.toList(),
-          });
-          debugPrint('PUT updateGroupMatch -> $preview');
-        } catch (_) {}
-      }
-      final res = await http.put(
-        Uri.parse(url),
-        headers: _headers,
-        body: jsonEncode(body),
+    // Referee app must never PUT group matches. The web scheduler owns
+    // date/time/court/status; this path was wiping scores to 0-0 / Unschedule.
+    if (kDebugMode) {
+      debugPrint(
+        '[score-sync][api] skipped PUT group matches '
+        '($tournamentId/$categoryId/$groupId/$matchKey)',
       );
-      _checkAuth(res);
-      if (res.statusCode != 200) {
-        throw Exception('Status ${res.statusCode}: ${res.body}');
-      }
-    } catch (e) {
-      rethrow;
     }
   }
 
@@ -400,25 +499,7 @@ class ApiService {
   }
 
   Future<SubmitScoreResult> submitScore(Map<String, dynamic> payload) async {
-    final scheduleKeys = <String>{
-      'date',
-      'time',
-      'court',
-      'venue',
-      'mdDate',
-      'mdTime',
-      'wdDate',
-      'wdTime',
-      'xdDate',
-      'xdTime',
-    };
-    final safePayload = Map<String, dynamic>.from(payload)
-      ..removeWhere((key, value) {
-        if (scheduleKeys.contains(key)) return true;
-        if (value == null) return true;
-        if (value is String && value.trim().isEmpty) return true;
-        return false;
-      });
+    final safePayload = sanitizeRefereeWritePayload(payload);
     if (kDebugMode) {
       final idSummary = safePayload['type'] == 'group'
           ? 'groupId=${safePayload['groupId']}, matchKey=${safePayload['matchKey']}'

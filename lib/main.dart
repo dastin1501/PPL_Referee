@@ -26,6 +26,7 @@ class RefereeApp extends StatefulWidget {
 
 class _RefereeAppState extends State<RefereeApp> with WidgetsBindingObserver {
   AppState? _appState;
+  final _navigatorKey = GlobalKey<NavigatorState>();
 
   @override
   void initState() {
@@ -48,21 +49,24 @@ class _RefereeAppState extends State<RefereeApp> with WidgetsBindingObserver {
 
   @override
   Widget build(BuildContext context) {
+    // MaterialApp must NOT sit inside a Consumer — rebuilding it on every
+    // AppState.notifyListeners() disposes the tournament list and drops navigation.
     return ChangeNotifierProvider(
       create: (_) {
         final app = AppState()..init();
         _appState = app;
         return app;
       },
-      child: Consumer<AppState>(
-        builder: (context, app, _) {
-          return MaterialApp(
-            title: 'PPL REFEREE',
-            theme: ThemeData(
-              colorScheme: ColorScheme.fromSeed(seedColor: Colors.blue),
-              useMaterial3: true,
-            ),
-            builder: (context, child) {
+      child: MaterialApp(
+        title: 'PPL REFEREE',
+        navigatorKey: _navigatorKey,
+        theme: ThemeData(
+          colorScheme: ColorScheme.fromSeed(seedColor: Colors.blue),
+          useMaterial3: true,
+        ),
+        builder: (context, child) {
+          return Consumer<AppState>(
+            builder: (context, app, _) {
               return Stack(
                 children: [
                   if (child != null) child,
@@ -70,31 +74,37 @@ class _RefereeAppState extends State<RefereeApp> with WidgetsBindingObserver {
                 ],
               );
             },
-            home: Builder(
-              builder: (context) {
-                if (!app.initialized) {
-                  return const Scaffold(
-                    body: Center(
-                      child: CircularProgressIndicator(),
-                    ),
-                  );
-                }
-                if (app.currentUser != null) {
-                  return const TournamentListScreen();
-                }
-                return const LoginScreen();
-              },
-            ),
-            routes: {
-              '/login': (_) => const LoginScreen(),
-              '/signup': (_) => const SignupScreen(),
-              '/tournaments': (_) => const TournamentListScreen(),
-              '/courtGames': (_) => const CourtGamesScreen(),
-              '/dashboard': (_) => const RefereeDashboardScreen(),
-            },
           );
+        },
+        home: const _SessionGate(),
+        routes: {
+          '/login': (_) => const LoginScreen(),
+          '/signup': (_) => const SignupScreen(),
+          '/tournaments': (_) => const TournamentListScreen(),
+          '/courtGames': (_) => const CourtGamesScreen(),
+          '/dashboard': (_) => const RefereeDashboardScreen(),
         },
       ),
     );
+  }
+}
+
+class _SessionGate extends StatelessWidget {
+  const _SessionGate();
+
+  @override
+  Widget build(BuildContext context) {
+    final app = context.watch<AppState>();
+    if (!app.initialized) {
+      return const Scaffold(
+        body: Center(
+          child: CircularProgressIndicator(),
+        ),
+      );
+    }
+    if (app.currentUser != null) {
+      return const TournamentListScreen();
+    }
+    return const LoginScreen();
   }
 }

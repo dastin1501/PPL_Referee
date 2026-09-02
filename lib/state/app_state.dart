@@ -31,6 +31,7 @@ class AppState extends ChangeNotifier {
     _api.onUnauthorized = _handleUnauthorized;
     scoreQueue = ScoreEventQueue(
       api: _api,
+      socket: _socket,
       onChanged: () {
         if (!_disposed) notifyListeners();
       },
@@ -139,6 +140,7 @@ class AppState extends ChangeNotifier {
     final token = prefs.getString(_storageTokenKey);
     final userJson = prefs.getString(_storageUserKey);
     await _loadOutbox();
+    await trySyncOutbox();
     await scoreQueue.load();
     await matchUpdateQueue.load();
     if (token != null && userJson != null) {
@@ -147,7 +149,6 @@ class AppState extends ChangeNotifier {
         _api.setToken(token);
         currentUser = User.fromJson(data);
         _ensureLiveSocket();
-        await loadTournaments();
       } catch (e) {
         if (e is AuthException) {
           await logout(reason: e.message);
@@ -156,8 +157,12 @@ class AppState extends ChangeNotifier {
         }
       }
     }
+    // Leave splash immediately — tournament fetch must not block UI forever.
     initialized = true;
     notifyListeners();
+    if (currentUser != null) {
+      unawaited(loadTournaments());
+    }
   }
 
   bool _isLocalhostUrl(String url) {
@@ -282,10 +287,8 @@ class AppState extends ChangeNotifier {
     error = null;
     notifyListeners();
     try {
-      final allTournaments = await _api.getRefereeTournaments();
-      tournaments = allTournaments.where((t) => t.referees.contains(currentUser!.id)).toList();
-      // Opportunistic sync when loading
-      await trySyncOutbox();
+      // /api/referees/tournaments is already scoped to this referee.
+      tournaments = await _api.getRefereeTournaments();
     } on AuthException catch (e) {
       await logout(reason: e.message);
     } catch (e) {
@@ -301,16 +304,20 @@ class AppState extends ChangeNotifier {
     leaveLiveTournament();
     selectedTournament = t;
     _scheduledQueueEtag = null;
+    error = null;
     loading = true;
     notifyListeners();
     try {
-      // Fetch full details
-      final fullTournament = await _api.getTournamentDetails(t.id);
+      // Fast path: brackets + schedule only (no registration pagination).
+      final fullTournament = await _api.getTournamentDetails(
+        t.id,
+        includeRegistrations: false,
+      );
       selectedTournament = fullTournament;
       
       // Extract courts and matches
       courts = fullTournament.courts;
-      games = fullTournament.matches;
+      games = _normalizeServerClearedMatches(fullTournament.matches);
       try {
         final assigned = await _api.getAssignedMatches();
         _overlayAssignedMatches(assigned);
@@ -321,11 +328,32 @@ class AppState extends ChangeNotifier {
       selectedCourt = null;
       selectedDate = null;
       joinLiveTournament(fullTournament.id);
+
+      // Team rosters can load after UI opens — don't block "Opening…".
+      unawaited(_enrichTournamentRegistrations(t.id));
     } catch (e) {
       error = 'Failed to load tournament details: $e';
     }
     loading = false;
     notifyListeners();
+  }
+
+  Future<void> _enrichTournamentRegistrations(String tournamentId) async {
+    try {
+      final withRegs = await _api.getTournamentDetails(
+        tournamentId,
+        includeRegistrations: true,
+      );
+      if (selectedTournament?.id != tournamentId) return;
+      selectedTournament = withRegs;
+      // Keep live match/court state; only refresh roster-backed maps via full replace
+      // of selectedTournament. Courts/games already loaded on fast path.
+      notifyListeners();
+    } catch (e) {
+      if (kDebugMode) {
+        debugPrint('Background registration enrich failed: $e');
+      }
+    }
   }
 
   Future<void> selectCourt(String c) async {
@@ -524,17 +552,89 @@ class AppState extends ChangeNotifier {
   int gamesPerMatchFor(TournamentMatch match) {
     final tournament = selectedTournament;
     if (tournament == null) return 1;
+    final catId = match.categoryId.trim();
+    final fallback = catId.isEmpty
+        ? 1
+        : (tournament.categoryGamesPerMatch[catId] ?? 1).clamp(1, 3);
+
     if (match.type == 'elimination') {
-      // Elimination rounds can differ per round (e.g. QF best-of-1, SF
-      // best-of-3), so always scan up to 3 and let the schedule decide.
+      final stage = _eliminationStageKey(match);
+      final stagedMap = catId.isEmpty
+          ? null
+          : tournament.categoryEliminationGpm[catId];
+      if (stagedMap != null && stagedMap.isNotEmpty) {
+        final staged = stagedMap[stage] ?? stagedMap['elimination'];
+        if (staged != null) return staged.clamp(1, 3);
+      }
+      // Finals/Bronze with only Game 1 timed → treat as single game.
+      if (stage == 'finals' || stage == 'bronze') {
+        final hasG2 = match.mdTime2?.toString().trim().isNotEmpty ?? false;
+        final hasG3 = match.mdTime3?.toString().trim().isNotEmpty ?? false;
+        if (!hasG2 && !hasG3) return 1;
+      }
+      // Still scan up to 3 max so schedule-driven BO3 rounds work when
+      // eliminationGpm is missing, but callers must gate on hasScheduleForGame.
       return 3;
     }
-    final catId = match.categoryId.trim();
-    if (catId.isEmpty) return 1;
-    return (tournament.categoryGamesPerMatch[catId] ?? 1).clamp(1, 3);
+    return fallback;
+  }
+
+  String _eliminationStageKey(TournamentMatch match) {
+    final id = match.id.trim().toLowerCase();
+    final tail = RegExp(
+      r'-(finals?|bronze|brz|qf\d+|quarter\d+|sf\d+|semi\d+|r16-?\d+|round16_?\d+|cf\d+)(?:-g\d+)?$',
+      caseSensitive: false,
+    ).firstMatch(id);
+    final idEff = (tail != null ? tail.group(1)! : id).toLowerCase();
+    final round = match.round.trim().toLowerCase();
+    final label =
+        '${match.matchLabel} ${match.seedLabel} ${match.roundShort} ${match.roundLabel}'.toLowerCase();
+    final blob = '$idEff $round $label';
+    if (idEff == 'bronze' || idEff == 'brz' || blob.contains('bronze')) return 'bronze';
+    if (idEff.startsWith('round16') ||
+        idEff.startsWith('r16') ||
+        blob.contains('round of 16') ||
+        blob.contains('round of 32')) {
+      return 'r16';
+    }
+    if (idEff.startsWith('quarter') || idEff.startsWith('qf') || blob.contains('quarter')) {
+      return 'quarters';
+    }
+    if (idEff.startsWith('semi') ||
+        idEff.startsWith('sf') ||
+        (blob.contains('semi') && !blob.contains('semis-final'))) {
+      return 'semis';
+    }
+    if (idEff.startsWith('cf') || blob.contains('crossover') || blob.contains('semis-final')) {
+      return 'cf';
+    }
+    if (idEff == 'final' ||
+        idEff == 'finals' ||
+        blob.contains('gold') ||
+        blob.contains('championship') ||
+        (blob.contains('final') && !blob.contains('semi') && !blob.contains('quarter'))) {
+      return 'finals';
+    }
+    return 'elimination';
   }
 
   String gameStatusKey(TournamentMatch match, int gameNo) {
+    final matchStatus = normalizeGameStatusKey(match.status);
+    final a = _scoreForGame(match, gameNo, true) ?? 0;
+    final b = _scoreForGame(match, gameNo, false) ?? 0;
+    final gamePoints = a + b;
+
+    // Staff clear/unlock sets match status to Scheduled/Unschedule with 0 points.
+    // Prefer that over a stale gameNStatus="Completed" left on the embed.
+    if ((matchStatus == 'scheduled' || matchStatus == 'unschedule') &&
+        gamePoints <= 0 &&
+        !_hasGameSignature(match, gameNo)) {
+      if (matchStatus == 'scheduled' || hasScheduleForGame(match, gameNo)) {
+        return 'scheduled';
+      }
+      return 'unschedule';
+    }
+
     String raw;
     if (gameNo == 1) {
       raw = match.game1Status;
@@ -550,15 +650,20 @@ class AppState extends ChangeNotifier {
       if (normalized == 'ongoing' && _hasCompletedEvidenceForGame(match, gameNo)) {
         return 'completed';
       }
+      // Stale per-game Completed with no points after unlock → trust match status.
+      if (normalized == 'completed' &&
+          gamePoints <= 0 &&
+          !_hasGameSignature(match, gameNo) &&
+          (matchStatus == 'scheduled' || matchStatus == 'unschedule')) {
+        return matchStatus == 'scheduled' ? 'scheduled' : 'unschedule';
+      }
       return normalized;
     }
 
     bool hasCompletedEvidence() {
       if (_hasGameSignature(match, gameNo)) return true;
-      final a = _scoreForGame(match, gameNo, true) ?? 0;
-      final b = _scoreForGame(match, gameNo, false) ?? 0;
       if (_isFinishedGameScore(a, b)) return true;
-      return (a + b) > 0;
+      return gamePoints > 0;
     }
 
     if (hasCompletedEvidence()) return 'completed';
@@ -658,10 +763,15 @@ class AppState extends ChangeNotifier {
     loading = true;
     notifyListeners();
     try {
-      final fullTournament = await _api.getTournamentDetails(t.id);
+      final fullTournament = await _api.getTournamentDetails(
+        t.id,
+        includeRegistrations: false,
+      );
       selectedTournament = fullTournament;
       courts = fullTournament.courts;
-      games = _mergeRefreshedMatchesWithLocalState(fullTournament.matches);
+      games = _mergeRefreshedMatchesWithLocalState(
+        _normalizeServerClearedMatches(fullTournament.matches),
+      );
       try {
         final assigned = await _api.getAssignedMatches();
         _overlayAssignedMatches(assigned);
@@ -681,8 +791,7 @@ class AppState extends ChangeNotifier {
       }
       _autoPickSelectedDate();
       await _refreshScheduledQueueForSelection();
-      // Try syncing queued updates after refresh
-      await trySyncOutbox();
+      // Do not PUT leftover group-match outbox after submit/refresh.
     } on AuthException catch (e) {
       await logout(reason: e.message);
     } catch (e) {
@@ -707,16 +816,21 @@ class AppState extends ChangeNotifier {
       final inc = byKey[key];
       if (inc == null) return existing;
 
-      String pickName(String a, String b) {
-        final aa = a.trim();
-        final bb = b.trim();
-        if (aa.isNotEmpty) return aa;
-        if (bb.isNotEmpty) return bb;
+      String pickName(String fromAssigned, String fromEmbed) {
+        final a = fromAssigned.trim();
+        final b = fromEmbed.trim();
+        // Tournament details (website bracket) win when they already have a real name.
+        if (!_isWeakPlayerLabel(b)) return b;
+        if (!_isWeakPlayerLabel(a)) return a;
+        if (b.isNotEmpty) return b;
+        if (a.isNotEmpty) return a;
         return '';
       }
 
       final mergedPlayer1 = pickName(inc.player1, existing.player1);
       final mergedPlayer2 = pickName(inc.player2, existing.player2);
+      final mergedPlayer1Name = pickName(inc.player1Name, existing.player1Name);
+      final mergedPlayer2Name = pickName(inc.player2Name, existing.player2Name);
       final mergedRoundShort = pickName(inc.roundShort, existing.roundShort);
       final mergedRoundLabel = pickName(inc.roundLabel, existing.roundLabel);
       final mergedMatchLabel = pickName(inc.matchLabel, existing.matchLabel);
@@ -728,8 +842,12 @@ class AppState extends ChangeNotifier {
         scheduleFromAssignments: existing.scheduleFromAssignments,
         player1: mergedPlayer1.isNotEmpty ? mergedPlayer1 : existing.player1,
         player2: mergedPlayer2.isNotEmpty ? mergedPlayer2 : existing.player2,
-        player1Name: existing.player1Name,
-        player2Name: existing.player2Name,
+        player1Name: mergedPlayer1Name.isNotEmpty
+            ? mergedPlayer1Name
+            : (mergedPlayer1.isNotEmpty ? mergedPlayer1 : existing.player1Name),
+        player2Name: mergedPlayer2Name.isNotEmpty
+            ? mergedPlayer2Name
+            : (mergedPlayer2.isNotEmpty ? mergedPlayer2 : existing.player2Name),
         score1: existing.score1,
         score2: existing.score2,
         game1Status: existing.game1Status,
@@ -1622,6 +1740,13 @@ class AppState extends ChangeNotifier {
         if (value is String && value.trim().isEmpty) return true;
         return false;
       });
+    final status = payload['status']?.toString().trim().toLowerCase() ?? '';
+    if (status == 'scheduled' ||
+        status == 'unschedule' ||
+        status == 'unscheduled' ||
+        status == 'called') {
+      payload.remove('status');
+    }
     return payload;
   }
 
@@ -1730,6 +1855,36 @@ class AppState extends ChangeNotifier {
       final existing = existingByKey[matchIdentity];
       if (existing == null) return m;
 
+      // Website unlock / reset to Scheduled is authoritative.
+      // Never keep a stale local Completed/Ongoing snapshot after staff clear the result.
+      final incomingStatus = normalizeGameStatusKey(m.status);
+      final incomingPoints = (m.game1Player1 ?? 0) +
+          (m.game1Player2 ?? 0) +
+          (m.game2Player1 ?? 0) +
+          (m.game2Player2 ?? 0) +
+          (m.game3Player1 ?? 0) +
+          (m.game3Player2 ?? 0) +
+          m.score1 +
+          m.score2;
+      if (incomingStatus == 'scheduled' || incomingStatus == 'unschedule') {
+        if (incomingPoints <= 0 && matchIdentity.isNotEmpty) {
+          unawaited(scoreQueue.discardMatch(matchIdentity));
+        }
+        // Normalize stale per-game Completed left on embed after unlock.
+        if (incomingPoints <= 0) {
+          return _forceClearedMatchStatuses(m);
+        }
+        return m;
+      }
+      final existingStatus = normalizeGameStatusKey(existing.status);
+      if (incomingPoints <= 0 &&
+          (existingStatus == 'completed' || existingStatus == 'ongoing')) {
+        if (matchIdentity.isNotEmpty) {
+          unawaited(scoreQueue.discardMatch(matchIdentity));
+        }
+        return m;
+      }
+
       final overrides = <String, dynamic>{};
       for (int n = 1; n <= 3; n++) {
         final existingKey = gameStatusKey(existing, n);
@@ -1825,14 +1980,16 @@ class AppState extends ChangeNotifier {
           _scoreForGame(activeMatch, selectedIndex, false),
         ) ??
         0;
-    final gamesArray = List.generate(3, (i) {
-      final idx = i + 1;
+    final gamesArray = <Map<String, int>>[];
+    for (int i = 1; i <= 3; i++) {
       final a =
-          _fieldAsInt(fields, 'game${idx}Player1', _scoreForGame(activeMatch, idx, true)) ?? 0;
+          _fieldAsInt(fields, 'game${i}Player1', _scoreForGame(activeMatch, i, true)) ?? 0;
       final b =
-          _fieldAsInt(fields, 'game${idx}Player2', _scoreForGame(activeMatch, idx, false)) ?? 0;
-      return {'a': a, 'b': b};
-    });
+          _fieldAsInt(fields, 'game${i}Player2', _scoreForGame(activeMatch, i, false)) ?? 0;
+      if (a + b > 0) {
+        gamesArray.add({'a': a, 'b': b});
+      }
+    }
 
     final payload = <String, dynamic>{
       'tournamentId': tournament.id,
@@ -1845,6 +2002,10 @@ class AppState extends ChangeNotifier {
       'games': gamesArray,
       ...fields,
     };
+    if (status == 'Completed') {
+      payload['status'] = 'Completed';
+      payload['markCompleted'] = true;
+    }
     if (activeMatch.type == 'group') {
       payload['groupId'] = activeMatch.groupId;
       payload['matchKey'] = activeMatch.matchKey;
@@ -2417,40 +2578,16 @@ class AppState extends ChangeNotifier {
     required String matchKey,
     required Map<String, dynamic> fields,
   }) async {
-    final item = {
-      'tournamentId': tournamentId,
-      'categoryId': categoryId,
-      'groupId': groupId,
-      'matchKey': matchKey,
-      'fields': fields,
-      'ts': DateTime.now().toIso8601String(),
-    };
-    _outbox.add(item);
-    await _saveOutbox();
+    // Disabled: group-match PUT unschedules and zeros scores on the website.
   }
 
   Future<void> trySyncOutbox() async {
     if (_outbox.isEmpty) return;
-    final copy = List<Map<String, dynamic>>.from(_outbox);
-    final succeeded = <Map<String, dynamic>>[];
-    for (final item in copy) {
-      try {
-        await _api.updateGroupMatch(
-          tournamentId: item['tournamentId'],
-          categoryId: item['categoryId'],
-          groupId: item['groupId'],
-          matchKey: item['matchKey'],
-          fields: Map<String, dynamic>.from(item['fields'] as Map),
-        );
-        succeeded.add(item);
-      } catch (_) {
-        // keep in outbox
-      }
-    }
-    if (succeeded.isNotEmpty) {
-      _outbox.removeWhere((e) => succeeded.contains(e));
-      await _saveOutbox();
-      await refreshSelectedTournament();
+    // Drop persisted PUTs instead of sending them.
+    _outbox = [];
+    await _saveOutbox();
+    if (kDebugMode) {
+      debugPrint('[score-sync] cleared group-match outbox without PUT');
     }
   }
 
@@ -2583,6 +2720,37 @@ class AppState extends ChangeNotifier {
     return player;
   }
 
+  bool _isWeakPlayerLabel(String raw) {
+    final s = raw.trim();
+    if (s.isEmpty) return true;
+    final low = s.toLowerCase();
+    if (low == 'tbd' || RegExp(r'^team\s*[12]$').hasMatch(low)) return true;
+    if (RegExp(r'^[a-p]\d+$', caseSensitive: false).hasMatch(s)) return true;
+    if (low.startsWith('winner') || low.startsWith('loser')) return true;
+    if (RegExp(r'^[wl]\s+', caseSensitive: false).hasMatch(s)) return true;
+    return false;
+  }
+
+  /// Website Brackets edits write `player1`/`player2`. `player1Name`/`player2Name`
+  /// can stay stale after unlock/repick — prefer the concrete player slot.
+  String sideDisplayName(TournamentMatch g, {required bool team1}) {
+    final slot = (team1 ? g.player1 : g.player2).trim();
+    final named = (team1 ? g.player1Name : g.player2Name).trim();
+    final slotWeak = _isWeakPlayerLabel(slot);
+    final namedWeak = _isWeakPlayerLabel(named);
+    String chosen;
+    if (!slotWeak && !namedWeak) {
+      chosen = slot; // authoritative bracket field
+    } else if (!slotWeak) {
+      chosen = slot;
+    } else if (!namedWeak) {
+      chosen = named;
+    } else {
+      chosen = slot.isNotEmpty ? slot : named;
+    }
+    return displayPlayerName(g, chosen);
+  }
+
   /// True Round of 32 (16 first-round matches), not legacy CF remapping.
   bool categoryHasRoundOf32(String categoryId) {
     final cat = categoryId.trim();
@@ -2696,23 +2864,36 @@ class AppState extends ChangeNotifier {
 
   /// Same title used on court list cards and the referee dashboard AppBar.
   String displayMatchTitle(TournamentMatch m, int gameNo) {
+    final gpm = gamesPerMatchFor(m).clamp(1, 3);
     final n = gameNo.clamp(1, 3);
+    String base = '';
     if (m.type == 'elimination') {
       final badge = displayMatchBadge(m).trim();
-      if (badge.isNotEmpty) return '$badge · Game $n';
-      final rl = displayRoundLabel(m).trim();
-      if (rl.isNotEmpty) return '$rl · Game $n';
+      if (badge.isNotEmpty) {
+        base = badge;
+      } else {
+        final rl = displayRoundLabel(m).trim();
+        if (rl.isNotEmpty) base = rl;
+      }
     }
-    final sl = m.seedLabel.trim();
-    if (sl.isNotEmpty) return '$sl · Game $n';
-    var ml = m.matchLabel.trim();
-    ml = ml
-        .replaceAll(
-          RegExp(r'^\s*GA\d+(?:\.\d+)?\s*-\s*', caseSensitive: false),
-          '',
-        )
-        .trim();
-    return ml.isNotEmpty ? '$ml · Game $n' : 'Game $n';
+    if (base.isEmpty) {
+      final sl = m.seedLabel.trim();
+      if (sl.isNotEmpty) {
+        base = sl;
+      } else {
+        var ml = m.matchLabel.trim();
+        ml = ml
+            .replaceAll(
+              RegExp(r'^\s*GA\d+(?:\.\d+)?\s*-\s*', caseSensitive: false),
+              '',
+            )
+            .trim();
+        base = ml.isNotEmpty ? ml : 'Match';
+      }
+    }
+    // Single-game matches: "GOLD" only — no " · Game 1/2/3".
+    if (gpm <= 1) return base;
+    return '$base · Game $n';
   }
 
   String displayRoundLabel(TournamentMatch m) {
@@ -2953,6 +3134,7 @@ class AppState extends ChangeNotifier {
     final t = selectedTournament;
     final g = match ?? selectedGame;
     if (t == null || g == null) return;
+    if (normalizeStatusKey(g.status) == 'completed') return;
 
     final courtName = (selectedCourt ?? g.court).trim();
     final slug = courtSlug(courtName);
@@ -2970,14 +3152,8 @@ class AppState extends ChangeNotifier {
       );
     }
 
-    final team1Name = displayPlayerName(
-      g,
-      g.player1Name.trim().isNotEmpty ? g.player1Name : g.player1,
-    );
-    final team2Name = displayPlayerName(
-      g,
-      g.player2Name.trim().isNotEmpty ? g.player2Name : g.player2,
-    );
+    final team1Name = sideDisplayName(g, team1: true);
+    final team2Name = sideDisplayName(g, team1: false);
 
     final payload = MatchUpdatePayload(
       court: slug,
@@ -3237,6 +3413,14 @@ class AppState extends ChangeNotifier {
     _replaceSelectedGame(updated, g);
     notifyListeners();
 
+    final status = snapshot['status']?.toString().trim() ?? '';
+    if (action == ScoreEventAction.submit && status == 'Completed') {
+      final slug = courtSlug(selectedCourt ?? g.court);
+      if (slug.isNotEmpty) {
+        unawaited(matchUpdateQueue.clearCourt(slug));
+      }
+    }
+
     await scoreQueue.enqueue(
       matchIdentity: matchIdentity,
       gameIdentity: gameIdentity,
@@ -3252,30 +3436,147 @@ class AppState extends ChangeNotifier {
       side: side,
       snapshot: snapshot,
     );
+  }
 
-    // Court-scoped overlay broadcast (same local-first / retry pattern).
-    final s1 = int.tryParse('${snapshot['game${gameIndex.clamp(1, 3)}Player1']}') ??
-        int.tryParse('${snapshot['score1']}');
-    final s2 = int.tryParse('${snapshot['game${gameIndex.clamp(1, 3)}Player2']}') ??
-        int.tryParse('${snapshot['score2']}');
-    unawaited(publishCourtMatchUpdate(
-      match: updated,
-      gameIndex: gameIndex,
-      score1: s1,
-      score2: s2,
-      serving: snapshot['serving']?.toString(),
-      servingPlayer: snapshot['servingPlayer']?.toString(),
-    ));
+  bool _serverMatchLooksCleared(TournamentMatch m) {
+    final st = normalizeGameStatusKey(m.status);
+    if (st != 'scheduled' && st != 'unschedule') return false;
+    final pts = (m.game1Player1 ?? 0) +
+        (m.game1Player2 ?? 0) +
+        (m.game2Player1 ?? 0) +
+        (m.game2Player2 ?? 0) +
+        (m.game3Player1 ?? 0) +
+        (m.game3Player2 ?? 0) +
+        m.score1 +
+        m.score2;
+    return pts <= 0;
+  }
+
+  TournamentMatch _forceClearedMatchStatuses(TournamentMatch m) {
+    // Build directly — _mergeMatchWithFields preserves non-empty signatures.
+    return TournamentMatch(
+      id: m.id,
+      documentId: m.documentId,
+      scheduleFromAssignments: m.scheduleFromAssignments,
+      player1: m.player1,
+      player2: m.player2,
+      player1Name: m.player1Name,
+      player2Name: m.player2Name,
+      score1: 0,
+      score2: 0,
+      game1Status: m.status,
+      game2Status: m.status,
+      game3Status: m.status,
+      game1Player1: 0,
+      game1Player2: 0,
+      game2Player1: 0,
+      game2Player2: 0,
+      game3Player1: 0,
+      game3Player2: 0,
+      round: m.round,
+      roundShort: m.roundShort,
+      roundLabel: m.roundLabel,
+      court: m.court,
+      date: m.date,
+      time: m.time,
+      venue: m.venue,
+      mdTime2: m.mdTime2,
+      mdEnd2: m.mdEnd2,
+      mdTime3: m.mdTime3,
+      mdEnd3: m.mdEnd3,
+      status: m.status,
+      categoryId: m.categoryId,
+      matchKey: m.matchKey,
+      type: m.type,
+      seedLabel: m.seedLabel,
+      matchLabel: m.matchLabel,
+      groupId: m.groupId,
+      winner: null,
+      signatureData: null,
+      gameSignatures: <String?>[null, null, null],
+      refereeNote: '',
+      scoringFormat: m.scoringFormat,
+      game1Team1Player: m.game1Team1Player,
+      game1Team1Player2: m.game1Team1Player2,
+      game1Team2Player: m.game1Team2Player,
+      game1Team2Player2: m.game1Team2Player2,
+      game2Team1Player: m.game2Team1Player,
+      game2Team1Player2: m.game2Team1Player2,
+      game2Team2Player: m.game2Team2Player,
+      game2Team2Player2: m.game2Team2Player2,
+      game3Team1Player: m.game3Team1Player,
+      game3Team1Player2: m.game3Team1Player2,
+      game3Team2Player: m.game3Team2Player,
+      game3Team2Player2: m.game3Team2Player2,
+    );
+  }
+
+  List<TournamentMatch> _normalizeServerClearedMatches(List<TournamentMatch> list) {
+    return list.map((m) {
+      if (!_serverMatchLooksCleared(m)) return m;
+      final mid = _matchIdentityKey(m);
+      if (mid.isNotEmpty) {
+        unawaited(scoreQueue.discardMatch(mid));
+      }
+      return _forceClearedMatchStatuses(m);
+    }).toList();
   }
 
   /// Apply any persisted local snapshots over refreshed server matches.
+  /// Never overlay 0-0 or scheduler statuses — those unschedules / wipe scores.
+  /// Never resurrect Completed after staff unlock/clear on the website.
   void _applyQueuedSnapshotsToGames() {
-    for (final mid in scoreQueue.knownMatchIdentities) {
+    const scheduleKeys = {
+      'date',
+      'time',
+      'court',
+      'venue',
+      'mdDate',
+      'mdTime',
+      'wdDate',
+      'wdTime',
+      'xdDate',
+      'xdTime',
+    };
+    for (final mid in scoreQueue.knownMatchIdentities.toList()) {
       final snap = scoreQueue.latestSnapshotFor(mid);
       if (snap == null || snap.isEmpty) continue;
       final existing = _findMatchByIdentity(mid);
       if (existing == null) continue;
-      final merged = _mergeMatchWithFields(existing, snap);
+
+      // Website unlock/clear is authoritative — drop local Completed snapshots.
+      if (_serverMatchLooksCleared(existing)) {
+        unawaited(scoreQueue.discardMatch(mid));
+        continue;
+      }
+
+      final filtered = Map<String, dynamic>.from(snap);
+      filtered.removeWhere((key, _) => scheduleKeys.contains(key));
+      final snapStatus = filtered['status']?.toString().trim().toLowerCase() ?? '';
+      if (snapStatus == 'scheduled' ||
+          snapStatus == 'unschedule' ||
+          snapStatus == 'unscheduled' ||
+          snapStatus == 'called') {
+        filtered.remove('status');
+      }
+      if (normalizeStatusKey(existing.status) == 'completed' &&
+          snapStatus != 'completed') {
+        continue;
+      }
+      for (int i = 1; i <= 3; i++) {
+        final aKey = 'game${i}Player1';
+        final bKey = 'game${i}Player2';
+        final a = _fieldAsInt(filtered, aKey, 0) ?? 0;
+        final b = _fieldAsInt(filtered, bKey, 0) ?? 0;
+        final existingA = _scoreForGame(existing, i, true) ?? 0;
+        final existingB = _scoreForGame(existing, i, false) ?? 0;
+        if (a + b == 0 && existingA + existingB > 0) {
+          filtered.remove(aKey);
+          filtered.remove(bKey);
+        }
+      }
+      if (filtered.isEmpty) continue;
+      final merged = _mergeMatchWithFields(existing, filtered);
       _replaceMatchByIdentity(mid, merged);
     }
   }

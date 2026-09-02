@@ -173,20 +173,7 @@ class _CourtGamesScreenState extends State<CourtGamesScreen>
         foregroundColor: const Color(0xFF0F172A),
         elevation: 0,
         surfaceTintColor: Colors.transparent,
-        actions: [
-          if (app.pendingSyncCount > 0)
-            Padding(
-              padding: const EdgeInsets.only(right: 8),
-              child: TextButton.icon(
-                onPressed: () => app.trySyncOutbox(),
-                icon: const Icon(Icons.sync, color: _brand, size: 18),
-                label: Text(
-                  'Sync ${app.pendingSyncCount}',
-                  style: const TextStyle(color: _brand, fontWeight: FontWeight.w600),
-                ),
-              ),
-            ),
-        ],
+        actions: const [],
         bottom: PreferredSize(
           preferredSize: const Size.fromHeight(48),
           child: Container(
@@ -552,6 +539,7 @@ Widget _buildGamesList(
       items.add({
         'g': g,
         'n': n,
+        'gpm': gpm,
         'hasSchedule': hasSchedule,
         'statusKey': statusKey,
         'start': start?.toString() ?? '',
@@ -559,20 +547,24 @@ Widget _buildGamesList(
       });
     }
 
-    if (gpm >= 1) {
-      final s = g.time.toString().trim();
-      final include = app.hasScheduleForGame(g, 1) || app.gameStatusKey(g, 1) != 'unschedule';
-      if (include) addItem(1, s, null);
+    // Only create a card when the game has a real schedule slot, or is
+    // already ongoing/completed. Do NOT show Game 2/3 just because
+    // game2Status/game3Status were stamped "Scheduled" without a time.
+    bool shouldShowGame(int n) {
+      if (n < 1 || n > gpm) return false;
+      if (app.hasScheduleForGame(g, n)) return true;
+      final statusKey = app.gameStatusKey(g, n);
+      return statusKey == 'ongoing' || statusKey == 'completed';
     }
-    if (gpm >= 2) {
-      final s = (g.mdTime2?.toString() ?? '').trim();
-      final include = app.hasScheduleForGame(g, 2) || app.gameStatusKey(g, 2) != 'unschedule';
-      if (include) addItem(2, s, g.mdEnd2?.toString());
+
+    if (shouldShowGame(1)) {
+      addItem(1, g.time.toString(), null);
     }
-    if (gpm >= 3) {
-      final s = (g.mdTime3?.toString() ?? '').trim();
-      final include = app.hasScheduleForGame(g, 3) || app.gameStatusKey(g, 3) != 'unschedule';
-      if (include) addItem(3, s, g.mdEnd3?.toString());
+    if (shouldShowGame(2)) {
+      addItem(2, g.mdTime2?.toString(), g.mdEnd2?.toString());
+    }
+    if (shouldShowGame(3)) {
+      addItem(3, g.mdTime3?.toString(), g.mdEnd3?.toString());
     }
   }
 
@@ -581,8 +573,11 @@ Widget _buildGamesList(
       final hasSchedule = it['hasSchedule'] as bool? ?? false;
       final statusKey = it['statusKey'] as String? ?? 'unschedule';
       if (statusKey == 'completed') return true;
-      if (statusKey == 'scheduled' || statusKey == 'ongoing') return false;
-      if (hasSchedule) return false;
+      // Scheduled tab: require a real clock time (or live ongoing).
+      if (statusKey == 'ongoing') return false;
+      if (hasSchedule && (statusKey == 'scheduled' || statusKey == 'unschedule')) {
+        return false;
+      }
       return true;
     });
   } else {
@@ -689,14 +684,8 @@ Widget _buildGamesList(
           s2 = g.game3Player2 ?? 0;
         }
 
-        final p1 = app.displayPlayerName(
-          g,
-          g.player1Name.trim().isNotEmpty ? g.player1Name : g.player1,
-        );
-        final p2 = app.displayPlayerName(
-          g,
-          g.player2Name.trim().isNotEmpty ? g.player2Name : g.player2,
-        );
+        final p1 = app.sideDisplayName(g, team1: true);
+        final p2 = app.sideDisplayName(g, team1: false);
         final timeLabel = _formatTimeDisplay(start, end);
 
         Color statusBg;
@@ -1072,20 +1061,14 @@ void _showCompletedSummaryDialog(BuildContext context, TournamentMatch g, int ga
                     TextSpan(
                       children: [
                         TextSpan(
-                          text: app.displayPlayerName(
-                            g,
-                            g.player1Name.trim().isNotEmpty ? g.player1Name : g.player1,
-                          ),
+                          text: app.sideDisplayName(g, team1: true),
                         ),
                         const TextSpan(
                           text: '  vs  ',
                           style: TextStyle(color: Color(0xFFDC2626), fontWeight: FontWeight.w700),
                         ),
                         TextSpan(
-                          text: app.displayPlayerName(
-                            g,
-                            g.player2Name.trim().isNotEmpty ? g.player2Name : g.player2,
-                          ),
+                          text: app.sideDisplayName(g, team1: false),
                         ),
                       ],
                     ),
