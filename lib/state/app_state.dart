@@ -647,6 +647,15 @@ class AppState extends ChangeNotifier {
     }
     if (raw.trim().isNotEmpty) {
       final normalized = normalizeGameStatusKey(raw);
+      // Website sometimes stamps gameNStatus="Scheduled" after a partial unlock
+      // while leaving the old 11-x score. Never show Scheduled when points exist.
+      if ((normalized == 'scheduled' || normalized == 'unschedule') &&
+          (gamePoints > 0 || _hasGameSignature(match, gameNo))) {
+        if (_isFinishedGameScore(a, b) || _hasGameSignature(match, gameNo)) {
+          return 'completed';
+        }
+        return 'ongoing';
+      }
       if (normalized == 'ongoing' && _hasCompletedEvidenceForGame(match, gameNo)) {
         return 'completed';
       }
@@ -739,8 +748,7 @@ class AppState extends ChangeNotifier {
     selectedGame = g;
     joinLiveMatchForGame(g);
     notifyListeners();
-    // New match on this court — overlay swaps matchId / team names.
-    unawaited(publishCourtMatchUpdate(match: g));
+    // Do not publish Live/OBS here — wait for START GAME.
   }
 
   int selectedGameNumber = 1;
@@ -749,7 +757,7 @@ class AppState extends ChangeNotifier {
     selectedGameNumber = gameNo;
     joinLiveMatchForGame(g);
     notifyListeners();
-    unawaited(publishCourtMatchUpdate(match: g, gameIndex: gameNo));
+    // Do not publish Live/OBS here — wait for START GAME.
   }
 
   /// Leave match socket room when leaving the referee dashboard.

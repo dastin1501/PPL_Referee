@@ -643,9 +643,10 @@ Widget _buildGamesList(
               .replaceAll(RegExp(r"mixed\s+doubles", caseSensitive: false), 'MxD');
           displayCategory = displayCategory.replaceAll(RegExp(r'\s{2,}'), ' ').trim();
         }
-        final isOngoing = statusKey == 'ongoing';
+        // Ongoing stays tappable so a mis-open (or resume) is never locked out.
+        // Only block cards that have no schedule assignment yet.
         final disabled =
-            showScheduled && (isOngoing || (!hasSchedule && statusKey == 'scheduled'));
+            showScheduled && (!hasSchedule && statusKey == 'scheduled');
         final displayStatus = app.gameStatusLabel(g, n);
 
         final catText = category.toLowerCase();

@@ -212,6 +212,15 @@ class _RefereeDashboardScreenState extends State<RefereeDashboardScreen> {
           'servingPlayer': _servingPlayer,
         },
       );
+      // First Live / OBS publish happens here — not when opening the match card.
+      unawaited(app.publishCourtMatchUpdate(
+        match: g,
+        gameIndex: _currentGame,
+        score1: _score1,
+        score2: _score2,
+        serving: _serverOnTeam1(g) ? 'team1' : 'team2',
+        servingPlayer: _servingPlayer,
+      ));
     } catch (_) {}
   }
 
@@ -583,10 +592,11 @@ class _RefereeDashboardScreenState extends State<RefereeDashboardScreen> {
     return InkWell(
       onTap: !_gameStarted
           ? () {
+              // Local server pick only — do NOT publish Ongoing / Live / OBS
+              // until the referee presses START GAME.
               setState(() {
                 _servingPlayer = name;
               });
-              _publishCourtOverlay();
             }
           : null,
       child: Padding(
@@ -1184,7 +1194,6 @@ class _RefereeDashboardScreenState extends State<RefereeDashboardScreen> {
                                                               _servingPlayer = leftTop;
                                                               _applyDoublesInitialServerLayout(g);
                                                             });
-                                                            _publishCourtOverlay(serving: 'team1');
                                                           },
                                                           splashColor: Colors.white10,
                                                         ),
@@ -1196,7 +1205,6 @@ class _RefereeDashboardScreenState extends State<RefereeDashboardScreen> {
                                                               _servingPlayer = leftBottom.isNotEmpty ? leftBottom : leftTop;
                                                               _applyDoublesInitialServerLayout(g);
                                                             });
-                                                            _publishCourtOverlay(serving: 'team1');
                                                           },
                                                           splashColor: Colors.white10,
                                                         ),
@@ -1214,7 +1222,6 @@ class _RefereeDashboardScreenState extends State<RefereeDashboardScreen> {
                                                               _servingPlayer = rightTop;
                                                               _applyDoublesInitialServerLayout(g);
                                                             });
-                                                            _publishCourtOverlay(serving: 'team2');
                                                           },
                                                           splashColor: Colors.white10,
                                                         ),
@@ -1226,7 +1233,6 @@ class _RefereeDashboardScreenState extends State<RefereeDashboardScreen> {
                                                               _servingPlayer = rightBottom.isNotEmpty ? rightBottom : rightTop;
                                                               _applyDoublesInitialServerLayout(g);
                                                             });
-                                                            _publishCourtOverlay(serving: 'team2');
                                                           },
                                                           splashColor: Colors.white10,
                                                         ),
@@ -1245,7 +1251,6 @@ class _RefereeDashboardScreenState extends State<RefereeDashboardScreen> {
                                                         _servingPlayer = leftTop;
                                                         _serverTop = false;
                                                       });
-                                                      _publishCourtOverlay(serving: 'team1');
                                                     },
                                                     splashColor: Colors.white10,
                                                   ),
@@ -1257,7 +1262,6 @@ class _RefereeDashboardScreenState extends State<RefereeDashboardScreen> {
                                                         _servingPlayer = rightTop;
                                                         _serverTop = true;
                                                       });
-                                                      _publishCourtOverlay(serving: 'team2');
                                                     },
                                                     splashColor: Colors.white10,
                                                   ),
@@ -2802,7 +2806,9 @@ class _RefereeDashboardScreenState extends State<RefereeDashboardScreen> {
   }
 
   /// Serve / assignment change — live:score-set only (Ongoing). No REST.
+  /// Only after START GAME — picking a server pre-start stays local.
   void _publishCourtOverlay({String? serving}) {
+    if (!_gameStarted) return;
     final app = context.read<AppState>();
     final g = app.selectedGame;
     if (g == null) return;

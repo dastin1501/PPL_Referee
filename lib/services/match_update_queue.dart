@@ -197,17 +197,31 @@ class MatchUpdateQueue {
     }
   }
 
-  /// Drop overlay snapshots for a court so Complete cannot be followed by a
-  /// stale 0-0 `match_update` (that empties OBS).
+  /// Drop overlay snapshots for a court and tell the server to clear Live/OBS.
   Future<void> clearCourt(String courtSlug) async {
     await load();
     final court = courtSlug.trim();
     if (court.isEmpty) return;
-    if (_byCourt.remove(court) == null) return;
+    _byCourt.remove(court);
     await _persist();
     _notify();
     if (kDebugMode) {
       debugPrint('[match-update-queue] cleared court=$court');
+    }
+    try {
+      if (_socket.connected) {
+        _socket.joinCourt(court);
+        _socket.emitMatchUpdate({
+          'type': 'match_clear',
+          'court': court,
+          'status': 'empty',
+          'updatedAt': DateTime.now().toUtc().toIso8601String(),
+        });
+      }
+    } catch (e) {
+      if (kDebugMode) {
+        debugPrint('[match-update-queue] clear emit failed court=$court err=$e');
+      }
     }
   }
 
