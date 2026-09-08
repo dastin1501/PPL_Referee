@@ -70,19 +70,29 @@ class ScoreEventQueue {
     return _events.any((e) => e.isPending && e.matchIdentity == id);
   }
 
-  Future<Directory> _signatureDir() async {
+  Future<Directory?> _signatureDir() async {
+    // path_provider documents dir is not available on Flutter web.
+    if (kIsWeb) return null;
     if (_sigDir != null) return _sigDir!;
-    final root = await getApplicationDocumentsDirectory();
-    final dir = Directory('${root.path}/score_event_signatures');
-    if (!await dir.exists()) {
-      await dir.create(recursive: true);
+    try {
+      final root = await getApplicationDocumentsDirectory();
+      final dir = Directory('${root.path}/score_event_signatures');
+      if (!await dir.exists()) {
+        await dir.create(recursive: true);
+      }
+      _sigDir = dir;
+      return dir;
+    } catch (e) {
+      if (kDebugMode) {
+        debugPrint('[score-queue] sig dir unavailable: $e');
+      }
+      return null;
     }
-    _sigDir = dir;
-    return dir;
   }
 
-  Future<File> _signatureFile(String eventId) async {
+  Future<File?> _signatureFile(String eventId) async {
     final dir = await _signatureDir();
+    if (dir == null) return null;
     return File('${dir.path}/$eventId.json');
   }
 
@@ -120,14 +130,14 @@ class ScoreEventQueue {
     Map<String, dynamic> extras,
   ) async {
     if (extras.isEmpty) return;
+    // Always keep in memory (web has no reliable documents directory).
+    _signatureExtras[eventId] = extras;
     try {
       final file = await _signatureFile(eventId);
+      if (file == null) return;
       await file.writeAsString(jsonEncode(extras), flush: true);
-      _signatureExtras[eventId] = extras;
     } catch (e) {
       if (kDebugMode) debugPrint('[score-queue] sig write failed: $e');
-      // Keep in memory even if disk write fails.
-      _signatureExtras[eventId] = extras;
     }
   }
 
@@ -135,7 +145,7 @@ class ScoreEventQueue {
     if (_signatureExtras.containsKey(eventId)) return;
     try {
       final file = await _signatureFile(eventId);
-      if (!await file.exists()) return;
+      if (file == null || !await file.exists()) return;
       final decoded = jsonDecode(await file.readAsString());
       if (decoded is Map) {
         _signatureExtras[eventId] = Map<String, dynamic>.from(decoded);
@@ -149,7 +159,7 @@ class ScoreEventQueue {
     _signatureExtras.remove(eventId);
     try {
       final file = await _signatureFile(eventId);
-      if (await file.exists()) await file.delete();
+      if (file != null && await file.exists()) await file.delete();
     } catch (_) {}
   }
 
@@ -677,6 +687,18 @@ class ScoreEventQueue {
         if (snap['servingPlayer'] != null) {
           point['servingPlayer'] = snap['servingPlayer'];
         }
+        final p1 =
+            (snap['player1Name'] ?? snap['player1'] ?? '').toString().trim();
+        final p2 =
+            (snap['player2Name'] ?? snap['player2'] ?? '').toString().trim();
+        if (p1.isNotEmpty) {
+          point['player1Name'] = p1;
+          point['playerA'] = p1;
+        }
+        if (p2.isNotEmpty) {
+          point['player2Name'] = p2;
+          point['playerB'] = p2;
+        }
         _attachMatchIdentity(point, event);
         _prepareLiveTickPayload(point);
         _socket.emitLivePoint(point);
@@ -690,6 +712,9 @@ class ScoreEventQueue {
   Map<String, dynamic> _buildLiveScoreSetPayload(ScoreEvent event) {
     final snap = _fullSnapshot(event);
     final gameIndex = event.gameIndex.clamp(1, 3);
+    final freshStart = event.action == ScoreEventAction.statusOngoing ||
+        snap['resetScores'] == true ||
+        snap['freshStart'] == true;
     final s1 = _asInt(snap['game${gameIndex}Player1']) ??
         _asInt(snap['score1']) ??
         0;
@@ -708,22 +733,70 @@ class ScoreEventQueue {
       'game': gameIndex,
       'gameIndex': gameIndex,
       'status': 'Ongoing',
+      'clientAction': event.action.wire,
       'game${gameIndex}Player1': s1,
       'game${gameIndex}Player2': s2,
       'scores': scores,
       if (snap['serving'] != null) 'serving': snap['serving'],
       if (snap['servingPlayer'] != null) 'servingPlayer': snap['servingPlayer'],
     };
-    // Include other played games from the snapshot only — never pad 0-0
-    // (that would wipe earlier games on live:score-set).
-    for (int i = 1; i <= 3; i++) {
-      if (i == gameIndex) continue;
-      final a = _asInt(snap['game${i}Player1']);
-      final b = _asInt(snap['game${i}Player2']);
-      if (a == null || b == null || a + b <= 0) continue;
-      payload['game${i}Player1'] = a;
-      payload['game${i}Player2'] = b;
-      scores['game$i'] = {'team1': a, 'team2': b};
+    if (freshStart) {
+      // Start Game must wipe prior session scores on Match + Live/OBS/brackets.
+      payload['resetScores'] = true;
+      payload['freshStart'] = true;
+      final p1 = (snap['player1Name'] ?? snap['player1'] ?? '').toString().trim();
+      final p2 = (snap['player2Name'] ?? snap['player2'] ?? '').toString().trim();
+      if (p1.isNotEmpty) {
+        payload['player1Name'] = p1;
+        payload['playerA'] = p1;
+      }
+      if (p2.isNotEmpty) {
+        payload['player2Name'] = p2;
+        payload['playerB'] = p2;
+      }
+      for (int i = 1; i <= 3; i++) {
+        final a = i == gameIndex
+            ? s1
+            : (_asInt(snap['game${i}Player1']) ?? 0);
+        final b = i == gameIndex
+            ? s2
+            : (_asInt(snap['game${i}Player2']) ?? 0);
+        payload['game${i}Player1'] = a;
+        payload['game${i}Player2'] = b;
+        scores['game$i'] = {'team1': a, 'team2': b};
+      }
+      payload['finalScorePlayer1'] =
+          _asInt(snap['finalScorePlayer1']) ?? (s1);
+      payload['finalScorePlayer2'] =
+          _asInt(snap['finalScorePlayer2']) ?? (s2);
+      scores['final'] = {
+        'team1': payload['finalScorePlayer1'],
+        'team2': payload['finalScorePlayer2'],
+      };
+    } else {
+      // Include other played games from the snapshot only — never pad 0-0
+      // (that would wipe earlier games on live:score-set).
+      for (int i = 1; i <= 3; i++) {
+        if (i == gameIndex) continue;
+        final a = _asInt(snap['game${i}Player1']);
+        final b = _asInt(snap['game${i}Player2']);
+        if (a == null || b == null || a + b <= 0) continue;
+        payload['game${i}Player1'] = a;
+        payload['game${i}Player2'] = b;
+        scores['game$i'] = {'team1': a, 'team2': b};
+      }
+    }
+    // Always include lineup on live ticks so contaminated Match names (Mike on
+    // Bronze) get corrected to the referee card (John vs Sarah).
+    final liveP1 = (snap['player1Name'] ?? snap['player1'] ?? '').toString().trim();
+    final liveP2 = (snap['player2Name'] ?? snap['player2'] ?? '').toString().trim();
+    if (liveP1.isNotEmpty) {
+      payload['player1Name'] = liveP1;
+      payload['playerA'] = liveP1;
+    }
+    if (liveP2.isNotEmpty) {
+      payload['player2Name'] = liveP2;
+      payload['playerB'] = liveP2;
     }
     _attachMatchIdentity(payload, event);
     _prepareLiveTickPayload(payload);
@@ -776,8 +849,12 @@ class ScoreEventQueue {
     payload['status'] = 'Ongoing';
     payload.remove('markCompleted');
     payload.remove('winner');
-    payload.remove('finalScorePlayer1');
-    payload.remove('finalScorePlayer2');
+    // Keep absolute finals on Start Game / freshStart so server wipe is complete.
+    final fresh = payload['freshStart'] == true || payload['resetScores'] == true;
+    if (!fresh) {
+      payload.remove('finalScorePlayer1');
+      payload.remove('finalScorePlayer2');
+    }
     _stripScheduleFields(payload);
   }
 
@@ -870,10 +947,21 @@ class ScoreEventQueue {
     if (event.matchType == 'group') {
       payload['groupId'] = event.groupId;
       payload['matchKey'] = event.matchKey;
+      payload['type'] = 'group';
+      payload['stage'] = 'group';
     } else {
       final rawMatchId =
           event.matchId.isNotEmpty ? event.matchId : event.matchKey;
       payload['matchId'] = rawMatchId;
+      // Always send bracket alias so backend/Live/OBS/Brackets key off bronze/final
+      // instead of falling back to court-only or player-name matching.
+      final alias = event.matchKey.isNotEmpty ? event.matchKey : rawMatchId;
+      if (alias.isNotEmpty) {
+        payload['matchKey'] = alias;
+        payload['bracketMatchId'] = alias;
+      }
+      payload['type'] = 'elimination';
+      payload['stage'] = 'elimination';
       if (event.documentId.isNotEmpty) {
         payload['documentId'] = event.documentId;
         payload['_id'] = event.documentId;

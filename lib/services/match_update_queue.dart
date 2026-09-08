@@ -198,7 +198,7 @@ class MatchUpdateQueue {
   }
 
   /// Drop overlay snapshots for a court and tell the server to clear Live/OBS.
-  Future<void> clearCourt(String courtSlug) async {
+  Future<void> clearCourt(String courtSlug, {bool emitClear = true}) async {
     await load();
     final court = courtSlug.trim();
     if (court.isEmpty) return;
@@ -206,8 +206,11 @@ class MatchUpdateQueue {
     await _persist();
     _notify();
     if (kDebugMode) {
-      debugPrint('[match-update-queue] cleared court=$court');
+      debugPrint(
+        '[match-update-queue] cleared court=$court emitClear=$emitClear',
+      );
     }
+    if (!emitClear) return;
     try {
       if (_socket.connected) {
         _socket.joinCourt(court);
@@ -225,15 +228,18 @@ class MatchUpdateQueue {
     }
   }
 
-  /// On reconnect: re-broadcast the latest overlay snapshot, but never a 0-0
-  /// leftover from match open (that flickers OBS empty after live scores).
+  /// On reconnect: re-broadcast the latest overlay snapshot.
+  /// Keep fresh 0-0 Start Game frames (resetScores/freshStart) so OBS doesn't
+  /// go blank after a reconnect mid warm-up.
   Future<void> requeueAllForReconnect() async {
     await load();
     var any = false;
     final drop = <String>[];
     for (final e in _byCourt.entries) {
       final p = e.value.payload;
-      if (p.team1Score + p.team2Score <= 0) {
+      final keepZero =
+          p.resetScores || p.freshStart || (p.team1Score + p.team2Score > 0);
+      if (!keepZero) {
         drop.add(e.key);
         continue;
       }

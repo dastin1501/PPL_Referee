@@ -109,37 +109,16 @@ class _CourtGamesScreenState extends State<CourtGamesScreen>
     super.dispose();
   }
 
-  List<String> _sortedCourts(List<String> raw) {
-    final courts = List<String>.from(raw);
-    courts.sort((a, b) {
-      int typeRank(String s) {
-        final low = s.trim().toLowerCase();
-        if (low == 'center court' || low.contains('center court')) return 0;
-        final m = RegExp(r'\bcourt\s*(\d+)\b', caseSensitive: false).firstMatch(s) ??
-            RegExp(r'^\s*(\d+)\s*$').firstMatch(s);
-        if (m != null) return 1;
-        return 2;
-      }
-
-      int numberValue(String s) {
-        final m = RegExp(r'\bcourt\s*(\d+)\b', caseSensitive: false).firstMatch(s) ??
-            RegExp(r'^\s*(\d+)\s*$').firstMatch(s);
-        return int.tryParse(m?.group(1) ?? '') ?? 0;
-      }
-
-      final ra = typeRank(a);
-      final rb = typeRank(b);
-      if (ra != rb) return ra.compareTo(rb);
-      if (ra == 1) return numberValue(a).compareTo(numberValue(b));
-      return a.toLowerCase().compareTo(b.toLowerCase());
-    });
-    return courts;
+  /// Keep the website court-assignment order (slot 1..N).
+  /// Do not pin "Center Court" first — it may be court 5 on the schedule grid.
+  List<String> _orderedCourts(List<String> raw) {
+    return List<String>.from(raw.where((c) => c.trim().isNotEmpty));
   }
 
   @override
   Widget build(BuildContext context) {
     final app = context.watch<AppState>();
-    final courts = _sortedCourts(app.courts);
+    final courts = _orderedCourts(app.courts);
     final hasCourt = app.selectedCourt != null;
     final dates = hasCourt ? app.availableDatesForSelectedCourt : <String>[];
     final hasDate = app.selectedDate != null;
@@ -585,7 +564,19 @@ Widget _buildGamesList(
   }
 
   if (items.isEmpty) {
-    return _EmptyState(icon: Icons.event_busy, message: emptyMessage);
+    return RefreshIndicator(
+      color: const Color(0xFF0F766E),
+      onRefresh: () => app.refreshSelectedTournament(showLoading: false),
+      child: ListView(
+        physics: const AlwaysScrollableScrollPhysics(),
+        children: [
+          SizedBox(
+            height: MediaQuery.of(context).size.height * 0.45,
+            child: _EmptyState(icon: Icons.event_busy, message: emptyMessage),
+          ),
+        ],
+      ),
+    );
   }
 
   int timeKey(Map<String, dynamic> it) {
@@ -618,7 +609,7 @@ Widget _buildGamesList(
 
   return RefreshIndicator(
     color: const Color(0xFF0F766E),
-    onRefresh: () => app.refreshSelectedTournament(),
+    onRefresh: () => app.refreshSelectedTournament(showLoading: false),
     child: ListView.builder(
       padding: const EdgeInsets.fromLTRB(12, 12, 12, 24),
       itemCount: items.length,

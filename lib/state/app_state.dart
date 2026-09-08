@@ -1,6 +1,7 @@
 import 'dart:convert';
 import 'dart:async';
 import 'package:flutter/foundation.dart';
+import 'package:flutter/widgets.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../services/api_service.dart';
@@ -346,8 +347,16 @@ class AppState extends ChangeNotifier {
       );
       if (selectedTournament?.id != tournamentId) return;
       selectedTournament = withRegs;
-      // Keep live match/court state; only refresh roster-backed maps via full replace
-      // of selectedTournament. Courts/games already loaded on fast path.
+      // Re-parse matches with registrations so RR slots can fill TBD names.
+      games = _mergeRefreshedMatchesWithLocalState(
+        _normalizeServerClearedMatches(withRegs.matches),
+      );
+      try {
+        final assigned = await _api.getAssignedMatches();
+        _overlayAssignedMatches(assigned);
+      } catch (_) {}
+      _resolveEliminationPlaceholdersFromTournamentDetails();
+      _applyQueuedSnapshotsToGames();
       notifyListeners();
     } catch (e) {
       if (kDebugMode) {
@@ -765,11 +774,18 @@ class AppState extends ChangeNotifier {
     leaveLiveMatchRooms();
   }
 
-  Future<void> refreshSelectedTournament() async {
+  Future<void> refreshSelectedTournament({bool showLoading = true}) async {
     final t = selectedTournament;
     if (t == null) return;
-    loading = true;
-    notifyListeners();
+    // Pull-to-refresh must NOT flip global loading — that rebuilds the list and
+    // leaves the RefreshIndicator spinner stuck on Flutter web.
+    if (showLoading) {
+      loading = true;
+      notifyListeners();
+    }
+    // Force a real schedule refetch — stale If-None-Match made pull-to-refresh
+    // look like it worked (spinner) while keeping the old court queue.
+    _scheduledQueueEtag = null;
     try {
       final fullTournament = await _api.getTournamentDetails(
         t.id,
@@ -790,7 +806,25 @@ class AppState extends ChangeNotifier {
         final selectedKey = _matchIdentityKey(selectedGame!);
         final refreshedSelected = games.where((m) => _matchIdentityKey(m) == selectedKey).toList();
         if (refreshedSelected.isNotEmpty) {
-          selectedGame = refreshedSelected.first;
+          final incoming = refreshedSelected.first;
+          final prev = selectedGame!;
+          // Mid-live: keep the Ref Panel instance. Tournament embed / seed
+          // re-rank can swap Final↔Bronze names (Sarah↔Emma) on refresh.
+          final keepLive = normalizeGameStatusKey(prev.status) == 'ongoing' ||
+              ((prev.game1Player1 ?? 0) +
+                      (prev.game1Player2 ?? 0) +
+                      (prev.game2Player1 ?? 0) +
+                      (prev.game2Player2 ?? 0) +
+                      (prev.game3Player1 ?? 0) +
+                      (prev.game3Player2 ?? 0) +
+                      prev.score1 +
+                      prev.score2) >
+                  0;
+          if (!(keepLive &&
+              !_isWeakPlayerLabel(prev.player1) &&
+              !_isWeakPlayerLabel(prev.player2))) {
+            selectedGame = incoming;
+          }
         }
       }
       if (selectedCourt != null &&
@@ -800,13 +834,15 @@ class AppState extends ChangeNotifier {
       _autoPickSelectedDate();
       await _refreshScheduledQueueForSelection();
       // Do not PUT leftover group-match outbox after submit/refresh.
+      unawaited(_enrichTournamentRegistrations(t.id));
     } on AuthException catch (e) {
       await logout(reason: e.message);
     } catch (e) {
       error = 'Failed to refresh: $e';
+    } finally {
+      if (showLoading) loading = false;
+      notifyListeners();
     }
-    loading = false;
-    notifyListeners();
   }
 
   void _overlayAssignedMatches(List<TournamentMatch> assigned) {
@@ -1863,8 +1899,10 @@ class AppState extends ChangeNotifier {
       final existing = existingByKey[matchIdentity];
       if (existing == null) return m;
 
-      // Website unlock / reset to Scheduled is authoritative.
-      // Never keep a stale local Completed/Ongoing snapshot after staff clear the result.
+      // Website unlock / reset to Scheduled is authoritative — but only after a
+      // real Completed clear. Embed often still says Scheduled/0-0 while the
+      // referee is live (Match + sockets already Ongoing). Wiping the queue then
+      // resets clientSeq and makes OBS/Live Scores flicker empty.
       final incomingStatus = normalizeGameStatusKey(m.status);
       final incomingPoints = (m.game1Player1 ?? 0) +
           (m.game1Player2 ?? 0) +
@@ -1874,23 +1912,57 @@ class AppState extends ChangeNotifier {
           (m.game3Player2 ?? 0) +
           m.score1 +
           m.score2;
+      final existingStatus = normalizeGameStatusKey(existing.status);
+      final existingPoints = (existing.game1Player1 ?? 0) +
+          (existing.game1Player2 ?? 0) +
+          (existing.game2Player1 ?? 0) +
+          (existing.game2Player2 ?? 0) +
+          (existing.game3Player1 ?? 0) +
+          (existing.game3Player2 ?? 0) +
+          existing.score1 +
+          existing.score2;
+      final isActiveRefPanel = selectedGame != null &&
+          _matchIdentityKey(selectedGame!) == matchIdentity;
+      final hasLiveQueue = matchIdentity.isNotEmpty &&
+          (scoreQueue.hasPendingForMatch(matchIdentity) ||
+              scoreQueue.latestSnapshotFor(matchIdentity) != null);
+      // Only protect an actively scored / open Ref Panel match. A leftover
+      // score-queue snapshot must NOT block website re-schedules on pull-refresh
+      // (Round Robin vanishing until full browser reload).
+      final keepLocalLive = isActiveRefPanel ||
+          (existingStatus == 'ongoing' && (existingPoints > 0 || hasLiveQueue));
+      final incomingHasSchedule = m.court.trim().isNotEmpty &&
+          m.time.trim().isNotEmpty &&
+          m.date.trim().isNotEmpty;
       if (incomingStatus == 'scheduled' || incomingStatus == 'unschedule') {
-        if (incomingPoints <= 0 && matchIdentity.isNotEmpty) {
+        // Staff re-scheduled this match — take the fresh court/date/time.
+        if (incomingStatus == 'scheduled' &&
+            incomingHasSchedule &&
+            incomingPoints <= 0 &&
+            !(isActiveRefPanel && existingStatus == 'ongoing')) {
+          if (existingStatus == 'completed' && matchIdentity.isNotEmpty) {
+            unawaited(scoreQueue.discardMatch(matchIdentity));
+          }
+          return m;
+        }
+        if (incomingPoints <= 0 && keepLocalLive) {
+          return existing;
+        }
+        // True staff unlock after Completed — drop stale queue + clear local.
+        if (incomingPoints <= 0 &&
+            matchIdentity.isNotEmpty &&
+            existingStatus == 'completed') {
           unawaited(scoreQueue.discardMatch(matchIdentity));
         }
-        // Normalize stale per-game Completed left on embed after unlock.
         if (incomingPoints <= 0) {
           return _forceClearedMatchStatuses(m);
         }
         return m;
       }
-      final existingStatus = normalizeGameStatusKey(existing.status);
-      if (incomingPoints <= 0 &&
-          (existingStatus == 'completed' || existingStatus == 'ongoing')) {
-        if (matchIdentity.isNotEmpty) {
-          unawaited(scoreQueue.discardMatch(matchIdentity));
-        }
-        return m;
+      // Embed lag: server/tournament payload still at 0 while local is live.
+      // Never discard the score queue or clobber Ongoing/Completed progress.
+      if (incomingPoints <= 0 && keepLocalLive) {
+        return existing;
       }
 
       final overrides = <String, dynamic>{};
@@ -2026,6 +2098,12 @@ class AppState extends ChangeNotifier {
       final aliasMatchKey = activeMatch.matchKey.trim();
       payload['matchId'] =
           rawMatchId.isNotEmpty ? rawMatchId : aliasMatchKey;
+      final alias = aliasMatchKey.isNotEmpty ? aliasMatchKey : rawMatchId;
+      if (alias.isNotEmpty) {
+        payload['matchKey'] = alias;
+        payload['bracketMatchId'] = alias;
+      }
+      payload['stage'] = 'elimination';
       if (activeMatch.documentId.trim().isNotEmpty) {
         payload['documentId'] = activeMatch.documentId;
         payload['_id'] = activeMatch.documentId;
@@ -3137,6 +3215,8 @@ class AppState extends ChangeNotifier {
     int? score2,
     String? serving,
     String? servingPlayer,
+    bool resetScores = false,
+    bool freshStart = false,
   }) async {
     if (tutorialSimulationMode) return;
     final t = selectedTournament;
@@ -3170,11 +3250,17 @@ class AppState extends ChangeNotifier {
       tournamentId: t.id,
       team1Name: team1Name,
       team1Score: score1 ?? _currentGamePointScore(g, gi, true),
-      team1Games: _gamesWonFlags(g, team1: true),
+      team1Games: resetScores || freshStart
+          ? const [false, false]
+          : _gamesWonFlags(g, team1: true),
       team2Name: team2Name,
       team2Score: score2 ?? _currentGamePointScore(g, gi, false),
-      team2Games: _gamesWonFlags(g, team1: false),
+      team2Games: resetScores || freshStart
+          ? const [false, false]
+          : _gamesWonFlags(g, team1: false),
       serving: servingSideFor(g),
+      resetScores: resetScores,
+      freshStart: freshStart,
     );
 
     // Fire-and-forget local-first queue.
@@ -3338,7 +3424,11 @@ class AppState extends ChangeNotifier {
         'status=${fields['status']} score=${fields['game1Player1']}-${fields['game1Player2']}',
       );
     }
-    notifyListeners();
+    // Defer UI rebuild to the next frame so Flutter web doesn't schedule a
+    // draw against a disposed EngineFlutterView after hot restart / socket storms.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!_disposed) notifyListeners();
+    });
   }
 
   String? _identityFromLivePayload(Map<String, dynamic> payload) {
@@ -3523,6 +3613,41 @@ class AppState extends ChangeNotifier {
     return list.map((m) {
       if (!_serverMatchLooksCleared(m)) return m;
       final mid = _matchIdentityKey(m);
+      // Embed often lags as Scheduled/0-0 while Ref Panel is live. Never wipe
+      // the score queue or force-clear in that case (drops names/scores mid-game).
+      final local = mid.isNotEmpty ? _findMatchByIdentity(mid) : null;
+      final localStatus = local != null ? normalizeGameStatusKey(local.status) : '';
+      final localPts = local == null
+          ? 0
+          : (local.game1Player1 ?? 0) +
+              (local.game1Player2 ?? 0) +
+              (local.game2Player1 ?? 0) +
+              (local.game2Player2 ?? 0) +
+              (local.game3Player1 ?? 0) +
+              (local.game3Player2 ?? 0) +
+              local.score1 +
+              local.score2;
+      final isActiveRef =
+          selectedGame != null && _matchIdentityKey(selectedGame!) == mid;
+      final incomingHasSchedule = m.court.trim().isNotEmpty &&
+          m.time.trim().isNotEmpty &&
+          m.date.trim().isNotEmpty;
+      final incomingStatus = normalizeGameStatusKey(m.status);
+
+      // Website re-scheduled Round Robin (Scheduled + court/date/time): always
+      // take the server row unless this match is open/live in Ref Panel.
+      if (incomingStatus == 'scheduled' && incomingHasSchedule) {
+        if (isActiveRef && localStatus == 'ongoing') return local ?? m;
+        if (localStatus == 'ongoing' && localPts > 0) return local ?? m;
+        if (localStatus == 'completed' && mid.isNotEmpty) {
+          unawaited(scoreQueue.discardMatch(mid));
+        }
+        return m;
+      }
+
+      if (isActiveRef || (localStatus == 'ongoing' && localPts > 0)) {
+        return local ?? m;
+      }
       if (mid.isNotEmpty) {
         unawaited(scoreQueue.discardMatch(mid));
       }
@@ -3553,9 +3678,23 @@ class AppState extends ChangeNotifier {
       if (existing == null) continue;
 
       // Website unlock/clear is authoritative — drop local Completed snapshots.
+      // But not while this match is the active live Ref Panel / has points.
       if (_serverMatchLooksCleared(existing)) {
-        unawaited(scoreQueue.discardMatch(mid));
-        continue;
+        final isActiveRef =
+            selectedGame != null && _matchIdentityKey(selectedGame!) == mid;
+        final localStatus = normalizeGameStatusKey(existing.status);
+        final localPts = (existing.game1Player1 ?? 0) +
+            (existing.game1Player2 ?? 0) +
+            (existing.game2Player1 ?? 0) +
+            (existing.game2Player2 ?? 0) +
+            (existing.game3Player1 ?? 0) +
+            (existing.game3Player2 ?? 0) +
+            existing.score1 +
+            existing.score2;
+        if (!(isActiveRef || localStatus == 'ongoing' || localPts > 0)) {
+          unawaited(scoreQueue.discardMatch(mid));
+          continue;
+        }
       }
 
       final filtered = Map<String, dynamic>.from(snap);

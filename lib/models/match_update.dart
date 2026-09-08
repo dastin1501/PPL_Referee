@@ -12,6 +12,8 @@ class MatchUpdatePayload {
     required this.team2Games,
     required this.serving,
     this.tournamentId = '',
+    this.resetScores = false,
+    this.freshStart = false,
   });
 
   /// Court slug (lowercase, hyphenated), e.g. `center-court`.
@@ -28,6 +30,10 @@ class MatchUpdatePayload {
 
   /// `"team1"` or `"team2"`.
   final String serving;
+
+  /// Start Game / restart — clients must accept even if score totals drop.
+  final bool resetScores;
+  final bool freshStart;
 
   Map<String, dynamic> toJson() => {
         'type': 'match_update',
@@ -46,6 +52,9 @@ class MatchUpdatePayload {
           'games': team2Games,
         },
         'serving': serving,
+        if (resetScores) 'resetScores': true,
+        if (freshStart) 'freshStart': true,
+        'updatedAt': DateTime.now().toUtc().toIso8601String(),
       };
 
   factory MatchUpdatePayload.fromJson(Map<String, dynamic> j) {
@@ -71,6 +80,8 @@ class MatchUpdatePayload {
       team2Score: int.tryParse('${t2['score']}') ?? 0,
       team2Games: gamesOf(t2['games']),
       serving: (j['serving'] ?? 'team1').toString() == 'team2' ? 'team2' : 'team1',
+      resetScores: j['resetScores'] == true,
+      freshStart: j['freshStart'] == true,
     );
   }
 }

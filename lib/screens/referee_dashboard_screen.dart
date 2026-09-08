@@ -11,6 +11,7 @@ import '../state/app_state.dart';
 import '../models.dart';
 import '../models/score_event.dart';
 import '../widgets/coin_toss_dialog.dart';
+import '../utils/court_slug.dart';
 
 class RefereeDashboardScreen extends StatefulWidget {
   const RefereeDashboardScreen({super.key});
@@ -172,9 +173,13 @@ class _RefereeDashboardScreenState extends State<RefereeDashboardScreen> {
     if (g != null) {
       _applyDoublesInitialServerLayout(g);
     }
+    // START GAME always begins a fresh scoring session — wipe leftover points
+    // from a previous Ongoing attempt so Live/OBS/brackets don't keep 2-7 etc.
     setState(() {
       _gameStarted = true;
       _elapsed = Duration.zero;
+      _score1 = 0;
+      _score2 = 0;
       if (g != null) {
         final leftTeam = _splitTeam(g.player1);
         final rightTeam = _splitTeam(g.player2);
@@ -198,28 +203,52 @@ class _RefereeDashboardScreenState extends State<RefereeDashboardScreen> {
     });
     try {
       if (g == null) return;
+      // Zero local match model so subsequent ticks don't re-send old games.
+      // enqueueScoreEvent merges this snapshot into selectedGame optimistically.
+      final wiped = <String, dynamic>{
+        'status': 'Ongoing',
+        'game${_currentGame}Status': 'Ongoing',
+        'score1': 0,
+        'score2': 0,
+        'game1Player1': 0,
+        'game1Player2': 0,
+        'game2Player1': 0,
+        'game2Player2': 0,
+        'game3Player1': 0,
+        'game3Player2': 0,
+        'finalScorePlayer1': 0,
+        'finalScorePlayer2': 0,
+        'resetScores': true,
+        'freshStart': true,
+        'serving': _serverOnTeam1(g) ? 'team1' : 'team2',
+        'servingPlayer': _servingPlayer,
+        // Lock the players shown on Start Game so live sync cannot swap
+        // Final↔Bronze names mid-match from a stale embed.
+        'player1': g.player1,
+        'player2': g.player2,
+        'player1Name': g.player1Name.trim().isNotEmpty ? g.player1Name : g.player1,
+        'player2Name': g.player2Name.trim().isNotEmpty ? g.player2Name : g.player2,
+      };
       await app.enqueueScoreEvent(
         action: ScoreEventAction.statusOngoing,
         gameIndex: _currentGame,
-        snapshot: {
-          'status': 'Ongoing',
-          'game${_currentGame}Status': 'Ongoing',
-          'score1': _score1,
-          'score2': _score2,
-          'game${_currentGame}Player1': _score1,
-          'game${_currentGame}Player2': _score2,
-          'serving': _serverOnTeam1(g) ? 'team1' : 'team2',
-          'servingPlayer': _servingPlayer,
-        },
+        snapshot: wiped,
       );
+      // Do NOT emit match_clear here. Previous flow was:
+      //   status_ongoing (paint) → clearCourt (wipe OBS) → publish (repaint)
+      // That race blanks Live/OBS on first Start Game, especially before a Match
+      // row exists. freshStart/resetScores already wipe stale scores server-side.
+      final liveMatch = app.selectedGame ?? g;
       // First Live / OBS publish happens here — not when opening the match card.
       unawaited(app.publishCourtMatchUpdate(
-        match: g,
+        match: liveMatch,
         gameIndex: _currentGame,
-        score1: _score1,
-        score2: _score2,
-        serving: _serverOnTeam1(g) ? 'team1' : 'team2',
+        score1: 0,
+        score2: 0,
+        serving: _serverOnTeam1(liveMatch) ? 'team1' : 'team2',
         servingPlayer: _servingPlayer,
+        resetScores: true,
+        freshStart: true,
       ));
     } catch (_) {}
   }
@@ -1631,14 +1660,46 @@ class _RefereeDashboardScreenState extends State<RefereeDashboardScreen> {
     );
   }
 
-  void _showSubmitDialog(TournamentMatch g) {
+  Future<void> _lockPortraitForSummary() async {
+    // Flutter web: orientation is controlled by the browser / DevTools.
+    // Forcing SystemChrome + RotatedBox fights the window and looks sideways.
+    if (kIsWeb) return;
+    await SystemChrome.setPreferredOrientations([
+      DeviceOrientation.portraitUp,
+      DeviceOrientation.portraitDown,
+    ]);
+    // Wait briefly for the OS to actually rotate before painting the summary.
+    for (var i = 0; i < 24; i++) {
+      await Future<void>.delayed(const Duration(milliseconds: 40));
+      if (!mounted) return;
+      final size = MediaQuery.sizeOf(context);
+      if (size.height >= size.width) return;
+    }
+  }
+
+  Future<void> _restoreLandscapeScoring() async {
+    if (kIsWeb) return;
+    await SystemChrome.setPreferredOrientations([
+      DeviceOrientation.landscapeLeft,
+      DeviceOrientation.landscapeRight,
+    ]);
+  }
+
+  Future<void> _showSubmitDialog(TournamentMatch g) async {
     const brand = Color(0xFF0F766E);
     final app = context.read<AppState>();
     final category = app.selectedTournament?.categoryNames[g.categoryId] ?? '';
     final winnerName = _score1 > _score2
         ? g.player1
         : (_score2 > _score1 ? g.player2 : '');
-    showDialog(
+
+    // Native mobile: lock portrait for this summary. Web: use upright vertical layout.
+    await _lockPortraitForSummary();
+    if (!mounted) return;
+
+    String? submitResult;
+    try {
+      submitResult = await showDialog<String>(
       context: context,
       barrierDismissible: false,
       builder: (dialogContext) {
@@ -1839,94 +1900,91 @@ class _RefereeDashboardScreenState extends State<RefereeDashboardScreen> {
                                             textAlign: TextAlign.center,
                                           ),
                                           const SizedBox(height: 10),
-                                          Row(
+                                          // Portrait summary: stack score + winner vertically.
+                                          Column(
+                                            crossAxisAlignment: CrossAxisAlignment.stretch,
                                             children: [
-                                              Expanded(
-                                                child: Container(
-                                                  padding: const EdgeInsets.symmetric(
-                                                    vertical: 10,
-                                                    horizontal: 10,
-                                                  ),
-                                                  decoration: BoxDecoration(
-                                                    color: const Color(0xFFF0FDFA),
-                                                    borderRadius: BorderRadius.circular(12),
-                                                  ),
-                                                  child: Column(
-                                                    children: [
-                                                      const Text(
-                                                        'SCORE',
-                                                        style: TextStyle(
-                                                          fontSize: 10,
-                                                          fontWeight: FontWeight.w700,
-                                                          letterSpacing: 0.5,
-                                                          color: Color(0xFF64748B),
-                                                        ),
+                                              Container(
+                                                padding: const EdgeInsets.symmetric(
+                                                  vertical: 12,
+                                                  horizontal: 12,
+                                                ),
+                                                decoration: BoxDecoration(
+                                                  color: const Color(0xFFF0FDFA),
+                                                  borderRadius: BorderRadius.circular(12),
+                                                ),
+                                                child: Column(
+                                                  children: [
+                                                    const Text(
+                                                      'SCORE',
+                                                      style: TextStyle(
+                                                        fontSize: 10,
+                                                        fontWeight: FontWeight.w700,
+                                                        letterSpacing: 0.5,
+                                                        color: Color(0xFF64748B),
                                                       ),
-                                                      const SizedBox(height: 2),
-                                                      Text(
-                                                        '$_score1 – $_score2',
-                                                        style: const TextStyle(
-                                                          fontSize: 22,
-                                                          fontWeight: FontWeight.w800,
-                                                          color: Color(0xFF0F172A),
-                                                        ),
+                                                    ),
+                                                    const SizedBox(height: 2),
+                                                    Text(
+                                                      '$_score1 – $_score2',
+                                                      style: const TextStyle(
+                                                        fontSize: 28,
+                                                        fontWeight: FontWeight.w800,
+                                                        color: Color(0xFF0F172A),
                                                       ),
-                                                    ],
-                                                  ),
+                                                    ),
+                                                  ],
                                                 ),
                                               ),
                                               if (winnerName.isNotEmpty) ...[
-                                                const SizedBox(width: 8),
-                                                Expanded(
-                                                  flex: 2,
-                                                  child: Container(
-                                                    padding: const EdgeInsets.symmetric(
-                                                      horizontal: 10,
-                                                      vertical: 10,
+                                                const SizedBox(height: 8),
+                                                Container(
+                                                  padding: const EdgeInsets.symmetric(
+                                                    horizontal: 12,
+                                                    vertical: 12,
+                                                  ),
+                                                  decoration: BoxDecoration(
+                                                    color: const Color(0xFFECFDF5),
+                                                    borderRadius: BorderRadius.circular(12),
+                                                    border: Border.all(
+                                                      color: brand.withValues(alpha: 0.18),
                                                     ),
-                                                    decoration: BoxDecoration(
-                                                      color: const Color(0xFFECFDF5),
-                                                      borderRadius: BorderRadius.circular(12),
-                                                      border: Border.all(
-                                                        color: brand.withValues(alpha: 0.18),
+                                                  ),
+                                                  child: Row(
+                                                    children: [
+                                                      const Icon(
+                                                        Icons.emoji_events_rounded,
+                                                        color: brand,
+                                                        size: 20,
                                                       ),
-                                                    ),
-                                                    child: Row(
-                                                      children: [
-                                                        const Icon(
-                                                          Icons.emoji_events_rounded,
-                                                          color: brand,
-                                                          size: 18,
-                                                        ),
-                                                        const SizedBox(width: 8),
-                                                        Expanded(
-                                                          child: Column(
-                                                            crossAxisAlignment: CrossAxisAlignment.start,
-                                                            children: [
-                                                              const Text(
-                                                                'Winner',
-                                                                style: TextStyle(
-                                                                  fontSize: 10,
-                                                                  fontWeight: FontWeight.w700,
-                                                                  color: Color(0xFF64748B),
-                                                                ),
+                                                      const SizedBox(width: 10),
+                                                      Expanded(
+                                                        child: Column(
+                                                          crossAxisAlignment: CrossAxisAlignment.start,
+                                                          children: [
+                                                            const Text(
+                                                              'Winner',
+                                                              style: TextStyle(
+                                                                fontSize: 10,
+                                                                fontWeight: FontWeight.w700,
+                                                                color: Color(0xFF64748B),
                                                               ),
-                                                              Text(
-                                                                winnerName,
-                                                                maxLines: 2,
-                                                                overflow: TextOverflow.ellipsis,
-                                                                style: const TextStyle(
-                                                                  fontSize: 13,
-                                                                  fontWeight: FontWeight.w800,
-                                                                  color: brand,
-                                                                  height: 1.2,
-                                                                ),
+                                                            ),
+                                                            Text(
+                                                              winnerName,
+                                                              maxLines: 3,
+                                                              overflow: TextOverflow.ellipsis,
+                                                              style: const TextStyle(
+                                                                fontSize: 15,
+                                                                fontWeight: FontWeight.w800,
+                                                                color: brand,
+                                                                height: 1.25,
                                                               ),
-                                                            ],
-                                                          ),
+                                                            ),
+                                                          ],
                                                         ),
-                                                      ],
-                                                    ),
+                                                      ),
+                                                    ],
                                                   ),
                                                 ),
                                               ],
@@ -2019,7 +2077,7 @@ class _RefereeDashboardScreenState extends State<RefereeDashboardScreen> {
                                                   },
                                             borderRadius: BorderRadius.circular(14),
                                             child: Container(
-                                              height: 120,
+                                              height: 160,
                                               decoration: BoxDecoration(
                                                 color: hasSignature
                                                     ? Colors.white
@@ -2145,12 +2203,8 @@ class _RefereeDashboardScreenState extends State<RefereeDashboardScreen> {
                                                 );
                                                 if (!mounted) return;
                                                 if (result != null) {
-                                                  // Keep loader visible until we leave this screen.
                                                   if (dialogContext.mounted) {
-                                                    Navigator.of(dialogContext).pop();
-                                                  }
-                                                  if (mounted) {
-                                                    Navigator.of(this.context).pop(result);
+                                                    Navigator.of(dialogContext).pop(result);
                                                   }
                                                 } else {
                                                   setModalState(() {
@@ -2200,6 +2254,18 @@ class _RefereeDashboardScreenState extends State<RefereeDashboardScreen> {
         });
       },
     );
+    } finally {
+      if (mounted && submitResult == null) {
+        // Cancelled — restore landscape scoring UI (native only).
+        await _restoreLandscapeScoring();
+      }
+    }
+
+    if (!mounted) return;
+    if (submitResult != null) {
+      // Stay portrait while leaving the scoring screen.
+      Navigator.of(context).pop(submitResult);
+    }
   }
 
   Future<Uint8List?> _openSignatureDialog() async {

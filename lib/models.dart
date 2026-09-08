@@ -682,12 +682,34 @@ String? _courtNameFromEntry(dynamic v) {
   return s.isEmpty ? null : s;
 }
 
-List<String> _parseCourtNameList(dynamic candidate) {
+/// Parse court label arrays from schedules.
+/// When [keepEmptySlots] is true, empty entries are kept as "" so column index
+/// stays aligned with the website (e.g. Center Court can be court slot 5).
+List<String> _parseCourtNameList(dynamic candidate, {bool keepEmptySlots = false}) {
   if (candidate is! List) return const [];
   final out = <String>[];
   for (final v in candidate) {
-    final name = _courtNameFromEntry(v);
-    if (name != null && name.isNotEmpty) out.add(name);
+    final name = _courtNameFromEntry(v)?.trim() ?? '';
+    if (keepEmptySlots) {
+      out.add(name);
+    } else if (name.isNotEmpty) {
+      out.add(name);
+    }
+  }
+  return out;
+}
+
+/// Fill blank slots with `Court N` so renamed labels keep their website index.
+List<String> _materializeCourtNames(List<String> names, {int minCount = 0}) {
+  final n = [
+    names.length,
+    minCount,
+  ].reduce((a, b) => a > b ? a : b);
+  if (n <= 0) return const [];
+  final out = <String>[];
+  for (int i = 0; i < n; i++) {
+    final raw = i < names.length ? names[i].trim() : '';
+    out.add(raw.isNotEmpty ? raw : 'Court ${i + 1}');
   }
   return out;
 }
@@ -697,9 +719,10 @@ String _resolveCourtFromIndexOrName(
   List<String> courtNames, {
   int? columnIndex,
 }) {
+  final names = _materializeCourtNames(courtNames);
   if (columnIndex != null && columnIndex >= 0) {
-    if (columnIndex < courtNames.length) {
-      return courtNames[columnIndex].trim();
+    if (columnIndex < names.length) {
+      return names[columnIndex].trim();
     }
     return 'Court ${columnIndex + 1}';
   }
@@ -708,15 +731,15 @@ String _resolveCourtFromIndexOrName(
   if (trimmed.isEmpty) return '';
 
   final low = trimmed.toLowerCase();
-  for (final name in courtNames) {
+  for (final name in names) {
     if (name.trim().toLowerCase() == low) return name.trim();
   }
 
   final m = RegExp(r'^\s*(?:court\s*)?(\d+)\s*$', caseSensitive: false).firstMatch(trimmed);
   if (m != null) {
     final idx = int.tryParse(m.group(1) ?? '');
-    if (idx != null && idx >= 1 && idx <= courtNames.length) {
-      return courtNames[idx - 1].trim();
+    if (idx != null && idx >= 1 && idx <= names.length) {
+      return names[idx - 1].trim();
     }
     if (idx != null && idx >= 1) {
       return 'Court $idx';
@@ -735,50 +758,42 @@ List<String> _buildTournamentCourtList({
   bool hasCourt(List<String> list, String name) =>
       list.any((r) => r.trim().toLowerCase() == name.trim().toLowerCase());
 
+  final total = [
+    namedCourts.length,
+    maxCourtCount,
+    maxAssignmentColumns,
+  ].reduce((a, b) => a > b ? a : b);
+
   final result = <String>[];
 
   if (namedCourts.isNotEmpty) {
-    result.addAll(namedCourts);
-    final total = [
-      namedCourts.length,
-      maxCourtCount,
-      maxAssignmentColumns,
-    ].reduce((a, b) => a > b ? a : b);
-    // Only extend beyond configured names (e.g. Court 6+) — never regenerate renamed slots.
-    for (int i = namedCourts.length; i < total; i++) {
-      final fallback = 'Court ${i + 1}';
-      if (!hasCourt(result, fallback)) {
-        result.add(fallback);
-      }
-    }
-  } else {
-    final total = [
-      maxCourtCount,
-      maxAssignmentColumns,
-    ].reduce((a, b) => a > b ? a : b);
-    for (int i = 0; i < total; i++) {
-      result.add('Court ${i + 1}');
-    }
+    // Keep website slot order: empty label at index 4 → still slot 5 after fill.
+    result.addAll(_materializeCourtNames(namedCourts, minCount: total));
+  } else if (total > 0) {
+    result.addAll(_materializeCourtNames(const [], minCount: total));
   }
 
+  final resolvedNames = List<String>.from(result);
+
   for (final court in discoveredCourts) {
-    final remapped = namedCourts.isNotEmpty
-        ? _resolveCourtFromIndexOrName(court, namedCourts)
+    final remapped = resolvedNames.isNotEmpty
+        ? _resolveCourtFromIndexOrName(court, resolvedNames)
         : court.trim();
     if (remapped.isNotEmpty && !hasCourt(result, remapped)) {
       result.add(remapped);
     }
   }
 
-  if (namedCourts.isNotEmpty) {
+  if (resolvedNames.isNotEmpty) {
     result.removeWhere((court) {
-      final remapped = _resolveCourtFromIndexOrName(court, namedCourts);
+      final remapped = _resolveCourtFromIndexOrName(court, resolvedNames);
       return remapped.toLowerCase() != court.trim().toLowerCase() &&
           hasCourt(result, remapped);
     });
   }
 
-  result.sort();
+  // Preserve assignment column order (do not alphabetize — that puts
+  // "Center Court" before "Court 1" and breaks Court 10 vs Court 2 order).
   return result;
 }
 
@@ -903,7 +918,10 @@ class Tournament {
       final courtCount = int.tryParse(source['courtCount']?.toString() ?? '');
       final explicitCourtNames = <String>[];
       final courtNamesCandidate = source['courtNames'] ?? source['courts'] ?? source['courtLabels'];
-      explicitCourtNames.addAll(_parseCourtNameList(courtNamesCandidate));
+      // Keep empty slots so "Center Court" at website column 5 stays index 4.
+      explicitCourtNames.addAll(
+        _parseCourtNameList(courtNamesCandidate, keepEmptySlots: true),
+      );
       if (explicitCourtNames.isNotEmpty) {
         rememberCourtNames(explicitCourtNames);
       }
@@ -937,7 +955,10 @@ class Tournament {
       }
 
       if (explicitCourtNames.isNotEmpty) {
-        courts.addAll(explicitCourtNames);
+        for (final name in explicitCourtNames) {
+          final trimmed = name.trim();
+          if (trimmed.isNotEmpty) courts.add(trimmed);
+        }
       } else if (courtCount != null && courtCount > 0) {
         for (int i = 1; i <= courtCount; i++) {
           courts.add('Court $i');
@@ -1458,32 +1479,34 @@ class Tournament {
             if (!match && rCatStr != null && (rCatStr == catId || rCatStr == catDiv)) match = true;
             
             if (match) {
-               // Construct name
-               String name = '';
-               final tName = r['teamName']?.toString();
-               if (tName != null && tName.isNotEmpty) {
-                 name = tName;
-               } else {
-                 final p1 = r['player'] ?? r['primaryPlayer'];
-                 final p2 = r['partner'];
-                 
-                 String n1 = extract(p1);
-                 
-                 if (p2 != null) {
-                   String n2 = extract(p2);
-                   // Clean up TBDs
-                   if (n1 == 'TBD') n1 = '';
-                   if (n2 == 'TBD') n2 = '';
-                   
-                   if (n1.isNotEmpty && n2.isNotEmpty) {
-                     name = '$n1 / $n2';
-                  } else if (n1.isNotEmpty) {
-                    name = n1;
-                  } else if (n2.isNotEmpty) {
-                    name = n2;
-                  }
+               // Construct name — prefer explicit playerName (same as website schedules).
+               String name = (r['playerName']?.toString() ?? '').trim();
+               if (name.isEmpty) {
+                 final tName = r['teamName']?.toString();
+                 if (tName != null && tName.isNotEmpty) {
+                   name = tName;
                  } else {
-                   name = n1;
+                   final p1 = r['player'] ?? r['primaryPlayer'];
+                   final p2 = r['partner'];
+                   
+                   String n1 = extract(p1);
+                   
+                   if (p2 != null) {
+                     String n2 = extract(p2);
+                     // Clean up TBDs
+                     if (n1 == 'TBD') n1 = '';
+                     if (n2 == 'TBD') n2 = '';
+                     
+                     if (n1.isNotEmpty && n2.isNotEmpty) {
+                       name = '$n1 / $n2';
+                    } else if (n1.isNotEmpty) {
+                      name = n1;
+                    } else if (n2.isNotEmpty) {
+                      name = n2;
+                    }
+                   } else {
+                     name = n1;
+                   }
                  }
                }
                if (name.isNotEmpty && name != 'TBD') {
