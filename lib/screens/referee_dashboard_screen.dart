@@ -173,8 +173,18 @@ class _RefereeDashboardScreenState extends State<RefereeDashboardScreen> {
     if (g != null) {
       _applyDoublesInitialServerLayout(g);
     }
-    // START GAME always begins a fresh scoring session — wipe leftover points
-    // from a previous Ongoing attempt so Live/OBS/brackets don't keep 2-7 etc.
+    // START GAME begins a fresh scoring session for the *current* game only.
+    // Best-of-3 Game 2/3 must keep completed prior games (G1 11-7 stays when
+    // starting G2). Only wipe all games when starting Game 1 of a new session.
+    final startingGame = _currentGame.clamp(1, 3);
+    final preservePriorGames = startingGame > 1;
+    int priorScore(int gameNo, bool team1) {
+      if (g == null || gameNo >= startingGame) return 0;
+      if (gameNo == 1) return team1 ? (g.game1Player1 ?? 0) : (g.game1Player2 ?? 0);
+      if (gameNo == 2) return team1 ? (g.game2Player1 ?? 0) : (g.game2Player2 ?? 0);
+      if (gameNo == 3) return team1 ? (g.game3Player1 ?? 0) : (g.game3Player2 ?? 0);
+      return 0;
+    }
     setState(() {
       _gameStarted = true;
       _elapsed = Duration.zero;
@@ -203,35 +213,44 @@ class _RefereeDashboardScreenState extends State<RefereeDashboardScreen> {
     });
     try {
       if (g == null) return;
-      // Zero local match model so subsequent ticks don't re-send old games.
-      // enqueueScoreEvent merges this snapshot into selectedGame optimistically.
+      final p1 = app.sideDisplayName(g, team1: true);
+      final p2 = app.sideDisplayName(g, team1: false);
+      // Zero only the game being started; keep prior completed games intact.
       final wiped = <String, dynamic>{
         'status': 'Ongoing',
-        'game${_currentGame}Status': 'Ongoing',
+        'game${startingGame}Status': 'Ongoing',
         'score1': 0,
         'score2': 0,
-        'game1Player1': 0,
-        'game1Player2': 0,
-        'game2Player1': 0,
-        'game2Player2': 0,
-        'game3Player1': 0,
-        'game3Player2': 0,
-        'finalScorePlayer1': 0,
-        'finalScorePlayer2': 0,
-        'resetScores': true,
+        'resetScores': !preservePriorGames,
         'freshStart': true,
         'serving': _serverOnTeam1(g) ? 'team1' : 'team2',
         'servingPlayer': _servingPlayer,
-        // Lock the players shown on Start Game so live sync cannot swap
-        // Final↔Bronze names mid-match from a stale embed.
-        'player1': g.player1,
-        'player2': g.player2,
-        'player1Name': g.player1Name.trim().isNotEmpty ? g.player1Name : g.player1,
-        'player2Name': g.player2Name.trim().isNotEmpty ? g.player2Name : g.player2,
+        // Prefer bracket slot names (player1/player2) over stale *Name fields.
+        'player1': p1,
+        'player2': p2,
+        'player1Name': p1,
+        'player2Name': p2,
       };
+      for (int i = 1; i <= 3; i++) {
+        if (i < startingGame) {
+          wiped['game${i}Player1'] = priorScore(i, true);
+          wiped['game${i}Player2'] = priorScore(i, false);
+        } else {
+          wiped['game${i}Player1'] = 0;
+          wiped['game${i}Player2'] = 0;
+        }
+      }
+      wiped['finalScorePlayer1'] =
+          (wiped['game1Player1'] as int) +
+          (wiped['game2Player1'] as int) +
+          (wiped['game3Player1'] as int);
+      wiped['finalScorePlayer2'] =
+          (wiped['game1Player2'] as int) +
+          (wiped['game2Player2'] as int) +
+          (wiped['game3Player2'] as int);
       await app.enqueueScoreEvent(
         action: ScoreEventAction.statusOngoing,
-        gameIndex: _currentGame,
+        gameIndex: startingGame,
         snapshot: wiped,
       );
       // Do NOT emit match_clear here. Previous flow was:
@@ -242,12 +261,13 @@ class _RefereeDashboardScreenState extends State<RefereeDashboardScreen> {
       // First Live / OBS publish happens here — not when opening the match card.
       unawaited(app.publishCourtMatchUpdate(
         match: liveMatch,
-        gameIndex: _currentGame,
+        gameIndex: startingGame,
         score1: 0,
         score2: 0,
         serving: _serverOnTeam1(liveMatch) ? 'team1' : 'team2',
         servingPlayer: _servingPlayer,
-        resetScores: true,
+        // Only full-reset OBS games-won when starting Game 1.
+        resetScores: !preservePriorGames,
         freshStart: true,
       ));
     } catch (_) {}
@@ -2843,6 +2863,8 @@ class _RefereeDashboardScreenState extends State<RefereeDashboardScreen> {
     final serving = _servingPlayer == null
         ? null
         : (_serverOnTeam1(g) ? 'team1' : 'team2');
+    final p1 = g.player1Name.trim().isNotEmpty ? g.player1Name.trim() : g.player1.trim();
+    final p2 = g.player2Name.trim().isNotEmpty ? g.player2Name.trim() : g.player2.trim();
     final fields = <String, dynamic>{
       'status': 'Ongoing',
       'game${_currentGame}Status': 'Ongoing',
@@ -2850,6 +2872,13 @@ class _RefereeDashboardScreenState extends State<RefereeDashboardScreen> {
       'score2': _score2,
       'game${_currentGame}Player1': _score1,
       'game${_currentGame}Player2': _score2,
+      // Always stamp logical slot names so OBS never reorders sides on add-score.
+      if (p1.isNotEmpty) 'player1': p1,
+      if (p1.isNotEmpty) 'player1Name': p1,
+      if (p1.isNotEmpty) 'playerA': p1,
+      if (p2.isNotEmpty) 'player2': p2,
+      if (p2.isNotEmpty) 'player2Name': p2,
+      if (p2.isNotEmpty) 'playerB': p2,
       if (serving != null) 'serving': serving,
       if (_servingPlayer != null) 'servingPlayer': _servingPlayer,
     };
@@ -2882,6 +2911,8 @@ class _RefereeDashboardScreenState extends State<RefereeDashboardScreen> {
         (_servingPlayer == null
             ? null
             : (_serverOnTeam1(g) ? 'team1' : 'team2'));
+    final p1 = g.player1Name.trim().isNotEmpty ? g.player1Name.trim() : g.player1.trim();
+    final p2 = g.player2Name.trim().isNotEmpty ? g.player2Name.trim() : g.player2.trim();
     unawaited(app.enqueueScoreEvent(
       action: ScoreEventAction.sideOut,
       gameIndex: _currentGame,
@@ -2892,6 +2923,12 @@ class _RefereeDashboardScreenState extends State<RefereeDashboardScreen> {
         'score2': _score2,
         'game${_currentGame}Player1': _score1,
         'game${_currentGame}Player2': _score2,
+        if (p1.isNotEmpty) 'player1': p1,
+        if (p1.isNotEmpty) 'player1Name': p1,
+        if (p1.isNotEmpty) 'playerA': p1,
+        if (p2.isNotEmpty) 'player2': p2,
+        if (p2.isNotEmpty) 'player2Name': p2,
+        if (p2.isNotEmpty) 'playerB': p2,
         if (side != null) 'serving': side,
         if (_servingPlayer != null) 'servingPlayer': _servingPlayer,
       },

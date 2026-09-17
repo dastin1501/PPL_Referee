@@ -434,6 +434,8 @@ class ScoreEventQueue {
         event.acked = true;
         event.lastError = null;
         event.nextRetryAt = null;
+        // Blank this court's OBS/Live — next game may start on another court.
+        _emitGameSubmitCourtClear(event, payload);
       } else if (event.action == ScoreEventAction.note) {
         final payload = _buildNotePayload(event);
         await _api.submitScore(payload);
@@ -567,6 +569,40 @@ class ScoreEventQueue {
     }
   }
 
+  /// Mid-series game submit: blank this court's OBS/Live. Next game may move courts.
+  void _emitGameSubmitCourtClear(ScoreEvent event, Map<String, dynamic> payload) {
+    try {
+      final snap = event.snapshot;
+      final court = (snap['court'] ?? payload['court'] ?? '').toString().trim();
+      if (court.isEmpty || !_socket.connected) return;
+      final slug = court
+          .toLowerCase()
+          .replaceAll(RegExp(r'''['"]'''), '')
+          .replaceAll(RegExp(r'[^a-z0-9]+'), '-')
+          .replaceAll(RegExp(r'^-+|-+$'), '');
+      if (slug.isEmpty) return;
+      _socket.joinCourt(slug);
+      _socket.emitMatchUpdate({
+        'type': 'match_clear',
+        'court': slug,
+        'courtLabel': court,
+        'tournamentId': event.tournamentId,
+        'status': 'empty',
+        'updatedAt': DateTime.now().toUtc().toIso8601String(),
+      });
+      if (kDebugMode) {
+        debugPrint(
+          '[score-queue] mid-series game clear court=$slug '
+          'game=${event.gameIndex}',
+        );
+      }
+    } catch (e) {
+      if (kDebugMode) {
+        debugPrint('[score-queue] mid-series court clear failed: $e');
+      }
+    }
+  }
+
   Future<void> _compactAcked(String matchIdentity) async {
     final forMatch = _events
         .where((e) => e.matchIdentity == matchIdentity)
@@ -664,8 +700,55 @@ class ScoreEventQueue {
     return payload;
   }
 
+  /// True when a later event for the same match already carries a higher score
+  /// snapshot — replaying Start Game would flash OBS/Live back to 0|0.
+  bool _isSupersededByLaterScore(ScoreEvent event) {
+    if (event.action != ScoreEventAction.statusOngoing) return false;
+    int snapPts(Map<String, dynamic> snap) {
+      var t = 0;
+      for (var i = 1; i <= 3; i++) {
+        t += _asInt(snap['game${i}Player1']) ?? 0;
+        t += _asInt(snap['game${i}Player2']) ?? 0;
+      }
+      t += _asInt(snap['score1']) ?? 0;
+      t += _asInt(snap['score2']) ?? 0;
+      return t;
+    }
+
+    final base = snapPts(_fullSnapshot(event));
+    return _events.any((e) {
+      if (e.matchIdentity != event.matchIdentity) return false;
+      if (e.seq <= event.seq) return false;
+      return snapPts(_fullSnapshot(e)) > base;
+    });
+  }
+
   void _emitLiveScore(ScoreEvent event) {
     if (_isSupersededByCompletedSubmit(event)) return;
+    // On resume flush, never replay a Start Game 0|0 when later points exist —
+    // emit the latest snapshot instead so Live/OBS keep 11|x.
+    if (_isSupersededByLaterScore(event)) {
+      ScoreEvent? latest;
+      for (final e in _events) {
+        if (e.matchIdentity != event.matchIdentity) continue;
+        if (latest == null || e.seq > latest.seq) latest = e;
+      }
+      if (latest != null && latest.id != event.id) {
+        if (kDebugMode) {
+          debugPrint(
+            '[score-queue] replace stale Start Game live emit '
+            'seq=${event.seq} with latest seq=${latest.seq}',
+          );
+        }
+        final payload = _buildLiveScoreSetPayload(latest);
+        payload.remove('freshStart');
+        payload.remove('resetScores');
+        payload['freshStart'] = false;
+        payload['resetScores'] = false;
+        _socket.emitLiveScoreSet(payload);
+      }
+      return;
+    }
     if (event.action == ScoreEventAction.pointPlus ||
         event.action == ScoreEventAction.pointMinus) {
       final side = event.side;
@@ -678,6 +761,7 @@ class ScoreEventQueue {
           'type': event.matchType,
           'game': event.gameIndex.clamp(1, 3),
           'gameIndex': event.gameIndex.clamp(1, 3),
+          'currentGame': event.gameIndex.clamp(1, 3),
           'side': side,
           'delta': event.action == ScoreEventAction.pointPlus ? 1 : -1,
           'status': 'Ongoing',
@@ -732,6 +816,7 @@ class ScoreEventQueue {
       'type': event.matchType,
       'game': gameIndex,
       'gameIndex': gameIndex,
+      'currentGame': gameIndex,
       'status': 'Ongoing',
       'clientAction': event.action.wire,
       'game${gameIndex}Player1': s1,
@@ -741,9 +826,11 @@ class ScoreEventQueue {
       if (snap['servingPlayer'] != null) 'servingPlayer': snap['servingPlayer'],
     };
     if (freshStart) {
-      // Start Game must wipe prior session scores on Match + Live/OBS/brackets.
-      payload['resetScores'] = true;
+      // Start Game: wipe only when the snapshot says so (Game 1). Best-of-3
+      // Game 2/3 keeps prior completed games via resetScores:false.
+      final wipeAll = snap['resetScores'] == true;
       payload['freshStart'] = true;
+      if (wipeAll) payload['resetScores'] = true;
       final p1 = (snap['player1Name'] ?? snap['player1'] ?? '').toString().trim();
       final p2 = (snap['player2Name'] ?? snap['player2'] ?? '').toString().trim();
       if (p1.isNotEmpty) {
@@ -766,9 +853,15 @@ class ScoreEventQueue {
         scores['game$i'] = {'team1': a, 'team2': b};
       }
       payload['finalScorePlayer1'] =
-          _asInt(snap['finalScorePlayer1']) ?? (s1);
+          _asInt(snap['finalScorePlayer1']) ??
+              ((payload['game1Player1'] as int? ?? 0) +
+                  (payload['game2Player1'] as int? ?? 0) +
+                  (payload['game3Player1'] as int? ?? 0));
       payload['finalScorePlayer2'] =
-          _asInt(snap['finalScorePlayer2']) ?? (s2);
+          _asInt(snap['finalScorePlayer2']) ??
+              ((payload['game1Player2'] as int? ?? 0) +
+                  (payload['game2Player2'] as int? ?? 0) +
+                  (payload['game3Player2'] as int? ?? 0));
       scores['final'] = {
         'team1': payload['finalScorePlayer1'],
         'team2': payload['finalScorePlayer2'],

@@ -187,13 +187,34 @@ class AppState extends ChangeNotifier {
     try {
       _ensureLiveSocket();
       _rejoinLiveRooms();
-      unawaited(scoreQueue.flush());
-      unawaited(matchUpdateQueue.flush());
       if (selectedTournament != null) {
         await refreshSelectedTournament();
+        // Republish current live scores BEFORE flushing queues so a stale
+        // Start Game frame cannot briefly overwrite OBS/Live with 0|0.
+        final live = selectedGame;
+        if (live != null &&
+            (normalizeGameStatusKey(live.status) == 'ongoing' ||
+                ((live.game1Player1 ?? 0) +
+                        (live.game1Player2 ?? 0) +
+                        (live.game2Player1 ?? 0) +
+                        (live.game2Player2 ?? 0) +
+                        (live.game3Player1 ?? 0) +
+                        (live.game3Player2 ?? 0)) >
+                    0)) {
+          await publishCourtMatchUpdate(
+            match: live,
+            gameIndex: selectedGameNumber.clamp(1, 3),
+            score1: _currentGamePointScore(live, selectedGameNumber, true),
+            score2: _currentGamePointScore(live, selectedGameNumber, false),
+            resetScores: false,
+            freshStart: false,
+          );
+        }
       } else {
         await loadTournaments();
       }
+      unawaited(scoreQueue.flush());
+      unawaited(matchUpdateQueue.flush());
     } on AuthException catch (e) {
       await logout(reason: e.message);
     } catch (_) {}
@@ -319,16 +340,26 @@ class AppState extends ChangeNotifier {
       // Extract courts and matches
       courts = fullTournament.courts;
       games = _normalizeServerClearedMatches(fullTournament.matches);
-      try {
-        final assigned = await _api.getAssignedMatches();
-        _overlayAssignedMatches(assigned);
-      } catch (_) {}
+      // Resolve bracket names before navigation — don't block Opening on
+      // assigned-matches (that endpoint can be slow across all tournaments).
       _resolveEliminationPlaceholdersFromTournamentDetails();
       _applyQueuedSnapshotsToGames();
-      
+
       selectedCourt = null;
       selectedDate = null;
       joinLiveTournament(fullTournament.id);
+
+      // Overlay assigned-match metadata in the background.
+      unawaited(() async {
+        try {
+          final assigned = await _api.getAssignedMatches();
+          if (selectedTournament?.id != fullTournament.id) return;
+          _overlayAssignedMatches(assigned);
+          _resolveEliminationPlaceholdersFromTournamentDetails();
+          _applyQueuedSnapshotsToGames();
+          notifyListeners();
+        } catch (_) {}
+      }());
 
       // Team rosters can load after UI opens — don't block "Opening…".
       unawaited(_enrichTournamentRegistrations(t.id));
@@ -810,6 +841,7 @@ class AppState extends ChangeNotifier {
           final prev = selectedGame!;
           // Mid-live: keep the Ref Panel instance. Tournament embed / seed
           // re-rank can swap Final↔Bronze names (Sarah↔Emma) on refresh.
+          // Still correct a contaminated pair when embed has a different concrete lineup.
           final keepLive = normalizeGameStatusKey(prev.status) == 'ongoing' ||
               ((prev.game1Player1 ?? 0) +
                       (prev.game1Player2 ?? 0) +
@@ -820,9 +852,25 @@ class AppState extends ChangeNotifier {
                       prev.score1 +
                       prev.score2) >
                   0;
-          if (!(keepLive &&
-              !_isWeakPlayerLabel(prev.player1) &&
-              !_isWeakPlayerLabel(prev.player2))) {
+          final prevP1 = sideDisplayName(prev, team1: true).trim().toLowerCase();
+          final prevP2 = sideDisplayName(prev, team1: false).trim().toLowerCase();
+          final nextP1 = sideDisplayName(incoming, team1: true).trim().toLowerCase();
+          final nextP2 = sideDisplayName(incoming, team1: false).trim().toLowerCase();
+          final samePair = prevP1.isNotEmpty &&
+              prevP2.isNotEmpty &&
+              nextP1.isNotEmpty &&
+              nextP2.isNotEmpty &&
+              ((prevP1 == nextP1 && prevP2 == nextP2) ||
+                  (prevP1 == nextP2 && prevP2 == nextP1));
+          final contaminated = !_isWeakPlayerLabel(sideDisplayName(prev, team1: true)) &&
+              !_isWeakPlayerLabel(sideDisplayName(prev, team1: false)) &&
+              !_isWeakPlayerLabel(sideDisplayName(incoming, team1: true)) &&
+              !_isWeakPlayerLabel(sideDisplayName(incoming, team1: false)) &&
+              !samePair;
+          if (contaminated ||
+              !(keepLive &&
+                  !_isWeakPlayerLabel(prev.player1) &&
+                  !_isWeakPlayerLabel(prev.player2))) {
             selectedGame = incoming;
           }
         }
@@ -860,9 +908,18 @@ class AppState extends ChangeNotifier {
       final inc = byKey[key];
       if (inc == null) return existing;
 
-      String pickName(String fromAssigned, String fromEmbed) {
+      String pickName(String fromAssigned, String fromEmbed, {bool preferAssigned = false}) {
         final a = fromAssigned.trim();
         final b = fromEmbed.trim();
+        // Medal matches: assigned-matches already ran resolveEliminationMatchesWithSeeds
+        // (SF losers for Bronze). Prefer that over a contaminated tournament embed
+        // (e.g. John Smith / Paul Thomas stuck on Bronze while Brackets shows SF losers).
+        if (preferAssigned &&
+            !_isWeakPlayerLabel(a) &&
+            !_isWeakPlayerLabel(b) &&
+            a.toLowerCase() != b.toLowerCase()) {
+          return a;
+        }
         // Tournament details (website bracket) win when they already have a real name.
         if (!_isWeakPlayerLabel(b)) return b;
         if (!_isWeakPlayerLabel(a)) return a;
@@ -871,10 +928,33 @@ class AppState extends ChangeNotifier {
         return '';
       }
 
-      final mergedPlayer1 = pickName(inc.player1, existing.player1);
-      final mergedPlayer2 = pickName(inc.player2, existing.player2);
-      final mergedPlayer1Name = pickName(inc.player1Name, existing.player1Name);
-      final mergedPlayer2Name = pickName(inc.player2Name, existing.player2Name);
+      final rs = (inc.roundShort.trim().isNotEmpty ? inc.roundShort : existing.roundShort)
+          .trim()
+          .toUpperCase();
+      final preferAssignedMedal =
+          existing.type == 'elimination' &&
+          (rs == 'BRONZE' || rs == 'GOLD' || rs == 'FINAL');
+
+      final mergedPlayer1 = pickName(
+        inc.player1,
+        existing.player1,
+        preferAssigned: preferAssignedMedal,
+      );
+      final mergedPlayer2 = pickName(
+        inc.player2,
+        existing.player2,
+        preferAssigned: preferAssignedMedal,
+      );
+      final mergedPlayer1Name = pickName(
+        inc.player1Name,
+        existing.player1Name,
+        preferAssigned: preferAssignedMedal,
+      );
+      final mergedPlayer2Name = pickName(
+        inc.player2Name,
+        existing.player2Name,
+        preferAssigned: preferAssignedMedal,
+      );
       final mergedRoundShort = pickName(inc.roundShort, existing.roundShort);
       final mergedRoundLabel = pickName(inc.roundLabel, existing.roundLabel);
       final mergedMatchLabel = pickName(inc.matchLabel, existing.matchLabel);
@@ -949,6 +1029,8 @@ class AppState extends ChangeNotifier {
       if (low == 'tbd') return true;
       if (low.startsWith('winner')) return true;
       if (low.startsWith('loser')) return true;
+      // Some brackets store "Lower SF1" instead of "Loser SF1".
+      if (low.startsWith('lower')) return true;
       if (low.startsWith('w ')) return true;
       if (low.startsWith('l ')) return true;
       return false;
@@ -982,20 +1064,20 @@ class AppState extends ChangeNotifier {
       return s;
     }
 
+    bool isLoserPlaceholder(String text) =>
+        RegExp(r'^\s*(Loser|Lower|L)\b', caseSensitive: false).hasMatch(text);
+
+    bool isWinnerPlaceholder(String text) =>
+        RegExp(r'^\s*(Winner|W)\b', caseSensitive: false).hasMatch(text);
+
     String? extractRefFromPlaceholder(String text) {
       final trimmed = text.trim();
-      final m = RegExp(r'^(Winner|Loser)\s+(.+)$', caseSensitive: false).firstMatch(trimmed);
+      final m = RegExp(r'^(Winner|Loser|Lower)\s+(.+)$', caseSensitive: false).firstMatch(trimmed);
       if (m != null) return normalizeRef(m.group(2) ?? '');
       final m2 = RegExp(r'^(W|L)\s+(.+)$', caseSensitive: false).firstMatch(trimmed);
       if (m2 != null) return normalizeRef(m2.group(2) ?? '');
       return null;
     }
-
-    bool isWinnerPlaceholder(String text) =>
-        RegExp(r'^\s*(Winner|W)\b', caseSensitive: false).hasMatch(text);
-
-    bool isLoserPlaceholder(String text) =>
-        RegExp(r'^\s*(Loser|L)\b', caseSensitive: false).hasMatch(text);
 
     String makeWinnerPlaceholder(String ref) => 'Winner $ref';
     String makeLoserPlaceholder(String ref) => 'Loser $ref';
@@ -1230,12 +1312,11 @@ class AppState extends ChangeNotifier {
             final n = int.tryParse(num) ?? 0;
             if (n >= 9) keys.add('r32-$num');
           }
-          final nSf = RegExp(r'^sf(\d+)$').firstMatch(k);
-          if (rs == 'QF') {
-            if (nSf != null) keys.add('qf${nSf.group(1)}');
-            final nQf = RegExp(r'^qf(\d+)$').firstMatch(k);
-            if (nQf != null) keys.add('sf${nQf.group(1)}');
-          }
+          // IMPORTANT: Do NOT map QF↔SF here for normal 4-bracket draws.
+          // That alias is only valid for Round-of-32 remaps (handled above with
+          // hasR32). Mapping quarter1 → sf1 made Bronze "Loser SF1" resolve to
+          // the QF1 loser (Daniel Anderson) instead of the real SF1 loser
+          // (Michael Johnson).
           if (rs == 'R16') {
             final nQf = RegExp(r'^qf(\d+)$').firstMatch(k);
             if (nQf != null) keys.add('r16-${nQf.group(1)}');
@@ -1310,11 +1391,23 @@ class AppState extends ChangeNotifier {
         return w;
       }
 
-      // Best-of-N: count games/sets won — same as website Brackets.jsx.
-      // Do NOT use the last played game's point score (e.g. Game 3 4-11),
-      // which incorrectly flips the series winner.
+      // Prefer series / set wins when score1/score2 look like set counts (0–3),
+      // matching website Profile3 pickWinner(finalScore → games → score).
+      final s1 = m.score1;
+      final s2 = m.score2;
+      final looksLikeSetTotals =
+          s1 <= 3 && s2 <= 3 && (s1 + s2) > 0 && (s1 + s2) <= 3;
+      if (looksLikeSetTotals && s1 != s2) {
+        if (s1 > s2) return p1.isNotEmpty && !isPlaceholder(p1) ? p1 : null;
+        if (s2 > s1) return p2.isNotEmpty && !isPlaceholder(p2) ? p2 : null;
+      }
+
+      // Best-of-N: count games/sets won — same as website Brackets when
+      // finalScore is absent.
       int p1Wins = 0;
       int p2Wins = 0;
+      int agg1 = 0;
+      int agg2 = 0;
       for (int i = 1; i <= 3; i++) {
         final a = (i == 1
                 ? m.game1Player1
@@ -1325,6 +1418,8 @@ class AppState extends ChangeNotifier {
                 : (i == 2 ? m.game2Player2 : m.game3Player2)) ??
             0;
         if (a + b <= 0) continue;
+        agg1 += a;
+        agg2 += b;
         if (a > b) {
           p1Wins += 1;
         } else if (b > a) {
@@ -1332,18 +1427,25 @@ class AppState extends ChangeNotifier {
         }
       }
       if (p1Wins > p2Wins) {
-        return p1.isNotEmpty ? p1 : null;
+        return p1.isNotEmpty && !isPlaceholder(p1) ? p1 : null;
       }
       if (p2Wins > p1Wins) {
-        return p2.isNotEmpty ? p2 : null;
+        return p2.isNotEmpty && !isPlaceholder(p2) ? p2 : null;
+      }
+      // Website fallback: aggregate points across games.
+      if (agg1 > agg2) {
+        return p1.isNotEmpty && !isPlaceholder(p1) ? p1 : null;
+      }
+      if (agg2 > agg1) {
+        return p2.isNotEmpty && !isPlaceholder(p2) ? p2 : null;
       }
 
       // Fallback: overall point totals (single-game / incomplete series).
-      if (m.score1 > m.score2) {
-        return p1.isNotEmpty ? p1 : null;
+      if (s1 > s2) {
+        return p1.isNotEmpty && !isPlaceholder(p1) ? p1 : null;
       }
-      if (m.score2 > m.score1) {
-        return p2.isNotEmpty ? p2 : null;
+      if (s2 > s1) {
+        return p2.isNotEmpty && !isPlaceholder(p2) ? p2 : null;
       }
       return null;
     }
@@ -1485,16 +1587,27 @@ class AppState extends ChangeNotifier {
 
         final key = normalizeRef(m.matchKey.trim().isNotEmpty ? m.matchKey : m.id);
         final expected = expectedPlaceholders(m.roundShort, key, m.categoryId);
-        // Never overwrite a concrete player name with a feeder placeholder.
-        // Only fill empty / placeholder sides from the expected bracket path.
+        final rs = m.roundShort.trim().toUpperCase();
+        // Medal matches must always re-derive from SF/CF W/L when feeders exist.
+        // Contaminated concrete embed names (e.g. RR pair John Smith / Paul Thomas
+        // stuck on Bronze) must not block Loser SF1 / Loser SF2 resolution.
+        final forceMedalFromFeeders = (rs == 'BRONZE' || rs == 'GOLD') &&
+            expected != null &&
+            expected.length == 2;
         String baseP1 = m.player1;
         String baseP2 = m.player2;
         if (expected != null && expected.length == 2) {
-          if (baseP1.trim().isEmpty || isPlaceholder(baseP1)) {
+          if (forceMedalFromFeeders) {
             baseP1 = expected[0];
-          }
-          if (baseP2.trim().isEmpty || isPlaceholder(baseP2)) {
             baseP2 = expected[1];
+          } else {
+            // Only fill empty / placeholder sides for QF/SF/R16.
+            if (baseP1.trim().isEmpty || isPlaceholder(baseP1)) {
+              baseP1 = expected[0];
+            }
+            if (baseP2.trim().isEmpty || isPlaceholder(baseP2)) {
+              baseP2 = expected[1];
+            }
           }
         }
 
@@ -1521,10 +1634,25 @@ class AppState extends ChangeNotifier {
           return current;
         }
 
-        final p1 = resolveSide(baseP1);
-        final p2 = resolveSide(baseP2);
+        var p1 = resolveSide(baseP1);
+        var p2 = resolveSide(baseP2);
+        // Only adopt forced medal feeders when BOTH sides resolved to real names.
+        if (forceMedalFromFeeders) {
+          if (isPlaceholder(p1) ||
+              isPlaceholder(p2) ||
+              p1.trim().isEmpty ||
+              p2.trim().isEmpty) {
+            p1 = m.player1;
+            p2 = m.player2;
+          }
+        }
         String syncedName(String currentName, String oldPlayer, String newPlayer) {
           final n = currentName.trim();
+          if (forceMedalFromFeeders &&
+              !isPlaceholder(newPlayer) &&
+              newPlayer.trim().isNotEmpty) {
+            return newPlayer;
+          }
           if (n.isEmpty) return currentName;
           if (isPlaceholder(n)) return isPlaceholder(newPlayer) ? currentName : newPlayer;
           // Keep team/display names unless they still mirror the unresolved side.
@@ -1537,6 +1665,7 @@ class AppState extends ChangeNotifier {
         if (kDebugMode && (m.roundShort.toUpperCase() == 'GOLD' || m.roundShort.toUpperCase() == 'BRONZE')) {
           debugPrint(
             '[elim-resolve] ${m.roundShort} key=$key cat=${m.categoryId} '
+            'forceMedal=$forceMedalFromFeeders '
             'before="${m.player1} vs ${m.player2}" '
             'base="$baseP1 vs $baseP2" resolved="$p1 vs $p2"',
           );
@@ -2522,17 +2651,100 @@ class AppState extends ChangeNotifier {
       final mergedIncoming = incoming.map((m) {
         final existing = existingByKey[_matchIdentityKey(m)];
         if (existing == null) return m;
+        final rs = (m.roundShort.trim().isNotEmpty ? m.roundShort : existing.roundShort)
+            .trim()
+            .toUpperCase();
+        final isMedal = m.type == 'elimination' &&
+            (rs == 'BRONZE' || rs == 'GOLD' || rs == 'FINAL');
+        String pickSide(String fromQueue, String fromResolved) {
+          final a = fromQueue.trim();
+          final b = fromResolved.trim();
+          if (isMedal &&
+              !_isWeakPlayerLabel(b) &&
+              !_isWeakPlayerLabel(a) &&
+              a.toLowerCase() != b.toLowerCase()) {
+            // Keep SF-derived names already on the local match.
+            return b;
+          }
+          if (!_isWeakPlayerLabel(a)) return a;
+          if (!_isWeakPlayerLabel(b)) return b;
+          return a.isNotEmpty ? a : b;
+        }
+        final p1 = pickSide(m.player1, existing.player1);
+        final p2 = pickSide(m.player2, existing.player2);
+        final n1 = pickSide(m.player1Name, existing.player1Name);
+        final n2 = pickSide(m.player2Name, existing.player2Name);
         if (m.scoringFormat != 'sideout' || existing.scoringFormat == 'sideout') {
-          return m;
+          if (p1 == m.player1 &&
+              p2 == m.player2 &&
+              n1 == m.player1Name &&
+              n2 == m.player2Name) {
+            return m;
+          }
+          return TournamentMatch(
+            id: m.id,
+            documentId: m.documentId,
+            scheduleFromAssignments: m.scheduleFromAssignments,
+            player1: p1,
+            player2: p2,
+            player1Name: n1.isNotEmpty ? n1 : p1,
+            player2Name: n2.isNotEmpty ? n2 : p2,
+            score1: m.score1,
+            score2: m.score2,
+            game1Status: m.game1Status,
+            game2Status: m.game2Status,
+            game3Status: m.game3Status,
+            game1Player1: m.game1Player1,
+            game1Player2: m.game1Player2,
+            game2Player1: m.game2Player1,
+            game2Player2: m.game2Player2,
+            game3Player1: m.game3Player1,
+            game3Player2: m.game3Player2,
+            round: m.round,
+            roundShort: m.roundShort,
+            roundLabel: m.roundLabel,
+            court: m.court,
+            date: m.date,
+            time: m.time,
+            venue: m.venue,
+            mdTime2: m.mdTime2,
+            mdEnd2: m.mdEnd2,
+            mdTime3: m.mdTime3,
+            mdEnd3: m.mdEnd3,
+            status: m.status,
+            categoryId: m.categoryId,
+            matchKey: m.matchKey,
+            type: m.type,
+            seedLabel: m.seedLabel,
+            matchLabel: m.matchLabel,
+            groupId: m.groupId,
+            winner: m.winner,
+            signatureData: m.signatureData,
+            gameSignatures: m.gameSignatures,
+            refereeNote: m.refereeNote,
+            scoringFormat: m.scoringFormat,
+            game1Team1Player: m.game1Team1Player,
+            game1Team1Player2: m.game1Team1Player2,
+            game1Team2Player: m.game1Team2Player,
+            game1Team2Player2: m.game1Team2Player2,
+            game2Team1Player: m.game2Team1Player,
+            game2Team1Player2: m.game2Team1Player2,
+            game2Team2Player: m.game2Team2Player,
+            game2Team2Player2: m.game2Team2Player2,
+            game3Team1Player: m.game3Team1Player,
+            game3Team1Player2: m.game3Team1Player2,
+            game3Team2Player: m.game3Team2Player,
+            game3Team2Player2: m.game3Team2Player2,
+          );
         }
         return TournamentMatch(
           id: m.id,
           documentId: m.documentId,
           scheduleFromAssignments: m.scheduleFromAssignments,
-          player1: m.player1,
-          player2: m.player2,
-          player1Name: m.player1Name,
-          player2Name: m.player2Name,
+          player1: p1,
+          player2: p2,
+          player1Name: n1.isNotEmpty ? n1 : p1,
+          player2Name: n2.isNotEmpty ? n2 : p2,
           score1: m.score1,
           score2: m.score2,
           game1Status: m.game1Status,
@@ -2597,6 +2809,9 @@ class AppState extends ChangeNotifier {
         return true;
       }).toList();
       games = [...keep, ...mergedIncoming];
+      // Scheduled-queue payload can still carry contaminated bronze/final names
+      // (RR pair stuck on embed). Re-derive medal sides from SF/CF after merge.
+      _resolveEliminationPlaceholdersFromTournamentDetails();
       notifyListeners();
     } catch (_) {
       // Keep fallback behavior when endpoint is not available.
@@ -2629,10 +2844,22 @@ class AppState extends ChangeNotifier {
   }
 
   String _matchIdentityKey(TournamentMatch match) {
-    if (match.type == 'elimination' &&
-        match.categoryId.trim().isNotEmpty &&
-        match.id.trim().isNotEmpty) {
-      return 'elim:${match.categoryId.trim()}:${match.id.trim()}';
+    if (match.type == 'elimination' && match.categoryId.trim().isNotEmpty) {
+      // Prefer bracket alias (bronze/final/sf1). Assigned-matches uses a compound
+      // `id` like `${tid}-${cid}-bronze-g1` but sets `matchId`/`matchKey` to bronze.
+      String elimId = match.matchKey.trim();
+      if (elimId.isEmpty) elimId = match.id.trim();
+      elimId = elimId.replaceFirst(RegExp(r'-g[1-3]$', caseSensitive: false), '');
+      final alias = RegExp(
+        r'(bronze|brz|finals?|semi\d+|sf\d+|quarter\d+|qf\d+|cf\d+|r16-\d+|r32-\d+)$',
+        caseSensitive: false,
+      ).firstMatch(elimId);
+      if (alias != null) {
+        elimId = alias.group(1)!;
+      }
+      if (elimId.isNotEmpty) {
+        return 'elim:${match.categoryId.trim()}:${elimId.toLowerCase()}';
+      }
     }
     if (match.type == 'group' &&
         match.categoryId.trim().isNotEmpty &&
@@ -3242,20 +3469,57 @@ class AppState extends ChangeNotifier {
 
     final team1Name = sideDisplayName(g, team1: true);
     final team2Name = sideDisplayName(g, team1: false);
+    final gpm = gamesPerMatchFor(g).clamp(1, 3);
+    final division = (t.categoryDivisions[g.categoryId] ?? '').trim();
+    final categoryLabel = (t.categoryNames[g.categoryId] ?? '').trim();
+    final scoresPayload = <String, dynamic>{
+      'game1': {
+        'team1': gi == 1 ? (score1 ?? _currentGamePointScore(g, 1, true)) : (_scoreForGame(g, 1, true) ?? 0),
+        'team2': gi == 1 ? (score2 ?? _currentGamePointScore(g, 1, false)) : (_scoreForGame(g, 1, false) ?? 0),
+      },
+      'game2': {
+        'team1': gi == 2 ? (score1 ?? _currentGamePointScore(g, 2, true)) : (_scoreForGame(g, 2, true) ?? 0),
+        'team2': gi == 2 ? (score2 ?? _currentGamePointScore(g, 2, false)) : (_scoreForGame(g, 2, false) ?? 0),
+      },
+      'game3': {
+        'team1': gi == 3 ? (score1 ?? _currentGamePointScore(g, 3, true)) : (_scoreForGame(g, 3, true) ?? 0),
+        'team2': gi == 3 ? (score2 ?? _currentGamePointScore(g, 3, false)) : (_scoreForGame(g, 3, false) ?? 0),
+      },
+    };
+    // When starting a later game with freshStart but not wipe-all, keep prior
+    // completed games in the OBS payload so set columns stay visible.
+    if (freshStart && !resetScores && gi > 1) {
+      for (int i = 1; i < gi; i++) {
+        scoresPayload['game$i'] = {
+          'team1': _scoreForGame(g, i, true) ?? 0,
+          'team2': _scoreForGame(g, i, false) ?? 0,
+        };
+      }
+    }
 
     final payload = MatchUpdatePayload(
       court: slug,
       matchId: overlayMatchIdFor(g),
       tournament: t.name,
       tournamentId: t.id,
+      categoryId: g.categoryId.trim(),
+      category: categoryLabel,
+      division: division,
+      matchKey: g.matchKey.trim().isNotEmpty
+          ? g.matchKey.trim()
+          : (g.roundShort.trim().isNotEmpty ? g.roundShort.trim().toLowerCase() : ''),
+      stage: g.type == 'elimination' ? 'elimination' : (g.type == 'group' ? 'group' : ''),
+      gamesPerMatch: gpm,
+      currentGame: gi,
+      scores: scoresPayload,
       team1Name: team1Name,
       team1Score: score1 ?? _currentGamePointScore(g, gi, true),
-      team1Games: resetScores || freshStart
+      team1Games: resetScores
           ? const [false, false]
           : _gamesWonFlags(g, team1: true),
       team2Name: team2Name,
       team2Score: score2 ?? _currentGamePointScore(g, gi, false),
-      team2Games: resetScores || freshStart
+      team2Games: resetScores
           ? const [false, false]
           : _gamesWonFlags(g, team1: false),
       serving: servingSideFor(g),
@@ -3512,10 +3776,19 @@ class AppState extends ChangeNotifier {
     notifyListeners();
 
     final status = snapshot['status']?.toString().trim() ?? '';
-    if (action == ScoreEventAction.submit && status == 'Completed') {
+    // Clear OBS/Live for this court after EVERY finished game (not only the
+    // final match). Game 1 may be Court 1 and Game 2 Court 2 — submitting G1
+    // must blank Court 1 until G2 starts on its own court.
+    if (action == ScoreEventAction.submit) {
       final slug = courtSlug(selectedCourt ?? g.court);
       if (slug.isNotEmpty) {
         unawaited(matchUpdateQueue.clearCourt(slug));
+      }
+      if (kDebugMode) {
+        debugPrint(
+          '[overlay] clear court after game submit '
+          'game=$gameIndex status=$status slug=$slug',
+        );
       }
     }
 

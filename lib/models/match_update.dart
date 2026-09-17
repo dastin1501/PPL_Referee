@@ -12,6 +12,14 @@ class MatchUpdatePayload {
     required this.team2Games,
     required this.serving,
     this.tournamentId = '',
+    this.categoryId = '',
+    this.category = '',
+    this.division = '',
+    this.matchKey = '',
+    this.stage = '',
+    this.gamesPerMatch,
+    this.currentGame = 1,
+    this.scores,
     this.resetScores = false,
     this.freshStart = false,
   });
@@ -21,6 +29,14 @@ class MatchUpdatePayload {
   final String matchId;
   final String tournament;
   final String tournamentId;
+  final String categoryId;
+  final String category;
+  final String division;
+  final String matchKey;
+  final String stage;
+  final int? gamesPerMatch;
+  final int currentGame;
+  final Map<String, dynamic>? scores;
   final String team1Name;
   final int team1Score;
   final List<bool> team1Games;
@@ -41,6 +57,15 @@ class MatchUpdatePayload {
         'matchId': matchId,
         'tournament': tournament,
         if (tournamentId.isNotEmpty) 'tournamentId': tournamentId,
+        if (categoryId.isNotEmpty) 'categoryId': categoryId,
+        if (category.isNotEmpty) 'category': category,
+        if (division.isNotEmpty) 'division': division,
+        if (matchKey.isNotEmpty) 'matchKey': matchKey,
+        if (matchKey.isNotEmpty) 'bracketMatchId': matchKey,
+        if (stage.isNotEmpty) 'stage': stage,
+        if (gamesPerMatch != null) 'gamesPerMatch': gamesPerMatch,
+        'currentGame': currentGame,
+        if (scores != null) 'scores': scores,
         'team1': {
           'name': team1Name,
           'score': team1Score,
@@ -51,6 +76,10 @@ class MatchUpdatePayload {
           'score': team2Score,
           'games': team2Games,
         },
+        'playerA': team1Name,
+        'playerB': team2Name,
+        'scoreA': team1Score,
+        'scoreB': team2Score,
         'serving': serving,
         if (resetScores) 'resetScores': true,
         if (freshStart) 'freshStart': true,
@@ -73,11 +102,19 @@ class MatchUpdatePayload {
       matchId: (j['matchId'] ?? '').toString(),
       tournament: (j['tournament'] ?? '').toString(),
       tournamentId: (j['tournamentId'] ?? '').toString(),
-      team1Name: (t1['name'] ?? '').toString(),
-      team1Score: int.tryParse('${t1['score']}') ?? 0,
+      categoryId: (j['categoryId'] ?? '').toString(),
+      category: (j['category'] ?? '').toString(),
+      division: (j['division'] ?? '').toString(),
+      matchKey: (j['matchKey'] ?? j['bracketMatchId'] ?? '').toString(),
+      stage: (j['stage'] ?? '').toString(),
+      gamesPerMatch: int.tryParse('${j['gamesPerMatch'] ?? ''}'),
+      currentGame: int.tryParse('${j['currentGame'] ?? 1}') ?? 1,
+      scores: j['scores'] is Map ? Map<String, dynamic>.from(j['scores'] as Map) : null,
+      team1Name: (t1['name'] ?? j['playerA'] ?? '').toString(),
+      team1Score: int.tryParse('${t1['score'] ?? j['scoreA']}') ?? 0,
       team1Games: gamesOf(t1['games']),
-      team2Name: (t2['name'] ?? '').toString(),
-      team2Score: int.tryParse('${t2['score']}') ?? 0,
+      team2Name: (t2['name'] ?? j['playerB'] ?? '').toString(),
+      team2Score: int.tryParse('${t2['score'] ?? j['scoreB']}') ?? 0,
       team2Games: gamesOf(t2['games']),
       serving: (j['serving'] ?? 'team1').toString() == 'team2' ? 'team2' : 'team1',
       resetScores: j['resetScores'] == true,

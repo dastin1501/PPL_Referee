@@ -634,11 +634,15 @@ Widget _buildGamesList(
               .replaceAll(RegExp(r"mixed\s+doubles", caseSensitive: false), 'MxD');
           displayCategory = displayCategory.replaceAll(RegExp(r'\s{2,}'), ' ').trim();
         }
-        // Ongoing stays tappable so a mis-open (or resume) is never locked out.
-        // Only block cards that have no schedule assignment yet.
+        // Block unassigned cards and Ongoing matches so another referee cannot
+        // open a live scoring session already in progress.
+        final isOngoingLocked = showScheduled && statusKey == 'ongoing';
         final disabled =
-            showScheduled && (!hasSchedule && statusKey == 'scheduled');
-        final displayStatus = app.gameStatusLabel(g, n);
+            (showScheduled && (!hasSchedule && statusKey == 'scheduled')) ||
+            isOngoingLocked;
+        final displayStatus = isOngoingLocked
+            ? 'Ongoing · Locked'
+            : app.gameStatusLabel(g, n);
 
         final catText = category.toLowerCase();
         final isMixed = catText.contains('mixed');
@@ -702,7 +706,18 @@ Widget _buildGamesList(
             color: Colors.transparent,
             child: InkWell(
               onTap: disabled
-                  ? null
+                  ? (isOngoingLocked
+                      ? () {
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            const SnackBar(
+                              content: Text(
+                                'This match is already Ongoing and locked. Another referee is scoring it.',
+                              ),
+                              duration: Duration(seconds: 2),
+                            ),
+                          );
+                        }
+                      : null)
                   : () {
                       if (!showScheduled) {
                         _showCompletedSummaryDialog(context, g, n);
@@ -712,7 +727,7 @@ Widget _buildGamesList(
                     },
               borderRadius: BorderRadius.circular(18),
               child: Opacity(
-                opacity: disabled ? 0.5 : 1,
+                opacity: disabled ? 0.55 : 1,
                 child: Container(
                   decoration: BoxDecoration(
                     color: disabled ? const Color(0xFFF8FAFC) : Colors.white,

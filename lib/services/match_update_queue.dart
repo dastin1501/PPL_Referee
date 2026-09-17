@@ -229,8 +229,8 @@ class MatchUpdateQueue {
   }
 
   /// On reconnect: re-broadcast the latest overlay snapshot.
-  /// Keep fresh 0-0 Start Game frames (resetScores/freshStart) so OBS doesn't
-  /// go blank after a reconnect mid warm-up.
+  /// Strip Start-Game wipe flags — replaying freshStart/resetScores after a tab
+  /// blur makes Live/OBS flash 0|0 even when Game 1 was already 11-x.
   Future<void> requeueAllForReconnect() async {
     await load();
     var any = false;
@@ -239,10 +239,47 @@ class MatchUpdateQueue {
       final p = e.value.payload;
       final keepZero =
           p.resetScores || p.freshStart || (p.team1Score + p.team2Score > 0);
-      if (!keepZero) {
+      // Also keep progressive BO3 snapshots that only have prior-game points.
+      final scoresMap = p.scores;
+      var scoreSum = p.team1Score + p.team2Score;
+      if (scoresMap != null) {
+        for (final key in ['game1', 'game2', 'game3']) {
+          final g = scoresMap[key];
+          if (g is Map) {
+            scoreSum += int.tryParse('${g['team1'] ?? 0}') ?? 0;
+            scoreSum += int.tryParse('${g['team2'] ?? 0}') ?? 0;
+          }
+        }
+      }
+      if (!keepZero && scoreSum <= 0) {
         drop.add(e.key);
         continue;
       }
+      // Rebuild without Start-Game wipe flags so reconnect is a state sync.
+      final cleaned = MatchUpdatePayload(
+        court: p.court,
+        matchId: p.matchId,
+        tournament: p.tournament,
+        tournamentId: p.tournamentId,
+        categoryId: p.categoryId,
+        category: p.category,
+        division: p.division,
+        matchKey: p.matchKey,
+        stage: p.stage,
+        gamesPerMatch: p.gamesPerMatch,
+        currentGame: p.currentGame,
+        scores: p.scores,
+        team1Name: p.team1Name,
+        team1Score: p.team1Score,
+        team1Games: p.team1Games,
+        team2Name: p.team2Name,
+        team2Score: p.team2Score,
+        team2Games: p.team2Games,
+        serving: p.serving,
+        resetScores: false,
+        freshStart: false,
+      );
+      e.value.payload = cleaned;
       e.value.acked = false;
       e.value.nextRetryAt = null;
       e.value.lastError = null;
