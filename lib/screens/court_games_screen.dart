@@ -531,6 +531,7 @@ Widget _buildGamesList(
     // game2Status/game3Status were stamped "Scheduled" without a time.
     bool shouldShowGame(int n) {
       if (n < 1 || n > gpm) return false;
+      if (!app.gameIsOnSelectedCourt(g, n)) return false;
       if (app.hasScheduleForGame(g, n)) return true;
       final statusKey = app.gameStatusKey(g, n);
       return statusKey == 'ongoing' || statusKey == 'completed';

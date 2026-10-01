@@ -378,17 +378,30 @@ class ScoreEventQueue {
     final byMatch = <String, List<ScoreEvent>>{};
     for (final e in _events) {
       if (!e.isPending) continue;
-      if (_inFlightEventIds.contains(e.id)) continue;
       if (_isSupersededByCompletedSubmit(e)) continue;
-      final ready = e.nextRetryAt == null ||
-          !e.nextRetryAt!.isAfter(DateTime.now());
-      if (!ready) continue;
       byMatch.putIfAbsent(e.matchIdentity, () => []).add(e);
     }
+    final now = DateTime.now();
+    bool ready(ScoreEvent e) =>
+        e.nextRetryAt == null || !e.nextRetryAt!.isAfter(now);
     final out = <ScoreEvent>[];
     for (final list in byMatch.values) {
       list.sort((a, b) => a.seq.compareTo(b.seq));
-      out.add(list.first);
+      for (final e in list) {
+        if (_inFlightEventIds.contains(e.id)) {
+          // Nothing overtakes an in-flight submit.
+          if (e.action == ScoreEventAction.submit) break;
+          continue;
+        }
+        if (!ready(e)) {
+          // A submit waiting to retry blocks later events of this match, so a
+          // newer submit (e.g. the final one) cannot land before it.
+          if (e.action == ScoreEventAction.submit) break;
+          continue;
+        }
+        out.add(e);
+        break;
+      }
     }
     return out;
   }
@@ -444,7 +457,8 @@ class ScoreEventQueue {
         event.nextRetryAt = null;
       } else {
         // Score tap / start / serve: socket only. Never REST, never Complete.
-        _emitLiveScore(event);
+        // Only acked once the server confirms; retries are deduped by eventId.
+        await _emitLiveScore(event);
         event.acked = true;
         event.lastError = null;
         event.nextRetryAt = null;
@@ -486,6 +500,9 @@ class ScoreEventQueue {
 
   bool _isSupersededByCompletedSubmit(ScoreEvent event) {
     if (_isCompletedSubmit(event)) return false;
+    // A game submit carries that game's score + signature (team games: the only
+    // copy). It must always reach the server, never be skipped.
+    if (event.action == ScoreEventAction.submit) return false;
     // Any live/point/note after (or still pending before) Complete must not
     // emit zeros or keep OBS on.
     return _events.any(
@@ -500,6 +517,7 @@ class ScoreEventQueue {
               e.matchIdentity == submit.matchIdentity &&
               e.id != submit.id &&
               e.isPending &&
+              e.action != ScoreEventAction.submit &&
               e.seq < submit.seq,
         )
         .toList();
@@ -647,6 +665,14 @@ class ScoreEventQueue {
     final id = matchIdentity.trim();
     if (id.isEmpty) return;
     await load();
+    // An unacked event means the server never received it (offline / 429), so
+    // its Scheduled 0-0 row is stale — not a staff clear. Keep retrying.
+    if (hasPendingForMatch(id)) {
+      if (kDebugMode) {
+        debugPrint('[score-queue] keep $id: pending events not yet delivered');
+      }
+      return;
+    }
     final removed = <ScoreEvent>[];
     _events.removeWhere((e) {
       final drop = e.matchIdentity == id;
@@ -723,7 +749,28 @@ class ScoreEventQueue {
     });
   }
 
-  void _emitLiveScore(ScoreEvent event) {
+  static const _maxServerRejectRetries = 5;
+
+  /// Waits for the server's live:ack. Throws on timeout (retried with backoff)
+  /// and on transient server errors until [_maxServerRejectRetries].
+  Future<void> _emitLiveAwaitAck(
+    ScoreEvent event,
+    String socketEvent,
+    Map<String, dynamic> payload,
+  ) async {
+    final res = await _socket.emitLiveAndAwaitAck(socketEvent, payload);
+    if (res['ok'] == false) {
+      final err = res['error']?.toString() ?? 'LIVE_REJECTED';
+      if (event.attempts < _maxServerRejectRetries) {
+        throw StateError('server rejected ${event.id}: $err');
+      }
+      if (kDebugMode) {
+        debugPrint('[score-queue] giving up on ${event.id} after server error: $err');
+      }
+    }
+  }
+
+  Future<void> _emitLiveScore(ScoreEvent event) async {
     if (_isSupersededByCompletedSubmit(event)) return;
     // On resume flush, never replay a Start Game 0|0 when later points exist —
     // emit the latest snapshot instead so Live/OBS keep 11|x.
@@ -745,7 +792,7 @@ class ScoreEventQueue {
         payload.remove('resetScores');
         payload['freshStart'] = false;
         payload['resetScores'] = false;
-        _socket.emitLiveScoreSet(payload);
+        await _emitLiveAwaitAck(event, 'live:score-set', payload);
       }
       return;
     }
@@ -767,6 +814,15 @@ class ScoreEventQueue {
           'status': 'Ongoing',
         };
         final snap = _fullSnapshot(event);
+        // Absolute score after this tap — server sets it instead of +delta so
+        // a dropped or duplicated write cannot drift OBS / Live Scores.
+        final gi = event.gameIndex.clamp(1, 3);
+        final abs1 = _asInt(snap['game${gi}Player1']);
+        final abs2 = _asInt(snap['game${gi}Player2']);
+        if (abs1 != null && abs2 != null && abs1 >= 0 && abs2 >= 0) {
+          point['game${gi}Player1'] = abs1;
+          point['game${gi}Player2'] = abs2;
+        }
         if (snap['serving'] != null) point['serving'] = snap['serving'];
         if (snap['servingPlayer'] != null) {
           point['servingPlayer'] = snap['servingPlayer'];
@@ -783,14 +839,15 @@ class ScoreEventQueue {
           point['player2Name'] = p2;
           point['playerB'] = p2;
         }
+        _attachTeamLineup(point, snap);
         _attachMatchIdentity(point, event);
         _prepareLiveTickPayload(point);
-        _socket.emitLivePoint(point);
+        await _emitLiveAwaitAck(event, 'live:point', point);
         return;
       }
     }
     final payload = _buildLiveScoreSetPayload(event);
-    _socket.emitLiveScoreSet(payload);
+    await _emitLiveAwaitAck(event, 'live:score-set', payload);
   }
 
   Map<String, dynamic> _buildLiveScoreSetPayload(ScoreEvent event) {
@@ -891,6 +948,7 @@ class ScoreEventQueue {
       payload['player2Name'] = liveP2;
       payload['playerB'] = liveP2;
     }
+    _attachTeamLineup(payload, snap);
     _attachMatchIdentity(payload, event);
     _prepareLiveTickPayload(payload);
     return payload;
@@ -933,9 +991,20 @@ class ScoreEventQueue {
     }
     payload['game${gameIndex}Player1'] = s1;
     payload['game${gameIndex}Player2'] = s2;
+    _attachTeamLineup(payload, snap);
     _attachMatchIdentity(payload, event);
     _stripScheduleFields(payload);
     return payload;
+  }
+
+  /// Team categories: players who played each game (from the line-up screen).
+  void _attachTeamLineup(Map<String, dynamic> payload, Map<String, dynamic> snap) {
+    final key = RegExp(r'^game[123]Team[12]Player2?$');
+    snap.forEach((k, v) {
+      if (!key.hasMatch(k)) return;
+      final s = v?.toString().trim() ?? '';
+      if (s.isNotEmpty) payload[k] = s;
+    });
   }
 
   void _prepareLiveTickPayload(Map<String, dynamic> payload) {
@@ -1031,6 +1100,7 @@ class ScoreEventQueue {
     }
     payload['game${gameIndex}Player1'] = s1;
     payload['game${gameIndex}Player2'] = s2;
+    _attachTeamLineup(payload, snap);
     _attachMatchIdentity(payload, event);
     _stripScheduleFields(payload);
     return payload;

@@ -117,6 +117,10 @@ class TournamentMatch {
   final String? mdEnd2;
   final String? mdTime3;
   final String? mdEnd3;
+  // Per-game courts when games of one match are scheduled on different courts
+  // (team categories run Game 1 and Game 2 simultaneously).
+  final String? gameCourt2;
+  final String? gameCourt3;
   final String status;
   final String categoryId;
   final String matchKey;
@@ -172,6 +176,8 @@ class TournamentMatch {
     this.mdEnd2,
     this.mdTime3,
     this.mdEnd3,
+    this.gameCourt2,
+    this.gameCourt3,
     this.status = '',
     this.categoryId = '',
     this.matchKey = '',
@@ -527,6 +533,12 @@ class TournamentMatch {
       mdEnd2: j['mdEnd2']?.toString(),
       mdTime3: j['mdTime3']?.toString(),
       mdEnd3: j['mdEnd3']?.toString(),
+      gameCourt2: (j['_gameCourt2']?.toString().trim().isNotEmpty ?? false)
+          ? normalizeCourt(j['_gameCourt2'].toString().trim())
+          : null,
+      gameCourt3: (j['_gameCourt3']?.toString().trim().isNotEmpty ?? false)
+          ? normalizeCourt(j['_gameCourt3'].toString().trim())
+          : null,
       status: resolvedStatus,
       categoryId: (j['categoryId']?.toString().trim().isNotEmpty ?? false)
           ? j['categoryId']?.toString() ?? ''
@@ -902,12 +914,15 @@ class Tournament {
       existing['venue'] = (existing['venue']?.toString().isNotEmpty ?? false) ? existing['venue'] : (venue ?? '');
       if (gameIndex <= 1) {
         existing['time'] = time;
+        if (court.isNotEmpty) existing['court'] = court;
       } else if (gameIndex == 2) {
         existing['mdTime2'] = time;
         existing['mdEnd2'] = endTime ?? '';
+        existing['gameCourt2'] = court;
       } else if (gameIndex == 3) {
         existing['mdTime3'] = time;
         existing['mdEnd3'] = endTime ?? '';
+        existing['gameCourt3'] = court;
       }
       scheduleMap[baseId] = existing;
     }
@@ -1394,6 +1409,8 @@ class Tournament {
       m['mdEnd2'] = '';
       m['mdTime3'] = '';
       m['mdEnd3'] = '';
+      m['_gameCourt2'] = '';
+      m['_gameCourt3'] = '';
       m['_scheduleFromAssignments'] = false;
       final status = m['status']?.toString().trim().toLowerCase();
       if (status == 'scheduled' || status == 'called' || status == 'unschedule' || status == 'unscheduled') {
@@ -1410,6 +1427,8 @@ class Tournament {
       m['mdEnd2'] = info['mdEnd2'] ?? m['mdEnd2'];
       m['mdTime3'] = info['mdTime3'] ?? m['mdTime3'];
       m['mdEnd3'] = info['mdEnd3'] ?? m['mdEnd3'];
+      m['_gameCourt2'] = info['gameCourt2'] ?? '';
+      m['_gameCourt3'] = info['gameCourt3'] ?? '';
       m['_scheduleFromAssignments'] = true;
       final currentStatus = m['status']?.toString().trim().toLowerCase() ?? '';
       if ((m['time']?.toString().trim().isNotEmpty ?? false) &&

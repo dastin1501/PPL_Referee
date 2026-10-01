@@ -20,6 +20,7 @@ class MatchUpdateQueue {
   }) : _socket = socket;
 
   static const _storageKey = 'referee_match_update_queue_v1';
+  static const _replayWindow = Duration(minutes: 2);
 
   final SocketService _socket;
   final MatchUpdateQueueListener? onChanged;
@@ -96,6 +97,7 @@ class MatchUpdateQueue {
       createdAt: existing?.isPending == true
           ? existing!.createdAt
           : DateTime.now(),
+      updatedAt: DateTime.now(),
       acked: false,
       attempts: 0,
       nextRetryAt: null,
@@ -236,6 +238,12 @@ class MatchUpdateQueue {
     var any = false;
     final drop = <String>[];
     for (final e in _byCourt.entries) {
+      // A snapshot nobody has touched in a while belongs to a match that was
+      // submitted or cleared elsewhere; replaying it resurrects it on OBS/Live.
+      if (DateTime.now().difference(e.value.updatedAt) > _replayWindow) {
+        drop.add(e.key);
+        continue;
+      }
       final p = e.value.payload;
       final keepZero =
           p.resetScores || p.freshStart || (p.team1Score + p.team2Score > 0);
@@ -305,6 +313,7 @@ class _PendingMatchUpdate {
   _PendingMatchUpdate({
     required this.payload,
     required this.createdAt,
+    required this.updatedAt,
     this.acked = false,
     this.attempts = 0,
     this.nextRetryAt,
@@ -313,6 +322,7 @@ class _PendingMatchUpdate {
 
   MatchUpdatePayload payload;
   DateTime createdAt;
+  DateTime updatedAt;
   bool acked;
   int attempts;
   DateTime? nextRetryAt;
@@ -327,6 +337,7 @@ class _PendingMatchUpdate {
   Map<String, dynamic> toJson() => {
         'payload': payload.toJson(),
         'createdAt': createdAt.toIso8601String(),
+        'updatedAt': updatedAt.toIso8601String(),
         'acked': acked,
         'attempts': attempts,
         'nextRetryAt': nextRetryAt?.toIso8601String(),
@@ -343,6 +354,9 @@ class _PendingMatchUpdate {
       ),
       createdAt: DateTime.tryParse((j['createdAt'] ?? '').toString()) ??
           DateTime.now(),
+      // Snapshots saved before this field existed are treated as old.
+      updatedAt: DateTime.tryParse((j['updatedAt'] ?? '').toString()) ??
+          DateTime.fromMillisecondsSinceEpoch(0),
       acked: j['acked'] == true,
       attempts: int.tryParse('${j['attempts']}') ?? 0,
       nextRetryAt: j['nextRetryAt'] != null

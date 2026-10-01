@@ -420,7 +420,7 @@ class AppState extends ChangeNotifier {
     final targetCourt = _normalizeCourt(selectedCourt);
     final dates = <String>{};
     for (final g in games) {
-      if (_normalizeCourt(g.court) != targetCourt) continue;
+      if (!_matchUsesCourt(g, targetCourt)) continue;
       final d = _normalizeDate(g.date);
       if (d != null) dates.add(d);
     }
@@ -450,7 +450,7 @@ class AppState extends ChangeNotifier {
     }
 
     final filtered = games.where((g) {
-      if (_normalizeCourt(g.court) != targetCourt) return false;
+      if (!_matchUsesCourt(g, targetCourt)) return false;
       final gameDate = _normalizeDate(g.date);
       if (gameDate == null || gameDate != targetDate) return false;
       if (selectedTournament?.hasAuthoritativeSchedule == true &&
@@ -568,6 +568,27 @@ class AppState extends ChangeNotifier {
       }
     }
     return out;
+  }
+
+  String courtForGame(TournamentMatch match, int gameNo) {
+    final perGame = gameNo == 2
+        ? match.gameCourt2
+        : (gameNo == 3 ? match.gameCourt3 : null);
+    final c = (perGame ?? '').trim();
+    return c.isNotEmpty ? c : match.court;
+  }
+
+  bool gameIsOnSelectedCourt(TournamentMatch match, int gameNo) {
+    if (selectedCourt == null) return true;
+    return _normalizeCourt(courtForGame(match, gameNo)) ==
+        _normalizeCourt(selectedCourt);
+  }
+
+  bool _matchUsesCourt(TournamentMatch match, String? targetCourt) {
+    for (int n = 1; n <= 3; n++) {
+      if (_normalizeCourt(courtForGame(match, n)) == targetCourt) return true;
+    }
+    return false;
   }
 
   bool hasScheduleForGame(TournamentMatch match, int gameNo) {
@@ -792,7 +813,34 @@ class AppState extends ChangeNotifier {
   }
 
   int selectedGameNumber = 1;
+  /// Team line-up chosen on the confirmation screen, keyed by match identity +
+  /// game. Survives refreshes that replace the match with the server copy.
+  final Map<String, Map<String, String>> _teamLineupByGame = {};
+
+  String _teamLineupKey(TournamentMatch g, int gameNo) =>
+      '${_matchIdentityKey(g)}#g${gameNo.clamp(1, 3)}';
+
+  void _rememberTeamLineup(TournamentMatch g, int gameNo) {
+    final n = gameNo.clamp(1, 3);
+    final values = <String, String>{
+      'game${n}Team1Player': n == 1
+          ? g.game1Team1Player
+          : (n == 2 ? g.game2Team1Player : g.game3Team1Player),
+      'game${n}Team1Player2': n == 1
+          ? g.game1Team1Player2
+          : (n == 2 ? g.game2Team1Player2 : g.game3Team1Player2),
+      'game${n}Team2Player': n == 1
+          ? g.game1Team2Player
+          : (n == 2 ? g.game2Team2Player : g.game3Team2Player),
+      'game${n}Team2Player2': n == 1
+          ? g.game1Team2Player2
+          : (n == 2 ? g.game2Team2Player2 : g.game3Team2Player2),
+    }..removeWhere((_, v) => v.trim().isEmpty);
+    if (values.isNotEmpty) _teamLineupByGame[_teamLineupKey(g, n)] = values;
+  }
+
   void openGameWithNumber(TournamentMatch g, int gameNo) {
+    _rememberTeamLineup(g, gameNo);
     selectedGame = g;
     selectedGameNumber = gameNo;
     joinLiveMatchForGame(g);
@@ -871,7 +919,7 @@ class AppState extends ChangeNotifier {
               !(keepLive &&
                   !_isWeakPlayerLabel(prev.player1) &&
                   !_isWeakPlayerLabel(prev.player2))) {
-            selectedGame = incoming;
+            selectedGame = _keepTeamLineupSides(prev, incoming);
           }
         }
       }
@@ -994,6 +1042,8 @@ class AppState extends ChangeNotifier {
         mdEnd2: existing.mdEnd2,
         mdTime3: existing.mdTime3,
         mdEnd3: existing.mdEnd3,
+        gameCourt2: existing.gameCourt2,
+        gameCourt3: existing.gameCourt3,
         status: existing.status,
         categoryId: existing.categoryId,
         matchKey: existing.matchKey,
@@ -1518,6 +1568,8 @@ class AppState extends ChangeNotifier {
           mdEnd2: m.mdEnd2,
           mdTime3: m.mdTime3,
           mdEnd3: m.mdEnd3,
+          gameCourt2: m.gameCourt2,
+          gameCourt3: m.gameCourt3,
           status: m.status,
           categoryId: m.categoryId,
           matchKey: m.matchKey,
@@ -1707,6 +1759,8 @@ class AppState extends ChangeNotifier {
           mdEnd2: m.mdEnd2,
           mdTime3: m.mdTime3,
           mdEnd3: m.mdEnd3,
+          gameCourt2: m.gameCourt2,
+          gameCourt3: m.gameCourt3,
           status: m.status,
           categoryId: m.categoryId,
           matchKey: m.matchKey,
@@ -1934,13 +1988,18 @@ class AppState extends ChangeNotifier {
     return false;
   }
 
-  TournamentMatch _mergeMatchWithFields(TournamentMatch g, Map<String, dynamic> payload) {
+  TournamentMatch _mergeMatchWithFields(
+    TournamentMatch g,
+    Map<String, dynamic> payload, {
+    String? player1,
+    String? player2,
+  }) {
     return TournamentMatch(
       id: g.id,
       documentId: g.documentId,
       scheduleFromAssignments: g.scheduleFromAssignments,
-      player1: g.player1,
-      player2: g.player2,
+      player1: player1 ?? g.player1,
+      player2: player2 ?? g.player2,
       player1Name: g.player1Name,
       player2Name: g.player2Name,
       score1: _fieldAsInt(payload, 'score1', g.score1) ?? g.score1,
@@ -1965,6 +2024,8 @@ class AppState extends ChangeNotifier {
       mdEnd2: g.mdEnd2,
       mdTime3: g.mdTime3,
       mdEnd3: g.mdEnd3,
+      gameCourt2: g.gameCourt2,
+      gameCourt3: g.gameCourt3,
       status: payload['status']?.toString() ?? g.status,
       categoryId: g.categoryId,
       matchKey: g.matchKey,
@@ -2063,6 +2124,13 @@ class AppState extends ChangeNotifier {
       final incomingHasSchedule = m.court.trim().isNotEmpty &&
           m.time.trim().isNotEmpty &&
           m.date.trim().isNotEmpty;
+      if ((incomingStatus == 'scheduled' || incomingStatus == 'unschedule') &&
+          incomingPoints <= 0 &&
+          matchIdentity.isNotEmpty &&
+          scoreQueue.hasPendingForMatch(matchIdentity)) {
+        // Local events (e.g. Finish & Submit) not delivered yet — server row is stale.
+        return existing;
+      }
       if (incomingStatus == 'scheduled' || incomingStatus == 'unschedule') {
         // Staff re-scheduled this match — take the fresh court/date/time.
         if (incomingStatus == 'scheduled' &&
@@ -2141,14 +2209,14 @@ class AppState extends ChangeNotifier {
           m.categoryId == original.categoryId &&
           m.groupId == original.groupId &&
           m.matchKey == original.matchKey) {
-        return updated;
+        return _keepListTeamNames(m, updated);
       }
       if (original.documentId.isNotEmpty && m.documentId == original.documentId) {
-        return updated;
+        return _keepListTeamNames(m, updated);
       }
       return m;
     }).toList();
-    selectedGame = updated;
+    selectedGame = selectedGame == null ? updated : _keepTeamLineupSides(selectedGame!, updated);
   }
 
   Future<void> _submitSelectedMatchPayload({
@@ -2280,9 +2348,11 @@ class AppState extends ChangeNotifier {
         'game${n}Team2Player',
         'game${n}Team2Player2',
       ];
+      final lineup = _teamLineupByGame[_teamLineupKey(activeMatch, n)] ??
+          const <String, String>{};
       final teamFields = <String, dynamic>{};
       for (final k in teamKeys) {
-        final val = vFor(k);
+        final val = (lineup[k] ?? '').trim().isNotEmpty ? lineup[k]! : vFor(k);
         if (val.trim().isNotEmpty) {
           teamFields[k] = val.trim();
         }
@@ -2711,6 +2781,8 @@ class AppState extends ChangeNotifier {
             mdEnd2: m.mdEnd2,
             mdTime3: m.mdTime3,
             mdEnd3: m.mdEnd3,
+            gameCourt2: m.gameCourt2,
+            gameCourt3: m.gameCourt3,
             status: m.status,
             categoryId: m.categoryId,
             matchKey: m.matchKey,
@@ -2767,6 +2839,8 @@ class AppState extends ChangeNotifier {
           mdEnd2: m.mdEnd2,
           mdTime3: m.mdTime3,
           mdEnd3: m.mdEnd3,
+          gameCourt2: m.gameCourt2,
+          gameCourt3: m.gameCourt3,
           status: m.status,
           categoryId: m.categoryId,
           matchKey: m.matchKey,
@@ -2829,11 +2903,48 @@ class AppState extends ChangeNotifier {
 
   void _replaceMatchByIdentity(String matchIdentity, TournamentMatch updated) {
     games = games.map((m) {
-      return _matchIdentityKey(m) == matchIdentity ? updated : m;
+      return _matchIdentityKey(m) == matchIdentity ? _keepListTeamNames(m, updated) : m;
     }).toList();
     if (selectedGame != null && _matchIdentityKey(selectedGame!) == matchIdentity) {
-      selectedGame = updated;
+      selectedGame = _keepTeamLineupSides(selectedGame!, updated);
     }
+  }
+
+  bool _hasTeamLineup(TournamentMatch m) =>
+      [1, 2, 3].any((n) => _teamLineupByGame.containsKey(_teamLineupKey(m, n)));
+
+  /// The match list keeps the team names ("Team 1"/"Team 3"). Writing one game's
+  /// "A / B" line-up into it sticks across refreshes ("Team 1" counts as weak) and
+  /// shows that game's players on the next game until the app is reloaded.
+  TournamentMatch _keepListTeamNames(TournamentMatch existing, TournamentMatch next) {
+    final keep = _hasTeamLineup(existing) &&
+        (next.player1.contains('/') || next.player2.contains('/')) &&
+        !existing.player1.contains('/') &&
+        !existing.player2.contains('/');
+    if (!keep) return next;
+    return _mergeMatchWithFields(
+      next,
+      const <String, dynamic>{},
+      player1: existing.player1,
+      player2: existing.player2,
+    );
+  }
+
+  /// Team games: `games` / server copies only carry "Team 1"/"Team 3"; the
+  /// confirmed "A / B" line-up lives on [selectedGame] and drives the doubles board.
+  TournamentMatch _keepTeamLineupSides(TournamentMatch prev, TournamentMatch next) {
+    final keep =
+        _teamLineupByGame.containsKey(_teamLineupKey(prev, selectedGameNumber)) &&
+            prev.player1.contains('/') &&
+            prev.player2.contains('/') &&
+            (!next.player1.contains('/') || !next.player2.contains('/'));
+    if (!keep) return next;
+    return _mergeMatchWithFields(
+      next,
+      const <String, dynamic>{},
+      player1: prev.player1,
+      player2: prev.player2,
+    );
   }
 
   String _matchGameIdentityKey(TournamentMatch match, int gameIndex) {
@@ -3792,6 +3903,14 @@ class AppState extends ChangeNotifier {
       }
     }
 
+    if (!_teamLineupByGame.containsKey(_teamLineupKey(g, gameIndex))) {
+      _rememberTeamLineup(g, gameIndex);
+    }
+    final lineup = _teamLineupByGame[_teamLineupKey(g, gameIndex)];
+    final queuedSnapshot = lineup == null || lineup.isEmpty
+        ? snapshot
+        : <String, dynamic>{...snapshot, ...lineup};
+
     await scoreQueue.enqueue(
       matchIdentity: matchIdentity,
       gameIdentity: gameIdentity,
@@ -3805,7 +3924,7 @@ class AppState extends ChangeNotifier {
       action: action,
       gameIndex: gameIndex.clamp(1, 3),
       side: side,
-      snapshot: snapshot,
+      snapshot: queuedSnapshot,
     );
   }
 
@@ -3855,6 +3974,8 @@ class AppState extends ChangeNotifier {
       mdEnd2: m.mdEnd2,
       mdTime3: m.mdTime3,
       mdEnd3: m.mdEnd3,
+      gameCourt2: m.gameCourt2,
+      gameCourt3: m.gameCourt3,
       status: m.status,
       categoryId: m.categoryId,
       matchKey: m.matchKey,
@@ -3907,6 +4028,12 @@ class AppState extends ChangeNotifier {
           m.date.trim().isNotEmpty;
       final incomingStatus = normalizeGameStatusKey(m.status);
 
+      // Undelivered local events (e.g. submit rejected with 429): the server
+      // row is stale, keep the local result until the queue lands.
+      if (mid.isNotEmpty && scoreQueue.hasPendingForMatch(mid)) {
+        return local ?? m;
+      }
+
       // Website re-scheduled Round Robin (Scheduled + court/date/time): always
       // take the server row unless this match is open/live in Ref Panel.
       if (incomingStatus == 'scheduled' && incomingHasSchedule) {
@@ -3952,7 +4079,7 @@ class AppState extends ChangeNotifier {
 
       // Website unlock/clear is authoritative — drop local Completed snapshots.
       // But not while this match is the active live Ref Panel / has points.
-      if (_serverMatchLooksCleared(existing)) {
+      if (_serverMatchLooksCleared(existing) && !scoreQueue.hasPendingForMatch(mid)) {
         final isActiveRef =
             selectedGame != null && _matchIdentityKey(selectedGame!) == mid;
         final localStatus = normalizeGameStatusKey(existing.status);

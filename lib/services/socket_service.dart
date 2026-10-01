@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/foundation.dart';
 import 'package:socket_io_client/socket_io_client.dart' as io;
 
@@ -152,6 +154,43 @@ class SocketService {
       throw StateError('socket not connected');
     }
     s.emit('live:point', payload);
+  }
+
+  /// Emit a live score event and wait for the server's `live:ack` with the
+  /// same eventId. A lagging socket can report connected yet drop the packet,
+  /// so callers must not treat a bare emit as delivered.
+  Future<Map<String, dynamic>> emitLiveAndAwaitAck(
+    String event,
+    Map<String, dynamic> payload, {
+    Duration timeout = const Duration(seconds: 8),
+  }) async {
+    final s = _socket;
+    if (s == null || !s.connected) {
+      throw StateError('socket not connected');
+    }
+    final eventId = payload['eventId']?.toString().trim() ?? '';
+    if (eventId.isEmpty) {
+      s.emit(event, payload);
+      return const {'ok': true};
+    }
+    final completer = Completer<Map<String, dynamic>>();
+    final void Function(dynamic) handler = (dynamic data) {
+      if (data is! Map) return;
+      if (data['eventId']?.toString().trim() != eventId) return;
+      if (!completer.isCompleted) {
+        completer.complete(Map<String, dynamic>.from(data));
+      }
+    };
+    s.on('live:ack', handler);
+    try {
+      s.emit(event, payload);
+      return await completer.future.timeout(
+        timeout,
+        onTimeout: () => throw TimeoutException('no live:ack for $eventId', timeout),
+      );
+    } finally {
+      s.off('live:ack', handler);
+    }
   }
 
   /// Match Complete only. Never emit on score taps.

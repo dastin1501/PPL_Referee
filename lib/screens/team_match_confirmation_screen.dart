@@ -276,6 +276,8 @@ class _TeamMatchConfirmationScreenState extends State<TeamMatchConfirmationScree
       mdEnd2: widget.match.mdEnd2,
       mdTime3: widget.match.mdTime3,
       mdEnd3: widget.match.mdEnd3,
+      gameCourt2: widget.match.gameCourt2,
+      gameCourt3: widget.match.gameCourt3,
       status: widget.match.status,
       categoryId: widget.match.categoryId,
       matchKey: widget.match.matchKey,
