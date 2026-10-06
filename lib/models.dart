@@ -826,6 +826,8 @@ class Tournament {
   final Map<String, List<TeamRegistration>> categoryTeamRegistrations;
   final Map<String, List<String>> teamRosterBySlot;
   final Map<String, List<TeamMemberInfo>> teamRosterMembersBySlot;
+  /// Keyed by `categoryId|normalizedSlot` so same-named teams in other categories don't merge.
+  final Map<String, List<TeamMemberInfo>> teamRosterMembersByCategorySlot;
   final Map<String, List<String>> teamRosterSourceCategories;
 
   Tournament({
@@ -844,8 +846,38 @@ class Tournament {
     this.categoryTeamRegistrations = const {},
     this.teamRosterBySlot = const {},
     this.teamRosterMembersBySlot = const {},
+    this.teamRosterMembersByCategorySlot = const {},
     this.teamRosterSourceCategories = const {},
   });
+
+  bool get hasTeamRosters =>
+      teamRosterMembersBySlot.isNotEmpty || teamRosterMembersByCategorySlot.isNotEmpty;
+
+  /// Keeps roster data from [previous] when this copy was fetched without registrations.
+  Tournament withRostersFrom(Tournament? previous) {
+    if (previous == null || previous.id != id || hasTeamRosters || !previous.hasTeamRosters) {
+      return this;
+    }
+    return Tournament(
+      id: id,
+      name: name,
+      referees: referees,
+      matches: matches,
+      courts: courts,
+      categoryNames: categoryNames,
+      categoryGamesPerMatch: categoryGamesPerMatch,
+      categoryEliminationGpm: categoryEliminationGpm,
+      categoryScoringTypes: categoryScoringTypes,
+      categoryDivisions: categoryDivisions,
+      hasAuthoritativeSchedule: hasAuthoritativeSchedule,
+      preferredScheduleDate: preferredScheduleDate,
+      categoryTeamRegistrations: previous.categoryTeamRegistrations,
+      teamRosterBySlot: previous.teamRosterBySlot,
+      teamRosterMembersBySlot: previous.teamRosterMembersBySlot,
+      teamRosterMembersByCategorySlot: previous.teamRosterMembersByCategorySlot,
+      teamRosterSourceCategories: previous.teamRosterSourceCategories,
+    );
+  }
 
   factory Tournament.fromJson(Map<String, dynamic> j) {
     final matches = <TournamentMatch>[];
@@ -859,6 +891,7 @@ class Tournament {
     final categoryTeamRegistrations = <String, List<TeamRegistration>>{};
     final teamRosterBySlot = <String, List<String>>{};
     final teamRosterMembersBySlot = <String, List<TeamMemberInfo>>{};
+    final teamRosterMembersByCategorySlot = <String, List<TeamMemberInfo>>{};
     final teamRosterSourceCategories = <String, List<String>>{};
     final hasRootCourtAssignments = j['courtAssignments'] is Map<String, dynamic>;
     final hasCourtAssignmentsByDate = j['courtAssignmentsByDate'] is Map<String, dynamic>;
@@ -1385,6 +1418,15 @@ class Tournament {
               for (final member in rosterMembers) {
                 addOrMergeTeamMember(memberBucket, member);
               }
+              if (regCategory.isNotEmpty) {
+                final scopedBucket = teamRosterMembersByCategorySlot.putIfAbsent(
+                  '$regCategory|$normalizedKey',
+                  () => [],
+                );
+                for (final member in rosterMembers) {
+                  addOrMergeTeamMember(scopedBucket, member);
+                }
+              }
               final sourceCategories = teamRosterSourceCategories.putIfAbsent(
                 normalizedKey,
                 () => [],
@@ -1741,6 +1783,7 @@ class Tournament {
       categoryTeamRegistrations: categoryTeamRegistrations,
       teamRosterBySlot: teamRosterBySlot,
       teamRosterMembersBySlot: teamRosterMembersBySlot,
+      teamRosterMembersByCategorySlot: teamRosterMembersByCategorySlot,
       teamRosterSourceCategories: teamRosterSourceCategories,
     );
   }

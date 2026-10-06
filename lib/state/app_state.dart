@@ -866,11 +866,17 @@ class AppState extends ChangeNotifier {
     // look like it worked (spinner) while keeping the old court queue.
     _scheduledQueueEtag = null;
     try {
-      final fullTournament = await _api.getTournamentDetails(
+      final fetched = await _api.getTournamentDetails(
         t.id,
         includeRegistrations: false,
       );
+      final fullTournament = fetched.withRostersFrom(selectedTournament ?? t);
       selectedTournament = fullTournament;
+      final hasTeamCategory = fullTournament.categoryDivisions.values
+          .any((d) => d.toLowerCase().contains('team'));
+      if (hasTeamCategory && !fullTournament.hasTeamRosters) {
+        unawaited(_enrichTournamentRegistrations(t.id));
+      }
       courts = fullTournament.courts;
       games = _mergeRefreshedMatchesWithLocalState(
         _normalizeServerClearedMatches(fullTournament.matches),

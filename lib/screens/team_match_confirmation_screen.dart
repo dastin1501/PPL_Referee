@@ -152,12 +152,26 @@ class _TeamMatchConfirmationScreenState extends State<TeamMatchConfirmationScree
   ) {
     final rosterMap =
         tournament?.teamRosterMembersBySlot ?? const <String, List<TeamMemberInfo>>{};
+    final scopedRosterMap =
+        tournament?.teamRosterMembersByCategorySlot ?? const <String, List<TeamMemberInfo>>{};
     final rosterSources = tournament?.teamRosterSourceCategories ?? const <String, List<String>>{};
     final fallbackKeys = _buildFallbackKeys(slotLabel);
+    final matchCategoryId = widget.match.categoryId.trim();
+
+    List<TeamMemberInfo> lookup(String normalizedKey) {
+      if (matchCategoryId.isNotEmpty) {
+        final scoped = scopedRosterMap['$matchCategoryId|$normalizedKey'];
+        if (scoped != null && scoped.isNotEmpty) return scoped;
+        final hasCategoryRoster =
+            scopedRosterMap.keys.any((k) => k.startsWith('$matchCategoryId|'));
+        if (hasCategoryRoster) return const <TeamMemberInfo>[];
+      }
+      return rosterMap[normalizedKey] ?? const <TeamMemberInfo>[];
+    }
 
     for (final key in fallbackKeys) {
       final normalizedKey = _normalizeTeamKey(key);
-      final options = rosterMap[normalizedKey] ?? const <TeamMemberInfo>[];
+      final options = lookup(normalizedKey);
       if (options.isNotEmpty) {
         final merged = List<TeamMemberInfo>.from(options);
         for (final value in savedValues) {
