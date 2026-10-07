@@ -1535,49 +1535,7 @@ class _RefereeDashboardScreenState extends State<RefereeDashboardScreen> {
                                               onPressed: _endsSwitched ? _awardRallyPointRight : _awardRallyPointLeft,
                                             ),
                                           ),
-                                          Expanded(
-                                            child: Center(
-                                              child: SizedBox(
-                                                width: 160,
-                                                height: 56,
-                                                child: _Pressable3D(
-                                                  onPressed: _sideOut,
-                                                  borderRadius: 24,
-                                                  backgroundColor: const Color(0xFF1F2937),
-                                                  borderColor: Colors.white.withValues(alpha: 0.14),
-                                                  shadowColor: Colors.black.withValues(alpha: 0.55),
-                                                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-                                                  child: Builder(builder: (_) {
-                                                    var label = 'SIDE OUT';
-                                                    final leftTeam = _splitTeam(g.player1);
-                                                    final rightTeam = _splitTeam(g.player2);
-                                                    final isDoubles =
-                                                        leftTeam.length > 1 || rightTeam.length > 1;
-                                                    if (isDoubles && _servingPlayer != null) {
-                                                      if (leftTeam.contains(_servingPlayer)) {
-                                                        label = _leftServeStage <= 1
-                                                            ? 'SECOND SERVER'
-                                                            : 'SIDE OUT';
-                                                      } else if (rightTeam.contains(_servingPlayer)) {
-                                                        label = _rightServeStage <= 1
-                                                            ? 'SECOND SERVER'
-                                                            : 'SIDE OUT';
-                                                      }
-                                                    }
-                                                    return Text(
-                                                      label,
-                                                      textAlign: TextAlign.center,
-                                                      style: const TextStyle(
-                                                        fontSize: 13,
-                                                        fontWeight: FontWeight.w700,
-                                                        letterSpacing: 0.3,
-                                                      ),
-                                                    );
-                                                  }),
-                                                ),
-                                              ),
-                                            ),
-                                          ),
+                                          const Spacer(),
                                           SizedBox(
                                             width: buttonW,
                                             child: _buildRallyPointButton(
