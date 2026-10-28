@@ -17,6 +17,8 @@ class AppState extends ChangeNotifier {
   static const _storageTokenKey = 'referee_auth_token';
   static const _storageUserKey = 'referee_auth_user';
   static const _storageApiBaseUrlKey = 'referee_api_base_url';
+  static const _storageSessionExpiresKey = 'referee_session_expires';
+  static const _sessionDuration = Duration(days: 7);
   static const bool _useScheduledQueueEndpoint = false;
 
   final ApiService _api = ApiService();
@@ -47,6 +49,7 @@ class AppState extends ChangeNotifier {
 
   bool _disposed = false;
   bool _handlingUnauthorized = false;
+  void Function()? onLoggedOut;
 
   User? currentUser;
   String apiBaseUrl = '';
@@ -145,16 +148,20 @@ class AppState extends ChangeNotifier {
     await scoreQueue.load();
     await matchUpdateQueue.load();
     if (token != null && userJson != null) {
-      try {
-        final data = jsonDecode(userJson) as Map<String, dynamic>;
-        _api.setToken(token);
-        currentUser = User.fromJson(data);
-        _ensureLiveSocket();
-      } catch (e) {
-        if (e is AuthException) {
-          await logout(reason: e.message);
-        } else {
-          currentUser = null;
+      if (await _isSessionExpired()) {
+        await logout();
+      } else {
+        try {
+          final data = jsonDecode(userJson) as Map<String, dynamic>;
+          _api.setToken(token);
+          currentUser = User.fromJson(data);
+          _ensureLiveSocket();
+        } catch (e) {
+          if (e is AuthException || _isSessionFailure(e)) {
+            await logout();
+          } else {
+            currentUser = null;
+          }
         }
       }
     }
@@ -183,14 +190,20 @@ class AppState extends ChangeNotifier {
 
   /// Re-fetch data when the app returns from background after long inactivity.
   Future<void> refreshOnResume() async {
-    if (currentUser == null || loading) return;
+    if (currentUser == null) return;
+    if (await _isSessionExpired()) {
+      await logout();
+      return;
+    }
+    _ensureLiveSocket();
+    _socket.nudgeReconnect();
+    if (!_disposed) notifyListeners();
+    if (loading) return;
     try {
-      _ensureLiveSocket();
       _rejoinLiveRooms();
       if (selectedTournament != null) {
-        await refreshSelectedTournament();
-        // Republish current live scores BEFORE flushing queues so a stale
-        // Start Game frame cannot briefly overwrite OBS/Live with 0|0.
+        // Republish the court immediately. The full bracket refresh follows
+        // in the background so "Reconnecting…" does not wait on that download.
         final live = selectedGame;
         if (live != null &&
             (normalizeGameStatusKey(live.status) == 'ongoing' ||
@@ -201,23 +214,26 @@ class AppState extends ChangeNotifier {
                         (live.game3Player1 ?? 0) +
                         (live.game3Player2 ?? 0)) >
                     0)) {
-          await publishCourtMatchUpdate(
+          unawaited(publishCourtMatchUpdate(
             match: live,
             gameIndex: selectedGameNumber.clamp(1, 3),
             score1: _currentGamePointScore(live, selectedGameNumber, true),
             score2: _currentGamePointScore(live, selectedGameNumber, false),
             resetScores: false,
             freshStart: false,
-          );
+          ));
         }
+        unawaited(refreshSelectedTournament(showLoading: false));
       } else {
-        await loadTournaments();
+        unawaited(loadTournaments());
       }
       unawaited(scoreQueue.flush());
       unawaited(matchUpdateQueue.flush());
-    } on AuthException catch (e) {
-      await logout(reason: e.message);
-    } catch (_) {}
+    } on AuthException catch (_) {
+      await logout();
+    } catch (e) {
+      if (_isSessionFailure(e)) await logout();
+    }
   }
 
   Future<void> setApiBaseUrl(String url) async {
@@ -287,6 +303,7 @@ class AppState extends ChangeNotifier {
           await prefs.setString(_storageTokenKey, result.token!);
         }
         await prefs.setString(_storageUserKey, jsonEncode(result.user!.toJson()));
+        await _saveSessionExpiry();
         _ensureLiveSocket();
         notifyListeners();
         await loadTournaments();
@@ -297,7 +314,9 @@ class AppState extends ChangeNotifier {
         return false;
       }
     } else {
-      error = 'Invalid email or password';
+      error = result.error == 'Could not reach the server. Try again.'
+          ? result.error
+          : 'Invalid email or password';
       notifyListeners();
       return false;
     }
@@ -311,10 +330,15 @@ class AppState extends ChangeNotifier {
     try {
       // /api/referees/tournaments is already scoped to this referee.
       tournaments = await _api.getRefereeTournaments();
-    } on AuthException catch (e) {
-      await logout(reason: e.message);
+    } on AuthException catch (_) {
+      await logout();
+      tournaments = [];
     } catch (e) {
-      error = 'Failed to load tournaments: $e';
+      if (_isSessionFailure(e)) {
+        await logout();
+      } else {
+        error = 'Could not load tournaments. Pull to try again.';
+      }
       tournaments = [];
     }
     loading = false;
@@ -363,8 +387,14 @@ class AppState extends ChangeNotifier {
 
       // Team rosters can load after UI opens — don't block "Opening…".
       unawaited(_enrichTournamentRegistrations(t.id));
+    } on AuthException catch (_) {
+      await logout();
     } catch (e) {
-      error = 'Failed to load tournament details: $e';
+      if (_isSessionFailure(e)) {
+        await logout();
+      } else {
+        error = 'Could not open this tournament. Pull to try again.';
+      }
     }
     loading = false;
     notifyListeners();
@@ -403,16 +433,14 @@ class AppState extends ChangeNotifier {
     _autoPickSelectedDate();
     _joinSelectedCourtRoom(leavePrevious: prevSlug);
     notifyListeners();
-    await refreshSelectedTournament();
-    await _refreshScheduledQueueForSelection();
+    _queueQuietTournamentRefresh();
   }
 
   Future<void> selectDate(String d) async {
     selectedDate = d.trim().isEmpty ? null : d.trim();
     _scheduledQueueEtag = null;
     notifyListeners();
-    await refreshSelectedTournament();
-    await _refreshScheduledQueueForSelection();
+    _queueQuietTournamentRefresh();
   }
 
   List<String> get availableDatesForSelectedCourt {
@@ -937,10 +965,10 @@ class AppState extends ChangeNotifier {
       await _refreshScheduledQueueForSelection();
       // Do not PUT leftover group-match outbox after submit/refresh.
       unawaited(_enrichTournamentRegistrations(t.id));
-    } on AuthException catch (e) {
-      await logout(reason: e.message);
+    } on AuthException catch (_) {
+      await logout();
     } catch (e) {
-      error = 'Failed to refresh: $e';
+      if (_isSessionFailure(e)) await logout();
     } finally {
       if (showLoading) loading = false;
       notifyListeners();
@@ -3369,6 +3397,38 @@ class AppState extends ChangeNotifier {
     }
   }
 
+  Future<void> _saveSessionExpiry() async {
+    final prefs = await SharedPreferences.getInstance();
+    final expires = DateTime.now().toUtc().add(_sessionDuration).toIso8601String();
+    await prefs.setString(_storageSessionExpiresKey, expires);
+  }
+
+  Future<bool> _isSessionExpired() async {
+    final prefs = await SharedPreferences.getInstance();
+    final raw = prefs.getString(_storageSessionExpiresKey);
+    if (raw == null || raw.isEmpty) {
+      if (prefs.getString(_storageTokenKey) != null) {
+        await _saveSessionExpiry();
+      }
+      return false;
+    }
+    final expires = DateTime.tryParse(raw);
+    if (expires == null) return false;
+    return DateTime.now().toUtc().isAfter(expires.toUtc());
+  }
+
+  bool _isSessionFailure(Object error) {
+    if (error is AuthException) return true;
+    final text = error.toString().toLowerCase();
+    return text.contains('status 401') ||
+        text.contains('status 403') ||
+        text.contains('unauthorized') ||
+        text.contains('token expired') ||
+        text.contains('jwt expired') ||
+        text.contains('session expired') ||
+        text.contains('invalid token');
+  }
+
   Future<void> logout({String? reason}) async {
     _ongoingSyncTimer?.cancel();
     _scheduleRefreshDebounce?.cancel();
@@ -3390,10 +3450,17 @@ class AppState extends ChangeNotifier {
     final prefs = await SharedPreferences.getInstance();
     await prefs.remove(_storageTokenKey);
     await prefs.remove(_storageUserKey);
+    await prefs.remove(_storageSessionExpiresKey);
     await prefs.remove(_storageOutboxKey);
     _api.clearToken();
-    error = reason;
+    final notice = (reason ?? '').trim();
+    final showNotice = notice.isNotEmpty &&
+        notice.length < 80 &&
+        !notice.toLowerCase().contains('exception') &&
+        !notice.toLowerCase().contains('status ');
+    error = showNotice ? notice : null;
     notifyListeners();
+    onLoggedOut?.call();
   }
 
   // ---------------------------------------------------------------------------
@@ -3417,8 +3484,10 @@ class AppState extends ChangeNotifier {
     s.on('score-updated', _onLiveScoreUpdated);
     s.on('status-updated', _onLiveStatusUpdated);
     s.on('schedule-updated', _onLiveScheduleUpdated);
+    s.on('bracket-updated', _onLiveBracketUpdated);
     s.on('connect', _onSocketConnect);
     s.on('reconnect', _onSocketReconnect);
+    s.on('disconnect', _onSocketDisconnect);
   }
 
   void _detachLiveListeners() {
@@ -3427,12 +3496,25 @@ class AppState extends ChangeNotifier {
     _socket.off('score-updated', _onLiveScoreUpdated);
     _socket.off('status-updated', _onLiveStatusUpdated);
     _socket.off('schedule-updated', _onLiveScheduleUpdated);
+    _socket.off('bracket-updated', _onLiveBracketUpdated);
     _socket.off('connect', _onSocketConnect);
     _socket.off('reconnect', _onSocketReconnect);
+    _socket.off('disconnect', _onSocketDisconnect);
   }
 
-  void _onSocketConnect(dynamic _) => _rejoinLiveRooms(refetch: true);
-  void _onSocketReconnect(dynamic _) => _rejoinLiveRooms(refetch: true);
+  void _onSocketConnect(dynamic _) {
+    if (!_disposed) notifyListeners();
+    _rejoinLiveRooms(refetch: true);
+  }
+
+  void _onSocketReconnect(dynamic _) {
+    if (!_disposed) notifyListeners();
+    _rejoinLiveRooms(refetch: true);
+  }
+
+  void _onSocketDisconnect(dynamic _) {
+    if (!_disposed) notifyListeners();
+  }
 
   void _rejoinLiveRooms({bool refetch = false}) {
     final tid = _joinedTournamentId;
@@ -3446,8 +3528,8 @@ class AppState extends ChangeNotifier {
     // Flush local queues after rooms are rejoined.
     unawaited(scoreQueue.flush());
     unawaited(matchUpdateQueue.requeueAllForReconnect());
-    if (refetch && selectedTournament != null && !loading) {
-      unawaited(refreshSelectedTournament());
+    if (refetch && selectedTournament != null) {
+      unawaited(refreshSelectedTournament(showLoading: false));
     }
   }
 
@@ -3739,10 +3821,28 @@ class AppState extends ChangeNotifier {
     }
     if (payload == null || !_livePayloadForSelectedTournament(payload)) return;
     if (kDebugMode) debugPrint('[socket] schedule-updated');
+    _queueQuietTournamentRefresh();
+  }
+
+  void _onLiveBracketUpdated(dynamic data) {
+    if (tutorialSimulationMode) return;
+    Map<String, dynamic>? payload;
+    if (data is Map) {
+      payload = Map<String, dynamic>.from(data);
+    }
+    if (payload == null || !_livePayloadForSelectedTournament(payload)) return;
+    if (kDebugMode) debugPrint('[socket] bracket-updated');
+    _queueQuietTournamentRefresh();
+  }
+
+  /// Refresh the open tournament in the background. The court list stays
+  /// usable; this must not flip the global loading flag.
+  void _queueQuietTournamentRefresh() {
+    if (selectedTournament == null || tutorialSimulationMode) return;
     _scheduleRefreshDebounce?.cancel();
     _scheduleRefreshDebounce = Timer(const Duration(milliseconds: 400), () {
-      if (selectedTournament != null && !loading) {
-        unawaited(refreshSelectedTournament());
+      if (selectedTournament != null && !_disposed) {
+        unawaited(refreshSelectedTournament(showLoading: false));
       }
     });
   }
@@ -3778,12 +3878,7 @@ class AppState extends ChangeNotifier {
 
     if (fields.isEmpty) {
       if (kDebugMode) debugPrint('[socket] $source thin payload → refresh');
-      _scheduleRefreshDebounce?.cancel();
-      _scheduleRefreshDebounce = Timer(const Duration(milliseconds: 350), () {
-        if (selectedTournament != null && !loading) {
-          unawaited(refreshSelectedTournament());
-        }
-      });
+      _queueQuietTournamentRefresh();
       return;
     }
 

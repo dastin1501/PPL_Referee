@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
@@ -89,7 +90,7 @@ class _CourtGamesScreenState extends State<CourtGamesScreen>
     if (result is! String) return;
     if (result != 'ongoing' && result != 'completed') return;
     final app = context.read<AppState>();
-    await app.refreshSelectedTournament();
+    unawaited(app.refreshSelectedTournament(showLoading: false));
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(

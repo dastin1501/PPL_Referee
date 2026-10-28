@@ -26,6 +26,15 @@ class SocketService {
     return raw;
   }
 
+  /// Kick a dropped socket immediately instead of waiting out the backoff.
+  void nudgeReconnect() {
+    final s = _socket;
+    if (s == null || s.connected) return;
+    try {
+      s.connect();
+    } catch (_) {}
+  }
+
   /// Reuse the existing connection; recreate only if the API origin changed.
   io.Socket? ensureConnected(String apiBaseUrl) {
     final origin = originFromApiBase(apiBaseUrl);
@@ -46,8 +55,10 @@ class SocketService {
             .setTransports(['websocket', 'polling'])
             .enableAutoConnect()
             .enableReconnection()
-            .setReconnectionAttempts(20)
-            .setReconnectionDelay(800)
+            .setReconnectionAttempts(100)
+            .setReconnectionDelay(200)
+            .setReconnectionDelayMax(1200)
+            .setTimeout(4000)
             .build(),
       );
       if (kDebugMode) {

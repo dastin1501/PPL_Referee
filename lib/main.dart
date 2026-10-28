@@ -54,6 +54,11 @@ class _RefereeAppState extends State<RefereeApp> with WidgetsBindingObserver {
     return ChangeNotifierProvider(
       create: (_) {
         final app = AppState()..init();
+        app.onLoggedOut = () {
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            _navigatorKey.currentState?.pushNamedAndRemoveUntil('/login', (route) => false);
+          });
+        };
         _appState = app;
         return app;
       },

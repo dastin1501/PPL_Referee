@@ -194,9 +194,14 @@ class ApiService {
         final data = jsonDecode(res.body);
         return ApiResult(ok: true, error: null, user: User.fromJson(data['user']), token: null);
       }
-      return ApiResult(ok: false, error: 'Signup failed: ${res.body}', token: null);
+      return ApiResult(
+        ok: false,
+        error: 'Could not create the account. Check the details and try again.',
+        token: null,
+      );
     } catch (e) {
-      return ApiResult(ok: false, error: 'Network error (${baseUrl}): $e');
+      if (kDebugMode) debugPrint('Signup failed: $e');
+      return ApiResult(ok: false, error: 'Could not reach the server. Try again.');
     }
   }
 
@@ -215,10 +220,10 @@ class ApiService {
         final user = User.fromJson(data['user']);
         return ApiResult(ok: true, user: user, token: _token);
       }
-      final errorBody = jsonDecode(res.body);
-      return ApiResult(ok: false, error: errorBody['message'] ?? 'Login failed: ${res.statusCode}', token: null);
+      return ApiResult(ok: false, error: 'Invalid email or password', token: null);
     } catch (e) {
-      return ApiResult(ok: false, error: 'Network error (${baseUrl}): $e', token: null);
+      if (kDebugMode) debugPrint('Login failed: $e');
+      return ApiResult(ok: false, error: 'Could not reach the server. Try again.', token: null);
     }
   }
 
@@ -252,7 +257,10 @@ class ApiService {
             .map((e) => Tournament.fromJson(Map<String, dynamic>.from(e)))
             .toList();
       }
-      throw Exception('Status ${res.statusCode}: ${res.body}');
+      if (kDebugMode) {
+        debugPrint('Referee tournaments failed ${res.statusCode}: ${res.body}');
+      }
+      throw Exception('Could not load tournaments');
     } catch (e) {
       if (kDebugMode) {
         debugPrint('Error fetching referee tournaments: $e');
@@ -301,7 +309,10 @@ class ApiService {
       }
       _checkAuth(res);
       if (res.statusCode != 200) {
-        throw Exception('Status ${res.statusCode}: ${res.body}');
+        if (kDebugMode) {
+          debugPrint('Assigned matches failed ${res.statusCode}: ${res.body}');
+        }
+        throw Exception('Could not load assigned matches');
       }
 
       final decoded = jsonDecode(res.body);
@@ -388,7 +399,10 @@ class ApiService {
             .timeout(const Duration(seconds: 45));
         _checkAuth(res);
         if (res.statusCode != 200) {
-          throw Exception('Status ${res.statusCode}: ${res.body}');
+          if (kDebugMode) {
+            debugPrint('Tournament details failed ${res.statusCode}: ${res.body}');
+          }
+          throw Exception('Could not open this tournament');
         }
         final json = jsonDecode(res.body);
         final data = Map<String, dynamic>.from(json['tournament'] ?? json);
@@ -424,7 +438,10 @@ class ApiService {
             .timeout(const Duration(seconds: 45));
         _checkAuth(res);
         if (res.statusCode != 200) {
-          throw Exception('Status ${res.statusCode}: ${res.body}');
+          if (kDebugMode) {
+            debugPrint('Tournament registrations failed ${res.statusCode}: ${res.body}');
+          }
+          throw Exception('Could not open this tournament');
         }
 
         final json = jsonDecode(res.body);
@@ -525,7 +542,10 @@ class ApiService {
     }
     _checkAuth(res);
     if (res.statusCode != 200 && res.statusCode != 201) {
-      throw Exception('Status ${res.statusCode}: ${res.body}');
+      if (kDebugMode) {
+        debugPrint('Submit score failed ${res.statusCode}: ${res.body}');
+      }
+      throw Exception('Could not submit the score');
     }
     Map<String, dynamic>? body;
     try {

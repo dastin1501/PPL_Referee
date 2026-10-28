@@ -27,8 +27,8 @@ class _TournamentListScreenState extends State<TournamentListScreen> {
     try {
       await app.selectTournament(t);
       if (!mounted) return;
-      if (app.error != null &&
-          app.error!.startsWith('Failed to load tournament details')) {
+      if (app.currentUser == null) return;
+      if (app.error != null && app.error!.startsWith('Could not open this tournament')) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text(app.error!)),
         );
@@ -37,8 +37,9 @@ class _TournamentListScreenState extends State<TournamentListScreen> {
       await Navigator.of(context).pushNamed('/courtGames');
     } catch (e) {
       if (!mounted) return;
+      if (app.currentUser == null) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Could not open tournament: $e')),
+        const SnackBar(content: Text('Could not open this tournament. Try again.')),
       );
     } finally {
       if (mounted) {
@@ -132,9 +133,6 @@ class _TournamentListScreenState extends State<TournamentListScreen> {
               onTap: () async {
                 Navigator.pop(context);
                 await app.logout();
-                if (context.mounted) {
-                  Navigator.pushReplacementNamed(context, '/login');
-                }
               },
             ),
           ],
