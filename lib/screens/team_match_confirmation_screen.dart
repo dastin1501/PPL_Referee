@@ -381,31 +381,12 @@ class _TeamMatchConfirmationScreenState extends State<TeamMatchConfirmationScree
   Widget build(BuildContext context) {
     final app = context.watch<AppState>();
     final categoryName = app.selectedTournament?.categoryNames[widget.match.categoryId] ?? '';
-    final categoryDivision =
-        app.selectedTournament?.categoryDivisions[widget.match.categoryId] ?? '';
-    final isTeamCategory = categoryDivision.toLowerCase().contains('team');
     final team1Saved = _savedSelectionsForGame().take(2).toList();
     final team2Saved = _savedSelectionsForGame().skip(2).take(2).toList();
     final team1Label = _slotLabelForTeam1();
     final team2Label = _slotLabelForTeam2();
     final team1Options = _getTeamOptionsForSlot(team1Label, app.selectedTournament, team1Saved);
     final team2Options = _getTeamOptionsForSlot(team2Label, app.selectedTournament, team2Saved);
-
-    if (kDebugMode) {
-      debugPrint(
-        'TEAM Select Players: '
-        'division=$categoryDivision, '
-        'isTeamCategory=$isTeamCategory, '
-        'player1=${widget.match.player1}, '
-        'player2=${widget.match.player2}, '
-        'lookupKey1=${_normalizeTeamKey(team1Label)}, '
-        'lookupKey2=${_normalizeTeamKey(team2Label)}, '
-        'rosterKeyCount=${app.selectedTournament?.teamRosterMembersBySlot.length ?? 0}, '
-        'team1Count=${team1Options.length}, '
-        'team2Count=${team2Options.length}, '
-        'savedGame${widget.gameNo}=${_savedSelectionsForGame()}',
-      );
-    }
 
     return Scaffold(
       appBar: AppBar(

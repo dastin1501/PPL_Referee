@@ -809,6 +809,31 @@ List<String> _buildTournamentCourtList({
   return result;
 }
 
+/// Open Gender Singles is one player. Open Gender Doubles, and legacy
+/// "Open Gender" with neither word, are doubles.
+bool refereeDivisionIsDoubles(String division) {
+  final s = division.toLowerCase();
+  if (s.contains('team')) return false;
+  if (s.contains('single')) return false;
+  if (s.contains('double') || s.contains('mixed')) return true;
+  return s.contains('open') && s.contains('gender');
+}
+
+/// Legacy "Open Gender" still displays as doubles. Stored values are unchanged.
+String refereeDivisionLabel(String division) {
+  final s = division.toLowerCase();
+  if (s.contains('open') &&
+      s.contains('gender') &&
+      !s.contains('single') &&
+      !s.contains('double')) {
+    return division.replaceAll(
+      RegExp(r'open\s+gender', caseSensitive: false),
+      'Open Gender Doubles',
+    );
+  }
+  return division;
+}
+
 class Tournament {
   final String id;
   final String name;
@@ -1330,6 +1355,94 @@ class Tournament {
       return keys;
     }
 
+    final doublesCatIds = <String>{};
+    final divisionToId = <String, String>{};
+    final pairByCat = <String, Map<String, String>>{};
+    final categoryList = j['tournamentCategories'] as List?;
+    if (categoryList != null) {
+      for (final raw in categoryList) {
+        if (raw is! Map) continue;
+        final catId = raw['_id']?.toString() ?? '';
+        final division = raw['division']?.toString() ?? '';
+        if (catId.isEmpty || !refereeDivisionIsDoubles(division)) continue;
+        doublesCatIds.add(catId);
+        divisionToId[division.trim().toLowerCase()] = catId;
+      }
+    }
+
+    String personKey(String name) =>
+        name.replaceAll(RegExp(r'\s+'), ' ').trim().toLowerCase();
+
+    String shortPersonKey(String name) {
+      final parts = name
+          .trim()
+          .split(RegExp(r'\s+'))
+          .where((part) => part.isNotEmpty)
+          .toList();
+      if (parts.length < 2) return '';
+      final first = parts.first.replaceAll('.', '');
+      if (first.isEmpty) return '';
+      return '${first[0].toLowerCase()}. ${parts.last.toLowerCase()}';
+    }
+
+    String resolveRegCategoryId(Map<String, dynamic> reg) {
+      String fromValue(dynamic value) {
+        if (value is Map) {
+          final id = value['_id']?.toString() ?? '';
+          if (doublesCatIds.contains(id)) return id;
+          final division = value['division']?.toString().trim().toLowerCase() ?? '';
+          return divisionToId[division] ?? (doublesCatIds.contains(id) ? id : '');
+        }
+        final text = value?.toString().trim() ?? '';
+        if (text.isEmpty) return '';
+        if (doublesCatIds.contains(text)) return text;
+        return divisionToId[text.toLowerCase()] ?? '';
+      }
+
+      final fromId = fromValue(reg['categoryId']);
+      if (fromId.isNotEmpty) return fromId;
+      return fromValue(reg['category']);
+    }
+
+    void rememberPair(String catId, String n1, String n2) {
+      final a = n1.trim();
+      final b = n2.trim();
+      if (catId.isEmpty || a.isEmpty || b.isEmpty) return;
+      if (a.toLowerCase() == 'tbd' || b.toLowerCase() == 'tbd') return;
+      if (a.contains('/') || a.contains('&') || b.contains('/') || b.contains('&')) return;
+      final label = '$a / $b';
+      final map = pairByCat.putIfAbsent(catId, () => <String, String>{});
+      for (final name in [a, b]) {
+        final full = personKey(name);
+        final short = shortPersonKey(name);
+        if (full.isNotEmpty && !map.containsKey(full)) map[full] = label;
+        if (short.isNotEmpty && !map.containsKey(short)) map[short] = label;
+      }
+    }
+
+    bool skipPairExpand(String text) {
+      final low = text.trim().toLowerCase();
+      if (low.isEmpty || low == 'tbd') return true;
+      if (low.startsWith('winner') || low.startsWith('loser')) return true;
+      if (RegExp(r'^[wl]\s+').hasMatch(low)) return true;
+      if (RegExp(r'^[a-p]\d+$').hasMatch(low)) return true;
+      if (RegExp(r'^team\s*[12]$').hasMatch(low)) return true;
+      return false;
+    }
+
+    String expandDoublesSide(String catId, String raw) {
+      final text = raw.trim();
+      if (text.isEmpty || skipPairExpand(text)) return text;
+      if (text.contains('/') || text.contains('&')) {
+        return text.replaceAll(RegExp(r'\s*[/&]\s*'), ' / ');
+      }
+      if (!doublesCatIds.contains(catId)) return text;
+      final map = pairByCat[catId];
+      if (map == null) return text;
+      final hit = map[personKey(text)] ?? map[shortPersonKey(text)] ?? '';
+      return hit.isEmpty ? text : hit;
+    }
+
     // 1. Build ID to Name map from registrations and category team registrations
     try {
       final regs = j['registrations'] as List?;
@@ -1355,6 +1468,18 @@ class Tournament {
             } else if (partner is String) {
               final nm = r['partnerName']?.toString().trim();
               if (nm != null && nm.isNotEmpty) idToDisplay[partner] = nm;
+            }
+
+            final pairCatId = resolveRegCategoryId(r);
+            if (pairCatId.isNotEmpty) {
+              final primaryName = extract(p).trim();
+              final partnerLabel = extract(partner).trim();
+              final fallbackPartner = (r['partnerName']?.toString() ?? '').trim();
+              rememberPair(
+                pairCatId,
+                primaryName.isNotEmpty ? primaryName : (r['playerName']?.toString() ?? ''),
+                partnerLabel.isNotEmpty ? partnerLabel : fallbackPartner,
+              );
             }
 
             final teamMembers = r['teamMembers'] as List?;
@@ -1439,7 +1564,7 @@ class Tournament {
         }
       }
     } catch (e) {
-      debugPrint('Error parsing registrations: $e');
+      if (kDebugMode) debugPrint('Error parsing registrations: $e');
     }
 
     void clearScheduleFields(Map<String, dynamic> m) {
@@ -1499,8 +1624,30 @@ class Tournament {
           dynamic p1 = m['player1'];
           dynamic p2 = m['player2'];
 
-          m['player1'] = extract(p1);
-          m['player2'] = extract(p2);
+          m['player1'] = expandDoublesSide(catId, extract(p1));
+          m['player2'] = expandDoublesSide(catId, extract(p2));
+          final rawName1 = m['player1Name']?.toString().trim() ?? '';
+          final rawName2 = m['player2Name']?.toString().trim() ?? '';
+          final named1 = rawName1.isEmpty
+              ? ''
+              : expandDoublesSide(catId, extract(m['player1Name']));
+          final named2 = rawName2.isEmpty
+              ? ''
+              : expandDoublesSide(catId, extract(m['player2Name']));
+          if (named1.isNotEmpty && named1.toLowerCase() != 'tbd') {
+            m['player1Name'] = named1;
+          }
+          if (named2.isNotEmpty && named2.toLowerCase() != 'tbd') {
+            m['player2Name'] = named2;
+          }
+          if ((m['player1Name']?.toString().trim().isEmpty ?? true) &&
+              (m['player1']?.toString().contains('/') ?? false)) {
+            m['player1Name'] = m['player1'];
+          }
+          if ((m['player2Name']?.toString().trim().isEmpty ?? true) &&
+              (m['player2']?.toString().contains('/') ?? false)) {
+            m['player2Name'] = m['player2'];
+          }
 
           if (globalCourtNames.isNotEmpty) {
             final courtRaw = m['court']?.toString() ?? '';
@@ -1594,7 +1741,9 @@ class Tournament {
         final division = c['division']?.toString() ?? '';
         final age = c['ageCategory']?.toString() ?? '';
         final skill = c['skillLevel']?.toString() ?? '';
-        final catName = [division, age, skill].where((s) => s.isNotEmpty).join(' ');
+        final catName = [refereeDivisionLabel(division), age, skill]
+            .where((s) => s.isNotEmpty)
+            .join(' ');
         if (catId.isNotEmpty) {
           categoryNames[catId] = catName;
           categoryDivisions[catId] = division;

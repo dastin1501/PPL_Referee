@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../models.dart';
@@ -25,16 +26,18 @@ class _TournamentListScreenState extends State<TournamentListScreen> {
       _openingTournamentId = t.id;
     });
     try {
-      await app.selectTournament(t);
+      // Navigate immediately; court screen shows a loader until select finishes.
+      unawaited(app.selectTournament(t));
       if (!mounted) return;
       if (app.currentUser == null) return;
-      if (app.error != null && app.error!.startsWith('Could not open this tournament')) {
+      await Navigator.of(context).pushNamed('/courtGames');
+      if (!mounted) return;
+      if (app.error != null &&
+          app.error!.startsWith('Could not open this tournament')) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text(app.error!)),
         );
-        return;
       }
-      await Navigator.of(context).pushNamed('/courtGames');
     } catch (e) {
       if (!mounted) return;
       if (app.currentUser == null) return;
@@ -53,8 +56,13 @@ class _TournamentListScreenState extends State<TournamentListScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final app = context.watch<AppState>();
-    final userName = app.currentUser?.name ?? 'Referee';
+    final loading = context.select<AppState, bool>((a) => a.loading);
+    final tournaments =
+        context.select<AppState, List<Tournament>>((a) => a.tournaments);
+    final userName =
+        context.select<AppState, String>((a) => a.currentUser?.name ?? 'Referee');
+    final error = context.select<AppState, String?>((a) => a.error);
+    final app = context.read<AppState>();
     final firstName = userName.trim().split(RegExp(r'\s+')).first;
 
     return Scaffold(
@@ -158,9 +166,9 @@ class _TournamentListScreenState extends State<TournamentListScreen> {
                 ),
                 const SizedBox(height: 4),
                 Text(
-                  app.tournaments.isEmpty
+                  tournaments.isEmpty
                       ? 'No assigned tournaments yet'
-                      : '${app.tournaments.length} tournament${app.tournaments.length == 1 ? '' : 's'} assigned to you',
+                      : '${tournaments.length} tournament${tournaments.length == 1 ? '' : 's'} assigned to you',
                   style: const TextStyle(
                     fontSize: 13,
                     color: Color(0xFF64748B),
@@ -174,7 +182,7 @@ class _TournamentListScreenState extends State<TournamentListScreen> {
             child: RefreshIndicator(
               color: _brand,
               onRefresh: () => app.loadTournaments(),
-              child: app.error != null
+              child: error != null
                   ? ListView(
                       physics: const AlwaysScrollableScrollPhysics(),
                       children: [
@@ -194,7 +202,7 @@ class _TournamentListScreenState extends State<TournamentListScreen> {
                               ),
                               const SizedBox(height: 16),
                               Text(
-                                app.error!,
+                                error,
                                 textAlign: TextAlign.center,
                                 style: TextStyle(color: Colors.red.shade700, height: 1.4),
                               ),
@@ -214,7 +222,7 @@ class _TournamentListScreenState extends State<TournamentListScreen> {
                         ),
                       ],
                     )
-                  : app.tournaments.isEmpty && !app.loading
+                  : tournaments.isEmpty && !loading
                       ? ListView(
                           physics: const AlwaysScrollableScrollPhysics(),
                           children: [
@@ -244,10 +252,10 @@ class _TournamentListScreenState extends State<TournamentListScreen> {
                       : ListView.separated(
                           physics: const AlwaysScrollableScrollPhysics(),
                           padding: const EdgeInsets.fromLTRB(16, 16, 16, 28),
-                          itemCount: app.tournaments.length,
+                          itemCount: tournaments.length,
                           separatorBuilder: (_, __) => const SizedBox(height: 12),
                           itemBuilder: (_, i) {
-                            final t = app.tournaments[i];
+                            final t = tournaments[i];
                             final opening = _openingTournamentId == t.id;
                             return Material(
                               color: Colors.transparent,
@@ -269,12 +277,12 @@ class _TournamentListScreenState extends State<TournamentListScreen> {
                                       ),
                                     ],
                                   ),
-                                  child: IntrinsicHeight(
-                                    child: Row(
-                                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                                  child: Row(
+                                      crossAxisAlignment: CrossAxisAlignment.start,
                                       children: [
                                         Container(
                                           width: 5,
+                                          constraints: const BoxConstraints(minHeight: 64),
                                           decoration: const BoxDecoration(
                                             color: _brand,
                                             borderRadius: BorderRadius.only(
@@ -364,7 +372,6 @@ class _TournamentListScreenState extends State<TournamentListScreen> {
                                         ),
                                       ],
                                     ),
-                                  ),
                                 ),
                               ),
                             );

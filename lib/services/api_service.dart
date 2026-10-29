@@ -522,7 +522,7 @@ class ApiService {
           ? 'groupId=${safePayload['groupId']}, matchKey=${safePayload['matchKey']}'
           : 'matchId=${safePayload['matchId']}, documentId=${safePayload['documentId'] ?? ''}';
       final game = safePayload['game'];
-      print(
+      debugPrint(
         '[score-sync][api] POST /api/referees/submit-score '
         'tournamentId=${safePayload['tournamentId']} '
         'categoryId=${safePayload['categoryId']} '
@@ -538,7 +538,9 @@ class ApiService {
         )
         .timeout(const Duration(seconds: 20));
     if (kDebugMode) {
-      print('[score-sync][api] RESPONSE ${res.statusCode}: ${res.body}');
+      final body = res.body;
+      final preview = body.length > 240 ? '${body.substring(0, 240)}…' : body;
+      debugPrint('[score-sync][api] RESPONSE ${res.statusCode}: $preview');
     }
     _checkAuth(res);
     if (res.statusCode != 200 && res.statusCode != 201) {

@@ -8,6 +8,7 @@ import 'screens/tournament_list_screen.dart';
 import 'screens/court_games_screen.dart';
 import 'screens/referee_dashboard_screen.dart';
 import 'widgets/global_sync_indicator.dart';
+import 'widgets/smooth_page_route.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -86,8 +87,21 @@ class _RefereeAppState extends State<RefereeApp> with WidgetsBindingObserver {
           '/login': (_) => const LoginScreen(),
           '/signup': (_) => const SignupScreen(),
           '/tournaments': (_) => const TournamentListScreen(),
-          '/courtGames': (_) => const CourtGamesScreen(),
-          '/dashboard': (_) => const RefereeDashboardScreen(),
+        },
+        onGenerateRoute: (settings) {
+          switch (settings.name) {
+            case '/courtGames':
+              return smoothPageRoute(
+                settings: settings,
+                builder: (_) => const CourtGamesScreen(),
+              );
+            case '/dashboard':
+              return smoothPageRoute(
+                settings: settings,
+                builder: (_) => const RefereeDashboardScreen(),
+              );
+          }
+          return null;
         },
       ),
     );

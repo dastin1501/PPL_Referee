@@ -8,10 +8,10 @@ class GlobalSyncIndicator extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final app = context.watch<AppState>();
-    final pendingMatches = app.pendingScoreSyncMatchCount;
-    final connected = app.socketConnected;
-    final stale = app.scoreSyncHasStale;
+    final pendingMatches =
+        context.select<AppState, int>((a) => a.pendingScoreSyncMatchCount);
+    final connected = context.select<AppState, bool>((a) => a.socketConnected);
+    final stale = context.select<AppState, bool>((a) => a.scoreSyncHasStale);
 
     if (pendingMatches <= 0 && connected && !stale) {
       return const SizedBox.shrink();

@@ -35,21 +35,28 @@ class AppState extends ChangeNotifier {
     scoreQueue = ScoreEventQueue(
       api: _api,
       socket: _socket,
-      onChanged: () {
-        if (!_disposed) notifyListeners();
-      },
+      onChanged: _scheduleQueueNotify,
     );
     matchUpdateQueue = MatchUpdateQueue(
       socket: _socket,
-      onChanged: () {
-        if (!_disposed) notifyListeners();
-      },
+      onChanged: _scheduleQueueNotify,
     );
   }
 
   bool _disposed = false;
   bool _handlingUnauthorized = false;
+  bool _queueNotifyScheduled = false;
   void Function()? onLoggedOut;
+
+  /// Coalesce score/match-update queue chatter to one rebuild per frame.
+  void _scheduleQueueNotify() {
+    if (_disposed || _queueNotifyScheduled) return;
+    _queueNotifyScheduled = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _queueNotifyScheduled = false;
+      if (!_disposed) notifyListeners();
+    });
+  }
 
   User? currentUser;
   String apiBaseUrl = '';
@@ -75,6 +82,31 @@ class AppState extends ChangeNotifier {
   final Set<String> _joinedMatchIds = {};
   bool _liveListenersAttached = false;
   Timer? _scheduleRefreshDebounce;
+  DateTime? _lastReconnectRefetchAt;
+  static const _reconnectRefetchMinInterval = Duration(seconds: 30);
+
+  // Cached court/date list views — bumped for schedule/court changes, not score taps.
+  int courtListEpoch = 0;
+  String? _cachedDatesKey;
+  String? _cachedMatchesKey;
+  List<String>? _cachedAvailableDates;
+  List<TournamentMatch>? _cachedMatchesForCourt;
+  final Map<String, bool> _categoryHasR32Cache = {};
+  final Map<String, bool> _categoryHasCrossoverCache = {};
+
+  void _invalidateCourtListCaches() {
+    _cachedDatesKey = null;
+    _cachedMatchesKey = null;
+    _cachedAvailableDates = null;
+    _cachedMatchesForCourt = null;
+    _categoryHasR32Cache.clear();
+    _categoryHasCrossoverCache.clear();
+  }
+
+  void _bumpCourtListEpoch() {
+    courtListEpoch++;
+    _invalidateCourtListCaches();
+  }
 
   int get pendingScoreSyncCount => scoreQueue.pendingCount;
   int get pendingScoreSyncMatchCount => scoreQueue.pendingMatchCount;
@@ -397,6 +429,7 @@ class AppState extends ChangeNotifier {
       }
     }
     loading = false;
+    _bumpCourtListEpoch();
     notifyListeners();
   }
 
@@ -418,6 +451,15 @@ class AppState extends ChangeNotifier {
       } catch (_) {}
       _resolveEliminationPlaceholdersFromTournamentDetails();
       _applyQueuedSnapshotsToGames();
+      if (selectedGame != null) {
+        final selectedKey = _matchIdentityKey(selectedGame!);
+        final refreshedSelected =
+            games.where((m) => _matchIdentityKey(m) == selectedKey).toList();
+        if (refreshedSelected.isNotEmpty) {
+          selectedGame = _keepTeamLineupSides(selectedGame!, refreshedSelected.first);
+        }
+      }
+      _bumpCourtListEpoch();
       notifyListeners();
     } catch (e) {
       if (kDebugMode) {
@@ -432,19 +474,27 @@ class AppState extends ChangeNotifier {
     _scheduledQueueEtag = null;
     _autoPickSelectedDate();
     _joinSelectedCourtRoom(leavePrevious: prevSlug);
+    _bumpCourtListEpoch();
+    // Local filter only — schedule is already in memory / kept warm by sockets.
     notifyListeners();
-    _queueQuietTournamentRefresh();
   }
 
   Future<void> selectDate(String d) async {
     selectedDate = d.trim().isEmpty ? null : d.trim();
     _scheduledQueueEtag = null;
+    _bumpCourtListEpoch();
     notifyListeners();
-    _queueQuietTournamentRefresh();
   }
+
+  String get _courtListCacheKey =>
+      '${selectedCourt ?? ''}|${selectedDate ?? ''}|$courtListEpoch|${selectedTournament?.id ?? ''}';
 
   List<String> get availableDatesForSelectedCourt {
     if (selectedCourt == null) return const [];
+    final key = _courtListCacheKey;
+    if (_cachedDatesKey == key && _cachedAvailableDates != null) {
+      return _cachedAvailableDates!;
+    }
     final targetCourt = _normalizeCourt(selectedCourt);
     final dates = <String>{};
     for (final g in games) {
@@ -454,11 +504,17 @@ class AppState extends ChangeNotifier {
     }
     final sorted = dates.toList()
       ..sort((a, b) => _parseDateValue(a).compareTo(_parseDateValue(b)));
+    _cachedDatesKey = key;
+    _cachedAvailableDates = sorted;
     return sorted;
   }
   
   List<TournamentMatch> get matchesForSelectedCourt {
     if (selectedCourt == null || selectedDate == null) return [];
+    final key = _courtListCacheKey;
+    if (_cachedMatchesKey == key && _cachedMatchesForCourt != null) {
+      return _cachedMatchesForCourt!;
+    }
     final targetCourt = _normalizeCourt(selectedCourt);
     final targetDate = _normalizeDate(selectedDate);
     if (targetDate == null) return [];
@@ -504,6 +560,8 @@ class AppState extends ChangeNotifier {
       return '${a.matchLabel}-${a.matchKey}-${a.id}'
           .compareTo('${b.matchLabel}-${b.matchKey}-${b.id}');
     });
+    _cachedMatchesKey = key;
+    _cachedMatchesForCourt = unique;
     return unique;
   }
 
@@ -963,14 +1021,21 @@ class AppState extends ChangeNotifier {
       }
       _autoPickSelectedDate();
       await _refreshScheduledQueueForSelection();
-      // Do not PUT leftover group-match outbox after submit/refresh.
-      unawaited(_enrichTournamentRegistrations(t.id));
+      // Enrich only when team rosters are still missing (avoid second full download).
+      final stillNeedsRosters = selectedTournament?.categoryDivisions.values
+              .any((d) => d.toLowerCase().contains('team')) ==
+          true &&
+          !(selectedTournament?.hasTeamRosters ?? false);
+      if (stillNeedsRosters) {
+        unawaited(_enrichTournamentRegistrations(t.id));
+      }
     } on AuthException catch (_) {
       await logout();
     } catch (e) {
       if (_isSessionFailure(e)) await logout();
     } finally {
       if (showLoading) loading = false;
+      _bumpCourtListEpoch();
       notifyListeners();
     }
   }
@@ -993,6 +1058,11 @@ class AppState extends ChangeNotifier {
       String pickName(String fromAssigned, String fromEmbed, {bool preferAssigned = false}) {
         final a = fromAssigned.trim();
         final b = fromEmbed.trim();
+        final aPair = a.contains('/') || a.contains('&');
+        final bPair = b.contains('/') || b.contains('&');
+        // A doubles pair must not be replaced by only the first player.
+        if (aPair && !bPair && !_isWeakPlayerLabel(a)) return a;
+        if (bPair && !aPair && !_isWeakPlayerLabel(b)) return b;
         // Medal matches: assigned-matches already ran resolveEliminationMatchesWithSeeds
         // (SF losers for Bronze). Prefer that over a contaminated tournament embed
         // (e.g. John Smith / Paul Thomas stuck on Bronze while Brackets shows SF losers).
@@ -1748,14 +1818,6 @@ class AppState extends ChangeNotifier {
 
         final nextName1 = syncedName(m.player1Name, m.player1, p1);
         final nextName2 = syncedName(m.player2Name, m.player2, p2);
-        if (kDebugMode && (m.roundShort.toUpperCase() == 'GOLD' || m.roundShort.toUpperCase() == 'BRONZE')) {
-          debugPrint(
-            '[elim-resolve] ${m.roundShort} key=$key cat=${m.categoryId} '
-            'forceMedal=$forceMedalFromFeeders '
-            'before="${m.player1} vs ${m.player2}" '
-            'base="$baseP1 vs $baseP2" resolved="$p1 vs $p2"',
-          );
-        }
         if (p1 == m.player1 &&
             p2 == m.player2 &&
             nextName1 == m.player1Name &&
@@ -3198,7 +3260,15 @@ class AppState extends ChangeNotifier {
     final namedWeak = _isWeakPlayerLabel(named);
     String chosen;
     if (!slotWeak && !namedWeak) {
-      chosen = slot; // authoritative bracket field
+      final slotPair = slot.contains('/') || slot.contains('&');
+      final namedPair = named.contains('/') || named.contains('&');
+      // Open Gender Doubles often stores one player in the slot and the pair
+      // in the name. Keep the pair so the court is doubles, not singles.
+      if (namedPair && !slotPair) {
+        chosen = named;
+      } else {
+        chosen = slot;
+      }
     } else if (!slotWeak) {
       chosen = slot;
     } else if (!namedWeak) {
@@ -3209,14 +3279,75 @@ class AppState extends ChangeNotifier {
     return displayPlayerName(g, chosen);
   }
 
+  /// Team matches keep a different pair for men's, women's, and mixed.
+  /// The match slot itself is overwritten by whichever game was opened last.
+  String sideDisplayNameForGame(TournamentMatch g, int gameNo, {required bool team1}) {
+    final n = gameNo.clamp(1, 3);
+    final saved = _teamLineupByGame[_teamLineupKey(g, n)] ?? const <String, String>{};
+    String pick(String field, String onMatch) {
+      final fromSaved = (saved[field] ?? '').trim();
+      if (fromSaved.isNotEmpty) return fromSaved;
+      return onMatch.trim();
+    }
+
+    final String first;
+    final String second;
+    if (n == 1) {
+      first = pick(
+        team1 ? 'game1Team1Player' : 'game1Team2Player',
+        team1 ? g.game1Team1Player : g.game1Team2Player,
+      );
+      second = pick(
+        team1 ? 'game1Team1Player2' : 'game1Team2Player2',
+        team1 ? g.game1Team1Player2 : g.game1Team2Player2,
+      );
+    } else if (n == 2) {
+      first = pick(
+        team1 ? 'game2Team1Player' : 'game2Team2Player',
+        team1 ? g.game2Team1Player : g.game2Team2Player,
+      );
+      second = pick(
+        team1 ? 'game2Team1Player2' : 'game2Team2Player2',
+        team1 ? g.game2Team1Player2 : g.game2Team2Player2,
+      );
+    } else {
+      first = pick(
+        team1 ? 'game3Team1Player' : 'game3Team2Player',
+        team1 ? g.game3Team1Player : g.game3Team2Player,
+      );
+      second = pick(
+        team1 ? 'game3Team1Player2' : 'game3Team2Player2',
+        team1 ? g.game3Team1Player2 : g.game3Team2Player2,
+      );
+    }
+
+    bool usable(String raw) {
+      final s = raw.trim();
+      if (s.isEmpty) return false;
+      final low = s.toLowerCase();
+      return low != 'tbd' && low != 'team 1' && low != 'team 2';
+    }
+
+    final parts = <String>[];
+    if (usable(first)) parts.add(first.trim());
+    if (usable(second) && second.trim() != first.trim()) parts.add(second.trim());
+    if (parts.isEmpty) return sideDisplayName(g, team1: team1);
+    if (parts.length == 1) return parts.first;
+    return '${parts[0]} / ${parts[1]}';
+  }
+
   /// True Round of 32 (16 first-round matches), not legacy CF remapping.
   bool categoryHasRoundOf32(String categoryId) {
     final cat = categoryId.trim();
     if (cat.isEmpty) return false;
-    return games.any((m) =>
+    final cached = _categoryHasR32Cache[cat];
+    if (cached != null) return cached;
+    final result = games.any((m) =>
         m.type == 'elimination' &&
         m.categoryId.trim() == cat &&
         m.roundShort.trim().toUpperCase() == 'R32');
+    _categoryHasR32Cache[cat] = result;
+    return result;
   }
 
   /// Legacy "double R16" brackets that used CF (Crossover) before true R32.
@@ -3224,10 +3355,14 @@ class AppState extends ChangeNotifier {
     final cat = categoryId.trim();
     if (cat.isEmpty) return false;
     if (categoryHasRoundOf32(cat)) return false;
-    return games.any((m) =>
+    final cached = _categoryHasCrossoverCache[cat];
+    if (cached != null) return cached;
+    final result = games.any((m) =>
         m.type == 'elimination' &&
         m.categoryId.trim() == cat &&
         m.roundShort.trim().toUpperCase() == 'CF');
+    _categoryHasCrossoverCache[cat] = result;
+    return result;
   }
 
   int? _elimMatchNumber(TournamentMatch m) {
@@ -3504,12 +3639,22 @@ class AppState extends ChangeNotifier {
 
   void _onSocketConnect(dynamic _) {
     if (!_disposed) notifyListeners();
-    _rejoinLiveRooms(refetch: true);
+    _rejoinLiveRooms(refetch: _shouldRefetchOnReconnect());
   }
 
   void _onSocketReconnect(dynamic _) {
     if (!_disposed) notifyListeners();
-    _rejoinLiveRooms(refetch: true);
+    _rejoinLiveRooms(refetch: _shouldRefetchOnReconnect());
+  }
+
+  bool _shouldRefetchOnReconnect() {
+    final now = DateTime.now();
+    final last = _lastReconnectRefetchAt;
+    if (last != null && now.difference(last) < _reconnectRefetchMinInterval) {
+      return false;
+    }
+    _lastReconnectRefetchAt = now;
+    return true;
   }
 
   void _onSocketDisconnect(dynamic _) {
@@ -3821,6 +3966,8 @@ class AppState extends ChangeNotifier {
     }
     if (payload == null || !_livePayloadForSelectedTournament(payload)) return;
     if (kDebugMode) debugPrint('[socket] schedule-updated');
+    // Prefer applying fields; full refresh only when payload is thin.
+    if (_tryApplyLiveSchedulePayload(payload)) return;
     _queueQuietTournamentRefresh();
   }
 
@@ -3832,7 +3979,56 @@ class AppState extends ChangeNotifier {
     }
     if (payload == null || !_livePayloadForSelectedTournament(payload)) return;
     if (kDebugMode) debugPrint('[socket] bracket-updated');
+    if (_tryApplyLiveSchedulePayload(payload)) return;
     _queueQuietTournamentRefresh();
+  }
+
+  /// Returns true when a schedule/bracket payload mutated local match state.
+  bool _tryApplyLiveSchedulePayload(Map<String, dynamic> payload) {
+    final updateFields = payload['updateFields'];
+    final matchObj = payload['match'];
+    Map<String, dynamic> fields = {};
+    if (updateFields is Map) {
+      fields = Map<String, dynamic>.from(updateFields);
+    } else if (matchObj is Map) {
+      fields = Map<String, dynamic>.from(matchObj);
+    } else {
+      // Flat schedule keys on the root payload.
+      for (final k in [
+        'status',
+        'date',
+        'time',
+        'court',
+        'game1Status',
+        'game2Status',
+        'game3Status',
+        'game1Player1',
+        'game1Player2',
+        'game2Player1',
+        'game2Player2',
+        'game3Player1',
+        'game3Player2',
+      ]) {
+        if (payload.containsKey(k)) fields[k] = payload[k];
+      }
+    }
+    if (fields.isEmpty) return false;
+
+    final matchIdentity = _identityFromLivePayload(payload);
+    TournamentMatch? target;
+    if (matchIdentity != null) {
+      target = _findMatchByIdentity(matchIdentity);
+    }
+    target ??= _findMatchFromLivePayload(payload);
+    if (target == null) return false;
+
+    final merged = _mergeMatchWithFields(target, fields);
+    _replaceMatchByIdentity(_matchIdentityKey(target), merged);
+    _bumpCourtListEpoch();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!_disposed) notifyListeners();
+    });
+    return true;
   }
 
   /// Refresh the open tournament in the background. The court list stays
@@ -3894,6 +4090,7 @@ class AppState extends ChangeNotifier {
 
     final merged = _mergeMatchWithFields(target, fields);
     _replaceMatchByIdentity(_matchIdentityKey(target), merged);
+    _bumpCourtListEpoch();
     if (kDebugMode) {
       debugPrint(
         '[socket] $source applied identity=${_matchIdentityKey(target)} '

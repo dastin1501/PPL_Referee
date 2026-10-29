@@ -118,12 +118,59 @@ class _CourtGamesScreenState extends State<CourtGamesScreen>
 
   @override
   Widget build(BuildContext context) {
-    final app = context.watch<AppState>();
-    final courts = _orderedCourts(app.courts);
-    final hasCourt = app.selectedCourt != null;
+    // Rebuild on court/date/schedule epoch — not on every score-queue tick.
+    final epoch = context.select<AppState, int>((a) => a.courtListEpoch);
+    final tournamentName = context.select<AppState, String>(
+      (a) => a.selectedTournament?.name ?? 'Tournament',
+    );
+    final selectedCourt = context.select<AppState, String?>((a) => a.selectedCourt);
+    final selectedDate = context.select<AppState, String?>((a) => a.selectedDate);
+    final courts = _orderedCourts(
+      context.select<AppState, List<String>>((a) => a.courts),
+    );
+    final app = context.read<AppState>();
+    final loading = context.select<AppState, bool>((a) => a.loading);
+    final hasCourt = selectedCourt != null;
     final dates = hasCourt ? app.availableDatesForSelectedCourt : <String>[];
-    final hasDate = app.selectedDate != null;
+    final hasDate = selectedDate != null;
     final games = hasCourt ? app.matchesForSelectedCourt : <TournamentMatch>[];
+    // Touch epoch so analyzer/select stay intentional.
+    assert(epoch >= 0);
+
+    if (loading && games.isEmpty && courts.isEmpty) {
+      return Scaffold(
+        backgroundColor: _bg,
+        appBar: AppBar(
+          title: Text(
+            tournamentName,
+            style: const TextStyle(
+              fontWeight: FontWeight.w700,
+              fontSize: 17,
+              color: Color(0xFF0F172A),
+            ),
+          ),
+          backgroundColor: Colors.white,
+          foregroundColor: const Color(0xFF0F172A),
+          elevation: 0,
+        ),
+        body: const Center(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              CircularProgressIndicator(color: _brand),
+              SizedBox(height: 16),
+              Text(
+                'Loading court schedule…',
+                style: TextStyle(
+                  color: Color(0xFF64748B),
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+            ],
+          ),
+        ),
+      );
+    }
 
     return Scaffold(
       backgroundColor: _bg,
@@ -132,7 +179,7 @@ class _CourtGamesScreenState extends State<CourtGamesScreen>
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Text(
-              app.selectedTournament?.name ?? 'Tournament',
+              tournamentName,
               style: const TextStyle(
                 fontWeight: FontWeight.w700,
                 fontSize: 17,
@@ -182,40 +229,31 @@ class _CourtGamesScreenState extends State<CourtGamesScreen>
           _FilterHeader(
             courts: courts,
             dates: dates,
-            selectedCourt: app.selectedCourt,
-            selectedDate: app.selectedDate,
+            selectedCourt: selectedCourt,
+            selectedDate: selectedDate,
             onCourtChanged: (c) => app.selectCourt(c),
             onDateChanged: (d) => app.selectDate(d),
           ),
           Expanded(
-            child: TabBarView(
-              controller: _tabController,
-              children: [
-                _buildGamesList(
+            child: AnimatedBuilder(
+              animation: _tabController,
+              builder: (context, _) {
+                final showScheduled = _tabController.index == 0;
+                return _buildGamesList(
                   context,
                   app,
                   games,
                   hasCourt && hasDate,
                   onOpenGame: _openDashboardForGame,
-                  showScheduled: true,
-                  emptyMessage: 'No scheduled matches for this court and date.',
+                  showScheduled: showScheduled,
+                  emptyMessage: showScheduled
+                      ? 'No scheduled matches for this court and date.'
+                      : 'No completed matches for this court and date.',
                   noSelectionMessage: hasCourt
                       ? 'Select a date to view matches.'
                       : 'Select a court to view matches.',
-                ),
-                _buildGamesList(
-                  context,
-                  app,
-                  games,
-                  hasCourt && hasDate,
-                  onOpenGame: _openDashboardForGame,
-                  showScheduled: false,
-                  emptyMessage: 'No completed matches for this court and date.',
-                  noSelectionMessage: hasCourt
-                      ? 'Select a date to view matches.'
-                      : 'Select a court to view matches.',
-                ),
-              ],
+                );
+              },
             ),
           ),
         ],
@@ -489,6 +527,14 @@ String _formatTimeDisplay(String start, String end) {
   return '$s – $e';
 }
 
+final _openTierRe = RegExp(r'open[\s_-]?tier[\s_-]?\d+', caseSensitive: false);
+final _wsRe = RegExp(r"women'?s?\s+singles", caseSensitive: false);
+final _msRe = RegExp(r"men'?s?\s+singles", caseSensitive: false);
+final _wdRe = RegExp(r"women'?s?\s+doubles", caseSensitive: false);
+final _mdRe = RegExp(r"men'?s?\s+doubles", caseSensitive: false);
+final _mxdRe = RegExp(r"mixed\s+doubles", caseSensitive: false);
+final _multiSpaceRe = RegExp(r'\s{2,}');
+
 Widget _buildGamesList(
   BuildContext context,
   AppState app,
@@ -626,15 +672,15 @@ Widget _buildGamesList(
         final category = app.selectedTournament?.categoryNames[g.categoryId] ?? '';
         var displayCategory = category;
         if (displayCategory.isNotEmpty) {
-          final pattern = RegExp(r'open[\s_-]?tier[\s_-]?\d+', caseSensitive: false);
-          displayCategory = displayCategory.replaceAll(pattern, 'Open');
           displayCategory = displayCategory
-              .replaceAll(RegExp(r"women'?s?\s+singles", caseSensitive: false), 'WS')
-              .replaceAll(RegExp(r"men'?s?\s+singles", caseSensitive: false), 'MS')
-              .replaceAll(RegExp(r"women'?s?\s+doubles", caseSensitive: false), 'WD')
-              .replaceAll(RegExp(r"men'?s?\s+doubles", caseSensitive: false), 'MD')
-              .replaceAll(RegExp(r"mixed\s+doubles", caseSensitive: false), 'MxD');
-          displayCategory = displayCategory.replaceAll(RegExp(r'\s{2,}'), ' ').trim();
+              .replaceAll(_openTierRe, 'Open')
+              .replaceAll(_wsRe, 'WS')
+              .replaceAll(_msRe, 'MS')
+              .replaceAll(_wdRe, 'WD')
+              .replaceAll(_mdRe, 'MD')
+              .replaceAll(_mxdRe, 'MxD')
+              .replaceAll(_multiSpaceRe, ' ')
+              .trim();
         }
         // Block unassigned cards and Ongoing matches so another referee cannot
         // open a live scoring session already in progress.
@@ -647,7 +693,17 @@ Widget _buildGamesList(
             : app.gameStatusLabel(g, n);
 
         final catText = category.toLowerCase();
+        final divisionText =
+            (app.selectedTournament?.categoryDivisions[g.categoryId] ?? '')
+                .toLowerCase();
         final isMixed = catText.contains('mixed');
+        final isTeam = catText.contains('team') || divisionText.contains('team');
+        final isOpenGender = catText.contains('open gender') ||
+            (catText.contains('open') &&
+                !catText.contains('men') &&
+                !catText.contains('women') &&
+                !isMixed &&
+                !isTeam);
         final isWomen = catText.contains('women') ||
             catText.contains('ladies') ||
             catText.contains('female') ||
@@ -655,14 +711,22 @@ Widget _buildGamesList(
         final isMen = catText.contains('men') ||
             catText.contains('male') ||
             catText.contains('boys');
-        const mixedGreen = Color(0xFF0F766E);
+        // Match website category accents: mixed = purple, team = green,
+        // Open Gender = amber.
+        const teamGreen = Color(0xFF0F766E);
+        const mixedPurple = Color(0xFF7C3AED);
+        const openAmber = Color(0xFFD97706);
         final accentColor = isWomen
             ? const Color(0xFFE91E63)
             : isMen
                 ? const Color(0xFF1E88E5)
                 : isMixed
-                    ? mixedGreen
-                    : mixedGreen;
+                    ? mixedPurple
+                    : isTeam
+                        ? teamGreen
+                        : isOpenGender
+                            ? openAmber
+                            : openAmber;
         final effectiveAccent = disabled ? Colors.grey : accentColor;
         final isRallyScoring = g.isRallyScoring;
         final scoringLabel = isRallyScoring ? 'Rally' : 'Side-Out';
@@ -682,8 +746,8 @@ Widget _buildGamesList(
           s2 = g.game3Player2 ?? 0;
         }
 
-        final p1 = app.sideDisplayName(g, team1: true);
-        final p2 = app.sideDisplayName(g, team1: false);
+        final p1 = app.sideDisplayNameForGame(g, n, team1: true);
+        final p2 = app.sideDisplayNameForGame(g, n, team1: false);
         final timeLabel = _formatTimeDisplay(start, end);
 
         Color statusBg;
@@ -749,12 +813,12 @@ Widget _buildGamesList(
                             ),
                           ],
                   ),
-                  child: IntrinsicHeight(
-                    child: Row(
-                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                  child: Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         Container(
                           width: 5,
+                          constraints: const BoxConstraints(minHeight: 72),
                           decoration: BoxDecoration(
                             color: effectiveAccent,
                             borderRadius: const BorderRadius.only(
@@ -945,7 +1009,6 @@ Widget _buildGamesList(
                         ),
                       ],
                     ),
-                  ),
                 ),
               ),
             ),
@@ -1004,10 +1067,40 @@ void _showCompletedSummaryDialog(BuildContext context, TournamentMatch g, int ga
   final int s2 = (gameNo == 1
       ? (g.game1Player2 ?? 0)
       : (gameNo == 2 ? (g.game2Player2 ?? 0) : (g.game3Player2 ?? 0)));
-  String winnerName = (s1 > s2 ? g.player1 : (s2 > s1 ? g.player2 : ''));
+  final side1 = app.sideDisplayNameForGame(g, gameNo, team1: true);
+  final side2 = app.sideDisplayNameForGame(g, gameNo, team1: false);
+  final division =
+      (app.selectedTournament?.categoryDivisions[g.categoryId] ?? '')
+          .toLowerCase();
+  final isTeamCategory = division.contains('team');
+  final team1Label = app.sideDisplayName(g, team1: true).trim();
+  final team2Label = app.sideDisplayName(g, team1: false).trim();
+  bool showTeamUnder(String teamLabel, String lineup) {
+    if (!isTeamCategory) return false;
+    final t = teamLabel.trim();
+    if (t.isEmpty) return false;
+    final low = t.toLowerCase();
+    if (low == 'tbd' || low == 'team 1' || low == 'team 2') return false;
+    // Only when lineup is the playing pair, not the team name itself.
+    return t.toLowerCase() != lineup.trim().toLowerCase();
+  }
+  final showTeam1 = showTeamUnder(team1Label, side1);
+  final showTeam2 = showTeamUnder(team2Label, side2);
+  String winnerName = s1 > s2 ? side1 : (s2 > s1 ? side2 : '');
+  final hasGameLineup = side1.contains('/') || side2.contains('/');
   final rawWinner = g.winner?.toString().trim() ?? '';
-  if (rawWinner.isNotEmpty && rawWinner.length > 1) {
+  // Series winner is the last game's pair. Don't paste it onto earlier games.
+  if (!hasGameLineup && rawWinner.isNotEmpty && rawWinner.length > 1) {
     winnerName = rawWinner;
+  }
+  if (isTeamCategory && winnerName.isNotEmpty) {
+    final winningTeam = s1 > s2
+        ? team1Label
+        : (s2 > s1 ? team2Label : '');
+    if (winningTeam.isNotEmpty &&
+        winningTeam.toLowerCase() != winnerName.toLowerCase()) {
+      winnerName = '$winningTeam · $winnerName';
+    }
   }
   String? sig;
   final sigs = g.gameSignatures;
@@ -1066,29 +1159,59 @@ void _showCompletedSummaryDialog(BuildContext context, TournamentMatch g, int ga
                     isRally: g.isRallyScoring == true,
                   ),
                   const SizedBox(height: 12),
-                  Text.rich(
-                    TextSpan(
-                      children: [
-                        TextSpan(
-                          text: app.sideDisplayName(g, team1: true),
-                        ),
-                        const TextSpan(
-                          text: '  vs  ',
-                          style: TextStyle(color: Color(0xFFDC2626), fontWeight: FontWeight.w700),
-                        ),
-                        TextSpan(
-                          text: app.sideDisplayName(g, team1: false),
-                        ),
-                      ],
+                  if (showTeam1 || showTeam2) ...[
+                    Text(
+                      app.displayMatchTitle(g, gameNo),
+                      style: const TextStyle(
+                        fontSize: 13,
+                        fontWeight: FontWeight.w700,
+                        color: Color(0xFF64748B),
+                      ),
                     ),
-                    style: const TextStyle(
-                      fontSize: 16,
-                      height: 1.25,
-                      color: Color(0xFF0F172A),
-                      fontWeight: FontWeight.w600,
+                    const SizedBox(height: 10),
+                    _TeamSideSummary(
+                      teamLabel: showTeam1 ? team1Label : null,
+                      lineup: side1,
                     ),
-                    softWrap: true,
-                  ),
+                    const Padding(
+                      padding: EdgeInsets.symmetric(vertical: 8),
+                      child: Text(
+                        'vs',
+                        style: TextStyle(
+                          color: Color(0xFFDC2626),
+                          fontWeight: FontWeight.w800,
+                          fontSize: 14,
+                        ),
+                      ),
+                    ),
+                    _TeamSideSummary(
+                      teamLabel: showTeam2 ? team2Label : null,
+                      lineup: side2,
+                    ),
+                  ] else
+                    Text.rich(
+                      TextSpan(
+                        children: [
+                          TextSpan(
+                            text: side1,
+                          ),
+                          const TextSpan(
+                            text: '  vs  ',
+                            style: TextStyle(color: Color(0xFFDC2626), fontWeight: FontWeight.w700),
+                          ),
+                          TextSpan(
+                            text: side2,
+                          ),
+                        ],
+                      ),
+                      style: const TextStyle(
+                        fontSize: 16,
+                        height: 1.25,
+                        color: Color(0xFF0F172A),
+                        fontWeight: FontWeight.w600,
+                      ),
+                      softWrap: true,
+                    ),
                   const SizedBox(height: 12),
                   Text(
                     'Game $gameNo Score: $s1 – $s2',
@@ -1149,6 +1272,45 @@ void _showCompletedSummaryDialog(BuildContext context, TournamentMatch g, int ga
       );
     },
   );
+}
+
+class _TeamSideSummary extends StatelessWidget {
+  final String? teamLabel;
+  final String lineup;
+
+  const _TeamSideSummary({
+    required this.teamLabel,
+    required this.lineup,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        if ((teamLabel ?? '').trim().isNotEmpty) ...[
+          Text(
+            teamLabel!.trim(),
+            style: const TextStyle(
+              fontSize: 13,
+              fontWeight: FontWeight.w800,
+              color: Color(0xFF0F766E),
+            ),
+          ),
+          const SizedBox(height: 2),
+        ],
+        Text(
+          lineup,
+          style: const TextStyle(
+            fontSize: 16,
+            height: 1.25,
+            color: Color(0xFF0F172A),
+            fontWeight: FontWeight.w600,
+          ),
+        ),
+      ],
+    );
+  }
 }
 
 class _ScoringFormatBadge extends StatelessWidget {
