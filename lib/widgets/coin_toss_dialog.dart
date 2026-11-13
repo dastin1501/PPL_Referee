@@ -15,7 +15,8 @@ class CoinTossDialog extends StatefulWidget {
   State<CoinTossDialog> createState() => _CoinTossDialogState();
 }
 
-class _CoinTossDialogState extends State<CoinTossDialog> with SingleTickerProviderStateMixin {
+class _CoinTossDialogState extends State<CoinTossDialog>
+    with SingleTickerProviderStateMixin {
   late AnimationController _controller;
   bool _isFlipping = false;
   String? _result; // 'Heads' or 'Tails'
@@ -72,15 +73,20 @@ class _CoinTossDialogState extends State<CoinTossDialog> with SingleTickerProvid
   @override
   Widget build(BuildContext context) {
     return AlertDialog(
+      backgroundColor: Colors.white,
+      insetPadding: const EdgeInsets.symmetric(horizontal: 24, vertical: 16),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
       title: null,
-      content: SingleChildScrollView(
+      contentPadding: const EdgeInsets.fromLTRB(16, 8, 8, 20),
+      content: SizedBox(
+        width: 260,
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
             Align(
               alignment: Alignment.topRight,
               child: IconButton(
-                icon: const Icon(Icons.close),
+                icon: const Icon(Icons.close, color: Color(0xFF64748B)),
                 onPressed: () => Navigator.of(context).pop(),
               ),
             ),
@@ -102,19 +108,25 @@ class _CoinTossDialogState extends State<CoinTossDialog> with SingleTickerProvid
                       height: 200,
                       child: ClipOval(
                         child: _isFlipping
-                            ? _coinFace(showBack ? _backCoinAsset : _frontCoinAsset)
-                            : _coinFace(_result == null ? _frontCoinAsset : _coinResultAsset),
+                            ? _coinFace(
+                                showBack ? _backCoinAsset : _frontCoinAsset,
+                              )
+                            : _coinFace(
+                                _result == null
+                                    ? _frontCoinAsset
+                                    : _coinResultAsset,
+                              ),
                       ),
                     ),
                   ),
                 );
               },
             ),
-            const SizedBox(height: 16),
+            const SizedBox(height: 8),
           ],
         ),
       ),
-      actions: [],
+      actions: const [],
     );
   }
 }

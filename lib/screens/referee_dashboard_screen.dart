@@ -11,6 +11,9 @@ import '../state/app_state.dart';
 import '../models.dart';
 import '../models/score_event.dart';
 import '../widgets/coin_toss_dialog.dart';
+import '../widgets/global_sync_indicator.dart';
+import '../widgets/referee_icons.dart';
+import '../widgets/server_select_dialog.dart';
 import '../utils/court_slug.dart';
 
 class RefereeDashboardScreen extends StatefulWidget {
@@ -48,6 +51,8 @@ class _RefereeDashboardScreenState extends State<RefereeDashboardScreen> {
   String _leftSecond = '';
   String _rightBase = '';
   String _rightSecond = '';
+  /// Opening receiver on the opposite team (doubles); used for court layout.
+  String? _receivingPlayer;
   int _leftServeStage = 0;
   int _rightServeStage = 0;
   int _currentGame = 1;
@@ -141,15 +146,44 @@ class _RefereeDashboardScreenState extends State<RefereeDashboardScreen> {
     }
   }
 
-  void _showCoinTossDialog(TournamentMatch g) {
-    showDialog(
+  Future<void> _showCoinTossDialog(TournamentMatch g) async {
+    await showDialog<void>(
       context: context,
       barrierDismissible: false,
       builder: (_) => CoinTossDialog(
-        player1: g.player1,
-        player2: g.player2,
+        player1: _side(g, team1: true),
+        player2: _side(g, team1: false),
       ),
     );
+    if (!mounted || _gameStarted) return;
+    await _showServerSelectDialog(g);
+  }
+
+  Future<void> _showServerSelectDialog(TournamentMatch g) async {
+    final team1 = _splitTeam(_side(g, team1: true));
+    final team2 = _splitTeam(_side(g, team1: false));
+    final result = await showDialog<ServerSelectResult>(
+      context: context,
+      barrierDismissible: false,
+      builder: (_) => ServerSelectDialog(
+        team1Players: team1,
+        team2Players: team2,
+        team1Label: _side(g, team1: true),
+        team2Label: _side(g, team1: false),
+        initialEndsSwitched: _endsSwitched,
+        initialServer: _servingPlayer,
+      ),
+    );
+    if (!mounted || result == null || _gameStarted) return;
+    setState(() {
+      _endsSwitched = result.endsSwitched;
+      _servingPlayer = result.servingPlayer;
+      _receivingPlayer = result.receivingPlayer;
+      _applyDoublesInitialServerLayout(
+        g,
+        receivingPlayer: _receivingPlayer,
+      );
+    });
   }
 
   Future<void> _confirmServer(String name, VoidCallback apply) async {
@@ -183,17 +217,47 @@ class _RefereeDashboardScreenState extends State<RefereeDashboardScreen> {
     }
   }
 
-  void _startGame() async {
+  Future<void> _startGame() async {
     if (_servingPlayer == null) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Please select a server first (Coin Toss or tap player)')),
       );
       return;
     }
+    final serverName = (_servingPlayer ?? '').trim();
+    final ok = await showDialog<bool>(
+      context: context,
+      barrierDismissible: false,
+      builder: (dialogContext) {
+        return AlertDialog(
+          title: const Text('Start game?'),
+          content: Text(
+            serverName.isEmpty
+                ? 'Are you sure you want to start the game?'
+                : 'Start the game with $serverName as the server?',
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(dialogContext).pop(false),
+              child: const Text('Cancel'),
+            ),
+            FilledButton(
+              style: FilledButton.styleFrom(
+                backgroundColor: const Color(0xFF0F766E),
+              ),
+              onPressed: () => Navigator.of(dialogContext).pop(true),
+              child: const Text('Start'),
+            ),
+          ],
+        );
+      },
+    );
+    if (ok != true || !mounted || _gameStarted) return;
+
     final app = context.read<AppState>();
     final g = app.selectedGame;
     if (g != null) {
-      _applyDoublesInitialServerLayout(g);
+      _applyDoublesInitialServerLayout(g, receivingPlayer: _receivingPlayer);
     }
     // START GAME begins a fresh scoring session for the *current* game only.
     // Best-of-3 Game 2/3 must keep completed prior games (G1 11-7 stays when
@@ -331,11 +395,15 @@ class _RefereeDashboardScreenState extends State<RefereeDashboardScreen> {
     _resumeTimerIfNeeded();
   }
 
-  void _applyDoublesInitialServerLayout(TournamentMatch g) {
+  void _applyDoublesInitialServerLayout(
+    TournamentMatch g, {
+    String? receivingPlayer,
+  }) {
     final leftTeam = _splitTeam(_side(g, team1: true));
     final rightTeam = _splitTeam(_side(g, team1: false));
     if (_servingPlayer == null) return;
     if (leftTeam.length > 1 || rightTeam.length > 1 || _categoryIsDoubles(g)) {
+      final recv = (receivingPlayer ?? '').trim();
       if (leftTeam.contains(_servingPlayer)) {
         final partner = leftTeam.firstWhere((p) => p != _servingPlayer, orElse: () => leftTeam.first);
         _leftTopOverride = partner;
@@ -343,11 +411,25 @@ class _RefereeDashboardScreenState extends State<RefereeDashboardScreen> {
         _serverTop = false;
         _leftBase = _servingPlayer!;
         _leftSecond = partner;
-        // Determine right base (top-right) and second (bottom-right)
-        final rTop = _rightTopOverride.isNotEmpty ? _rightTopOverride : (rightTeam.length > 1 ? rightTeam[1] : rightTeam[0]);
-        final rBottom = _rightBottomOverride.isNotEmpty ? _rightBottomOverride : (rightTeam.length > 1 ? rightTeam[0] : '');
-        _rightBase = rTop;
-        _rightSecond = rBottom.isNotEmpty ? rBottom : rTop;
+        // Receiver is right-side base (top-right at 0-0).
+        if (recv.isNotEmpty && rightTeam.contains(recv)) {
+          final rPartner =
+              rightTeam.firstWhere((p) => p != recv, orElse: () => recv);
+          _rightTopOverride = recv;
+          _rightBottomOverride = rPartner == recv ? '' : rPartner;
+          _rightBase = recv;
+          _rightSecond =
+              _rightBottomOverride.isNotEmpty ? _rightBottomOverride : recv;
+        } else {
+          final rTop = _rightTopOverride.isNotEmpty
+              ? _rightTopOverride
+              : (rightTeam.length > 1 ? rightTeam[1] : rightTeam[0]);
+          final rBottom = _rightBottomOverride.isNotEmpty
+              ? _rightBottomOverride
+              : (rightTeam.length > 1 ? rightTeam[0] : '');
+          _rightBase = rTop;
+          _rightSecond = rBottom.isNotEmpty ? rBottom : rTop;
+        }
       } else if (rightTeam.contains(_servingPlayer)) {
         final partner = rightTeam.firstWhere((p) => p != _servingPlayer, orElse: () => rightTeam.first);
         _rightTopOverride = _servingPlayer!;
@@ -355,11 +437,26 @@ class _RefereeDashboardScreenState extends State<RefereeDashboardScreen> {
         _serverTop = true;
         _rightBase = _servingPlayer!;
         _rightSecond = partner;
-        // Determine left base (bottom-left) and second (top-left)
-        final lBottom = _leftBottomOverride.isNotEmpty ? _leftBottomOverride : (leftTeam.length > 1 ? leftTeam[1] : '');
-        final lTop = _leftTopOverride.isNotEmpty ? _leftTopOverride : (leftTeam.isNotEmpty ? leftTeam[0] : g.player1);
-        _leftBase = lBottom.isNotEmpty ? lBottom : lTop;
-        _leftSecond = lTop;
+        // Receiver is left-side base (bottom-left at 0-0).
+        if (recv.isNotEmpty && leftTeam.contains(recv)) {
+          final lPartner =
+              leftTeam.firstWhere((p) => p != recv, orElse: () => recv);
+          _leftBottomOverride = recv;
+          _leftTopOverride = lPartner == recv
+              ? (leftTeam.isNotEmpty ? leftTeam[0] : g.player1)
+              : lPartner;
+          _leftBase = recv;
+          _leftSecond = _leftTopOverride;
+        } else {
+          final lBottom = _leftBottomOverride.isNotEmpty
+              ? _leftBottomOverride
+              : (leftTeam.length > 1 ? leftTeam[1] : '');
+          final lTop = _leftTopOverride.isNotEmpty
+              ? _leftTopOverride
+              : (leftTeam.isNotEmpty ? leftTeam[0] : g.player1);
+          _leftBase = lBottom.isNotEmpty ? lBottom : lTop;
+          _leftSecond = lTop;
+        }
       }
     }
   }
@@ -651,7 +748,56 @@ class _RefereeDashboardScreenState extends State<RefereeDashboardScreen> {
     super.dispose();
   }
 
-  Widget _playerCell(String name, {bool isServing = false, bool isBase = false, bool isRight = false}) {
+  Widget _playerCell(
+    String name, {
+    bool isServing = false,
+    bool isBase = false,
+    bool isRight = false,
+    int serveNumber = 1,
+  }) {
+    final nameText = Flexible(
+      child: LayoutBuilder(
+        builder: (context, c) {
+          final fontSize = c.maxWidth < 220 ? 13.0 : 15.0;
+          return Text(
+            name,
+            maxLines: 2,
+            textAlign: isRight ? TextAlign.right : TextAlign.left,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(
+              color: Colors.white,
+              fontSize: fontSize,
+              fontWeight: FontWeight.bold,
+              shadows: const [
+                Shadow(blurRadius: 4, color: Colors.black54, offset: Offset(0, 1)),
+              ],
+            ),
+          );
+        },
+      ),
+    );
+    final band = isBase
+        ? const Padding(
+            padding: EdgeInsets.symmetric(horizontal: 4),
+            child: RefereeBandIcon(size: 26),
+          )
+        : null;
+    final balls = isServing
+        ? Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 4),
+            child: RefereeServerBalls(serveNumber: serveNumber, size: 20),
+          )
+        : null;
+
+    // Left side: [band?][name][balls?]  Right side: [balls?][name][band?]
+    final children = <Widget>[
+      if (!isRight && band != null) band,
+      if (isRight && balls != null) balls,
+      nameText,
+      if (!isRight && balls != null) balls,
+      if (isRight && band != null) band,
+    ];
+
     return InkWell(
       onTap: !_gameStarted
           ? () {
@@ -668,39 +814,9 @@ class _RefereeDashboardScreenState extends State<RefereeDashboardScreen> {
         padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
         child: Row(
           mainAxisSize: MainAxisSize.min,
-          mainAxisAlignment: isRight ? MainAxisAlignment.end : MainAxisAlignment.start,
-          children: [
-            if (isBase) ...[
-              const _PickleballIcon(size: 14),
-              const SizedBox(width: 4),
-            ],
-            Flexible(
-              child: LayoutBuilder(
-                builder: (context, c) {
-                  final fontSize = c.maxWidth < 220 ? 13.0 : 15.0;
-                  return Text(
-                    name,
-                    maxLines: 2,
-                    textAlign: isRight ? TextAlign.right : TextAlign.left,
-                    overflow: TextOverflow.ellipsis,
-                    style: TextStyle(
-                      color: Colors.white,
-                      fontSize: fontSize,
-                      fontWeight: FontWeight.bold,
-                      shadows: const [
-                        Shadow(blurRadius: 4, color: Colors.black54, offset: Offset(0, 1)),
-                      ],
-                    ),
-                  );
-                },
-              ),
-            ),
-            if (isServing)
-              const Padding(
-                padding: EdgeInsets.only(left: 6.0),
-                child: Icon(Icons.sports_tennis, color: Colors.yellowAccent, size: 18),
-              ),
-          ],
+          mainAxisAlignment:
+              isRight ? MainAxisAlignment.end : MainAxisAlignment.start,
+          children: children,
         ),
       ),
     );
@@ -913,14 +1029,37 @@ class _RefereeDashboardScreenState extends State<RefereeDashboardScreen> {
                       else if (pendingSync > 0)
                         Padding(
                           padding: const EdgeInsets.only(right: 4),
-                          child: Text(
-                            syncStale ? 'Sync delayed' : 'Syncing…',
-                            style: TextStyle(
-                              color: syncStale
-                                  ? const Color(0xFFFCA5A5)
-                                  : Colors.white70,
-                              fontSize: 13,
-                              fontWeight: FontWeight.w600,
+                          child: InkWell(
+                            onTap: () => showScoreSyncPanel(context),
+                            borderRadius: BorderRadius.circular(8),
+                            child: Padding(
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 4,
+                                vertical: 6,
+                              ),
+                              child: Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  Text(
+                                    syncStale ? 'Sync delayed' : 'Syncing…',
+                                    style: TextStyle(
+                                      color: syncStale
+                                          ? const Color(0xFFFCA5A5)
+                                          : Colors.white70,
+                                      fontSize: 13,
+                                      fontWeight: FontWeight.w600,
+                                    ),
+                                  ),
+                                  const SizedBox(width: 4),
+                                  Icon(
+                                    Icons.refresh_rounded,
+                                    size: 14,
+                                    color: syncStale
+                                        ? const Color(0xFFFCA5A5)
+                                        : Colors.white70,
+                                  ),
+                                ],
+                              ),
                             ),
                           ),
                         ),
@@ -1093,6 +1232,14 @@ class _RefereeDashboardScreenState extends State<RefereeDashboardScreen> {
                           final displayServerOnLeft = _endsSwitched ? serverOnRight : serverOnLeft;
                           final displayServerOnRight = _endsSwitched ? serverOnLeft : serverOnRight;
                           final serverRight = displayServerOnRight;
+                          // 1st serve → 1 ball, 2nd serve → 2 balls (doubles stages).
+                          final int serveNumber = !isDoubles
+                              ? 1
+                              : serverOnLeft
+                                  ? (_leftServeStage <= 1 ? 1 : 2)
+                                  : serverOnRight
+                                      ? (_rightServeStage <= 1 ? 1 : 2)
+                                      : 1;
                           // Swap displayed left/right scores when ends are switched
                           final int leftScore = _endsSwitched ? _score2 : _score1;
                           final int rightScore = _endsSwitched ? _score1 : _score2;
@@ -1199,6 +1346,7 @@ class _RefereeDashboardScreenState extends State<RefereeDashboardScreen> {
                                         isServing: _servingPlayer == leftTop,
                                         isBase: leftTop == displayLeftBase,
                                         isRight: false,
+                                        serveNumber: serveNumber,
                                       ),
                                     ),
                                   ),
@@ -1217,6 +1365,7 @@ class _RefereeDashboardScreenState extends State<RefereeDashboardScreen> {
                                           isServing: _servingPlayer == leftBottom,
                                           isBase: leftBottom == displayLeftBase,
                                           isRight: false,
+                                          serveNumber: serveNumber,
                                         ),
                                       ),
                                     ),
@@ -1236,6 +1385,7 @@ class _RefereeDashboardScreenState extends State<RefereeDashboardScreen> {
                                         isServing: _servingPlayer == rightTop,
                                         isBase: rightTop == displayRightBase,
                                         isRight: true,
+                                        serveNumber: serveNumber,
                                       ),
                                     ),
                                   ),
@@ -1254,6 +1404,7 @@ class _RefereeDashboardScreenState extends State<RefereeDashboardScreen> {
                                           isServing: _servingPlayer == rightBottom,
                                           isBase: rightBottom == displayRightBase,
                                           isRight: true,
+                                          serveNumber: serveNumber,
                                         ),
                                       ),
                                     ),
@@ -1275,7 +1426,10 @@ class _RefereeDashboardScreenState extends State<RefereeDashboardScreen> {
                                                             _confirmServer(server, () {
                                                               setState(() {
                                                                 _servingPlayer = server;
-                                                                _applyDoublesInitialServerLayout(g);
+                                                                _applyDoublesInitialServerLayout(
+                                                                  g,
+                                                                  receivingPlayer: _receivingPlayer,
+                                                                );
                                                               });
                                                             });
                                                           },
@@ -1289,7 +1443,10 @@ class _RefereeDashboardScreenState extends State<RefereeDashboardScreen> {
                                                             _confirmServer(server, () {
                                                               setState(() {
                                                                 _servingPlayer = server;
-                                                                _applyDoublesInitialServerLayout(g);
+                                                                _applyDoublesInitialServerLayout(
+                                                                  g,
+                                                                  receivingPlayer: _receivingPlayer,
+                                                                );
                                                               });
                                                             });
                                                           },
@@ -1309,7 +1466,10 @@ class _RefereeDashboardScreenState extends State<RefereeDashboardScreen> {
                                                             _confirmServer(server, () {
                                                               setState(() {
                                                                 _servingPlayer = server;
-                                                                _applyDoublesInitialServerLayout(g);
+                                                                _applyDoublesInitialServerLayout(
+                                                                  g,
+                                                                  receivingPlayer: _receivingPlayer,
+                                                                );
                                                               });
                                                             });
                                                           },
@@ -1323,7 +1483,10 @@ class _RefereeDashboardScreenState extends State<RefereeDashboardScreen> {
                                                             _confirmServer(server, () {
                                                               setState(() {
                                                                 _servingPlayer = server;
-                                                                _applyDoublesInitialServerLayout(g);
+                                                                _applyDoublesInitialServerLayout(
+                                                                  g,
+                                                                  receivingPlayer: _receivingPlayer,
+                                                                );
                                                               });
                                                             });
                                                           },
@@ -1439,6 +1602,30 @@ class _RefereeDashboardScreenState extends State<RefereeDashboardScreen> {
                                           ),
                                         );
                                       }),
+                                    ),
+                                  ),
+                                if (_gameStarted)
+                                  Positioned.fill(
+                                    child: LayoutBuilder(
+                                      builder: (context, kitchenBox) {
+                                        final kitchenLeft = kitchenBox.maxWidth / 3;
+                                        final sideWidth = kitchenBox.maxWidth / 3;
+                                        const inset = 8.0;
+                                        return Stack(
+                                          children: [
+                                            Positioned(
+                                              top: inset,
+                                              left: kitchenLeft + inset,
+                                              child: _KitchenCornerScore(score: leftScore),
+                                            ),
+                                            Positioned(
+                                              top: inset,
+                                              right: sideWidth + inset,
+                                              child: _KitchenCornerScore(score: rightScore),
+                                            ),
+                                          ],
+                                        );
+                                      },
                                     ),
                                   ),
                                 Align(
@@ -3411,44 +3598,41 @@ class _SinglesCourtPainter extends CustomPainter {
       oldDelegate.highlightRight != highlightRight || oldDelegate.highlightTop != highlightTop;
 }
 
-class _PickleballIcon extends StatelessWidget {
-  final double size;
-  const _PickleballIcon({this.size = 14});
+/// Fixed side score in the kitchen corners (does not flip with serve order).
+class _KitchenCornerScore extends StatelessWidget {
+  const _KitchenCornerScore({required this.score});
+
+  final int score;
+
   @override
   Widget build(BuildContext context) {
-    return SizedBox(
-      width: size,
-      height: size,
-      child: CustomPaint(
-        painter: _PickleballIconPainter(),
+    return Container(
+      constraints: const BoxConstraints(minWidth: 40, minHeight: 36),
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: const Color(0xFF0B2A5A), width: 1.5),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.25),
+            blurRadius: 4,
+            offset: const Offset(0, 1),
+          ),
+        ],
+      ),
+      alignment: Alignment.center,
+      child: Text(
+        '$score',
+        style: const TextStyle(
+          color: Color(0xFF0B2A5A),
+          fontSize: 22,
+          fontWeight: FontWeight.w900,
+          height: 1.1,
+        ),
       ),
     );
   }
-}
-
-class _PickleballIconPainter extends CustomPainter {
-  @override
-  void paint(Canvas canvas, Size size) {
-    final r = size.shortestSide / 2;
-    final c = Offset(size.width / 2, size.height / 2);
-    final paint = Paint()
-      ..shader = ui.Gradient.radial(
-        c,
-        r,
-        [const Color(0xFF34D399), const Color(0xFF059669)],
-      );
-    canvas.drawCircle(c, r, paint);
-    final hole = Paint()..color = Colors.white;
-    final hr = r * 0.18;
-    canvas.drawCircle(c, hr, hole);
-    final d = r * 0.6;
-    canvas.drawCircle(Offset(c.dx, c.dy - d), hr, hole);
-    canvas.drawCircle(Offset(c.dx + d, c.dy), hr, hole);
-    canvas.drawCircle(Offset(c.dx - d, c.dy), hr, hole);
-    canvas.drawCircle(Offset(c.dx, c.dy + d), hr, hole);
-  }
-  @override
-  bool shouldRepaint(covariant CustomPainter oldDelegate) => false;
 }
 
 class _CategoryBadge extends StatelessWidget {

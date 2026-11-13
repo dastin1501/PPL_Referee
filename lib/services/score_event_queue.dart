@@ -10,6 +10,27 @@ import 'socket_service.dart';
 
 typedef ScoreQueueListener = void Function();
 
+/// One match still waiting to reach the server (for sync / retry UI).
+class ScoreSyncPendingMatch {
+  const ScoreSyncPendingMatch({
+    required this.matchIdentity,
+    required this.label,
+    required this.pendingCount,
+    required this.stale,
+    required this.waitingSubmit,
+    required this.oldestAge,
+    this.lastError,
+  });
+
+  final String matchIdentity;
+  final String label;
+  final int pendingCount;
+  final bool stale;
+  final bool waitingSubmit;
+  final Duration oldestAge;
+  final String? lastError;
+}
+
 /// Local-first score event queue.
 ///
 /// - UI applies deltas immediately (caller does that before enqueue).
@@ -42,10 +63,14 @@ class ScoreEventQueue {
   /// In-memory signature payloads keyed by event id (rehydrated from disk).
   final Map<String, Map<String, dynamic>> _signatureExtras = {};
   bool _loaded = false;
-  bool _flushing = false;
+  /// Matches currently draining — isolated so one slow submit cannot stall others.
+  final Set<String> _flushingMatches = {};
   Timer? _retryTimer;
   final Set<String> _inFlightEventIds = {};
   Directory? _sigDir;
+
+  /// Cap parallel match drains so a reconnect storm does not hammer the API.
+  static const int _maxConcurrentMatches = 4;
 
   List<ScoreEvent> get events => List.unmodifiable(_events);
   List<ScoreEvent> get pending =>
@@ -68,6 +93,80 @@ class ScoreEventQueue {
     final id = matchIdentity.trim();
     if (id.isEmpty) return false;
     return _events.any((e) => e.isPending && e.matchIdentity == id);
+  }
+
+  /// Human-readable pending sync rows for retry UI (one per match).
+  List<ScoreSyncPendingMatch> get pendingMatchSummaries {
+    final byMatch = <String, List<ScoreEvent>>{};
+    for (final e in _events) {
+      if (!e.isPending) continue;
+      byMatch.putIfAbsent(e.matchIdentity, () => []).add(e);
+    }
+    final out = <ScoreSyncPendingMatch>[];
+    for (final entry in byMatch.entries) {
+      final list = entry.value..sort((a, b) => a.seq.compareTo(b.seq));
+      final oldest = list.first;
+      final newest = list.last;
+      final snap = _fullSnapshot(newest);
+      final p1 = (snap['player1Name'] ?? snap['player1'] ?? '').toString().trim();
+      final p2 = (snap['player2Name'] ?? snap['player2'] ?? '').toString().trim();
+      String label;
+      if (p1.isNotEmpty || p2.isNotEmpty) {
+        label = [
+          if (p1.isNotEmpty) p1,
+          if (p2.isNotEmpty) p2,
+        ].join(' vs ');
+      } else {
+        label = 'Match ${entry.key}';
+      }
+      String? err;
+      for (var i = list.length - 1; i >= 0; i--) {
+        final e = list[i].lastError?.trim();
+        if (e != null && e.isNotEmpty) {
+          err = e;
+          break;
+        }
+      }
+      out.add(
+        ScoreSyncPendingMatch(
+          matchIdentity: entry.key,
+          label: label,
+          pendingCount: list.length,
+          stale: list.any((e) => e.isStale),
+          waitingSubmit: list.any((e) => e.action == ScoreEventAction.submit),
+          lastError: err,
+          oldestAge: DateTime.now().difference(oldest.createdAt),
+        ),
+      );
+    }
+    out.sort((a, b) {
+      if (a.stale != b.stale) return a.stale ? -1 : 1;
+      return b.oldestAge.compareTo(a.oldestAge);
+    });
+    return out;
+  }
+
+  /// Clear backoff and flush immediately (all pending, or one match).
+  Future<void> retryNow({String? matchIdentity}) async {
+    await load();
+    final mid = matchIdentity?.trim();
+    var cleared = 0;
+    for (final e in _events) {
+      if (!e.isPending) continue;
+      if (mid != null && mid.isNotEmpty && e.matchIdentity != mid) continue;
+      e.nextRetryAt = null;
+      cleared++;
+    }
+    if (cleared > 0) {
+      await _persist();
+      _notify();
+    }
+    if (kDebugMode) {
+      debugPrint(
+        '[score-queue] retryNow match=${mid ?? 'all'} clearedBackoff=$cleared',
+      );
+    }
+    await flush();
   }
 
   Future<Directory?> _signatureDir() async {
@@ -344,66 +443,99 @@ class ScoreEventQueue {
   }
 
   /// Flush unacked events (call on reconnect / resume).
+  ///
+  /// Each match drains on its own worker so a slow REST submit for match A
+  /// cannot hold up live points / submits for match B.
   Future<void> flush() async {
     await load();
-    if (_flushing) return;
-    _flushing = true;
-    try {
-      while (true) {
-        final batch = _nextFlushBatch();
-        if (batch.isEmpty) break;
-        await Future.wait(batch.map(_sendOne));
-      }
-    } finally {
-      _flushing = false;
+    final ready = _readyMatchIdentities();
+    for (final mid in ready) {
+      if (_flushingMatches.length >= _maxConcurrentMatches) break;
+      if (_flushingMatches.contains(mid)) continue;
+      unawaited(_flushMatch(mid));
     }
-    // Schedule next wake if anything is still pending (backoff).
-    final pendingNow = pending;
-    if (pendingNow.isEmpty) {
-      _notify();
-      return;
-    }
-    DateTime? soonest;
-    for (final e in pendingNow) {
-      final t = e.nextRetryAt ?? DateTime.now();
-      if (soonest == null || t.isBefore(soonest)) soonest = t;
-    }
-    final wait = soonest!.difference(DateTime.now());
-    _scheduleFlush(delay: wait.isNegative ? Duration.zero : wait);
+    _scheduleWakeForBackoff();
     _notify();
   }
 
-  /// Oldest ready unacked event per match (sequence order within a match).
-  List<ScoreEvent> _nextFlushBatch() {
-    final byMatch = <String, List<ScoreEvent>>{};
+  List<String> _readyMatchIdentities() {
+    final ids = <String>{};
     for (final e in _events) {
       if (!e.isPending) continue;
       if (_isSupersededByCompletedSubmit(e)) continue;
-      byMatch.putIfAbsent(e.matchIdentity, () => []).add(e);
+      ids.add(e.matchIdentity);
     }
+    return ids.where((id) => _nextEventForMatch(id) != null).toList();
+  }
+
+  /// Oldest ready unacked event for one match (sequence order).
+  ScoreEvent? _nextEventForMatch(String matchIdentity) {
+    final list = <ScoreEvent>[];
+    for (final e in _events) {
+      if (e.matchIdentity != matchIdentity) continue;
+      if (!e.isPending) continue;
+      if (_isSupersededByCompletedSubmit(e)) continue;
+      list.add(e);
+    }
+    if (list.isEmpty) return null;
+    list.sort((a, b) => a.seq.compareTo(b.seq));
     final now = DateTime.now();
-    bool ready(ScoreEvent e) =>
-        e.nextRetryAt == null || !e.nextRetryAt!.isAfter(now);
-    final out = <ScoreEvent>[];
-    for (final list in byMatch.values) {
-      list.sort((a, b) => a.seq.compareTo(b.seq));
-      for (final e in list) {
-        if (_inFlightEventIds.contains(e.id)) {
-          // Nothing overtakes an in-flight submit.
-          if (e.action == ScoreEventAction.submit) break;
-          continue;
-        }
-        if (!ready(e)) {
-          // A submit waiting to retry blocks later events of this match, so a
-          // newer submit (e.g. the final one) cannot land before it.
-          if (e.action == ScoreEventAction.submit) break;
-          continue;
-        }
-        out.add(e);
-        break;
+    for (final e in list) {
+      if (_inFlightEventIds.contains(e.id)) {
+        // Nothing overtakes an in-flight submit.
+        if (e.action == ScoreEventAction.submit) return null;
+        continue;
       }
+      if (e.nextRetryAt != null && e.nextRetryAt!.isAfter(now)) {
+        // A submit waiting to retry blocks later events of this match.
+        if (e.action == ScoreEventAction.submit) return null;
+        continue;
+      }
+      return e;
     }
-    return out;
+    return null;
+  }
+
+  Future<void> _flushMatch(String matchIdentity) async {
+    if (!_flushingMatches.add(matchIdentity)) return;
+    try {
+      while (true) {
+        final event = _nextEventForMatch(matchIdentity);
+        if (event == null) break;
+        await _sendOne(event);
+        if (!event.acked) break; // backoff — leave for later wake
+      }
+    } finally {
+      _flushingMatches.remove(matchIdentity);
+      // Free a concurrency slot for other matches still waiting.
+      if (_readyMatchIdentities().any((id) => !_flushingMatches.contains(id))) {
+        _scheduleFlush();
+      } else {
+        _scheduleWakeForBackoff();
+      }
+      _notify();
+    }
+  }
+
+  void _scheduleWakeForBackoff() {
+    final pendingNow = pending;
+    if (pendingNow.isEmpty) return;
+    // Only schedule if something is waiting on backoff (not already flushing).
+    DateTime? soonest;
+    for (final e in pendingNow) {
+      if (_flushingMatches.contains(e.matchIdentity)) continue;
+      if (_inFlightEventIds.contains(e.id)) continue;
+      final t = e.nextRetryAt;
+      if (t == null) {
+        // Ready but no worker — kick immediately.
+        _scheduleFlush();
+        return;
+      }
+      if (soonest == null || t.isBefore(soonest)) soonest = t;
+    }
+    if (soonest == null) return;
+    final wait = soonest.difference(DateTime.now());
+    _scheduleFlush(delay: wait.isNegative ? Duration.zero : wait);
   }
 
   Duration _backoffForAttempt(int attempts) {

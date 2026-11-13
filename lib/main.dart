@@ -7,7 +7,9 @@ import 'screens/signup_screen.dart';
 import 'screens/tournament_list_screen.dart';
 import 'screens/court_games_screen.dart';
 import 'screens/referee_dashboard_screen.dart';
+import 'theme/ppl_colors.dart';
 import 'widgets/global_sync_indicator.dart';
+import 'widgets/referee_icons.dart';
 import 'widgets/smooth_page_route.dart';
 
 Future<void> main() async {
@@ -67,8 +69,12 @@ class _RefereeAppState extends State<RefereeApp> with WidgetsBindingObserver {
         title: 'PPL REFEREE',
         navigatorKey: _navigatorKey,
         theme: ThemeData(
-          colorScheme: ColorScheme.fromSeed(seedColor: Colors.blue),
+          colorScheme: ColorScheme.fromSeed(
+            seedColor: PplColors.teal,
+            primary: PplColors.teal,
+          ),
           useMaterial3: true,
+          extensions: const [PplTheme()],
         ),
         builder: (context, child) {
           return Consumer<AppState>(

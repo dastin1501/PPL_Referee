@@ -84,6 +84,12 @@ class AppState extends ChangeNotifier {
   Timer? _scheduleRefreshDebounce;
   DateTime? _lastReconnectRefetchAt;
   static const _reconnectRefetchMinInterval = Duration(seconds: 30);
+  /// Coalesce overlapping tournament downloads (Start Game socket echoes used
+  /// to fire many parallel ~1MB GETs).
+  Future<void>? _refreshInFlight;
+  bool _refreshAgainAfterInFlight = false;
+  DateTime? _lastAssignedMatchesAt;
+  static const _assignedMatchesMinInterval = Duration(seconds: 45);
 
   // Cached court/date list views — bumped for schedule/court changes, not score taps.
   int courtListEpoch = 0;
@@ -111,7 +117,14 @@ class AppState extends ChangeNotifier {
   int get pendingScoreSyncCount => scoreQueue.pendingCount;
   int get pendingScoreSyncMatchCount => scoreQueue.pendingMatchCount;
   bool get scoreSyncHasStale => scoreQueue.hasStalePending;
+  List<ScoreSyncPendingMatch> get pendingScoreSyncMatches =>
+      scoreQueue.pendingMatchSummaries;
   bool get socketConnected => _socket.connected;
+
+  /// Manual sync retry — clears backoff and flushes without blocking scoring.
+  Future<void> retryScoreSync({String? matchIdentity}) {
+    return scoreQueue.retryNow(matchIdentity: matchIdentity);
+  }
 
   // Tutorial simulation mode:
   // - Uses the exact same RefereeDashboard UI
@@ -234,8 +247,8 @@ class AppState extends ChangeNotifier {
     try {
       _rejoinLiveRooms();
       if (selectedTournament != null) {
-        // Republish the court immediately. The full bracket refresh follows
-        // in the background so "Reconnecting…" does not wait on that download.
+        // Republish the court immediately. While a game is Ongoing, skip the
+        // full bracket download — Live already has this match via WebSocket.
         final live = selectedGame;
         if (live != null &&
             (normalizeGameStatusKey(live.status) == 'ongoing' ||
@@ -255,7 +268,9 @@ class AppState extends ChangeNotifier {
             freshStart: false,
           ));
         }
-        unawaited(refreshSelectedTournament(showLoading: false));
+        if (!_isActivelyScoringSelectedGame) {
+          unawaited(refreshSelectedTournament(showLoading: false));
+        }
       } else {
         unawaited(loadTournaments());
       }
@@ -410,6 +425,7 @@ class AppState extends ChangeNotifier {
         try {
           final assigned = await _api.getAssignedMatches();
           if (selectedTournament?.id != fullTournament.id) return;
+          _lastAssignedMatchesAt = DateTime.now();
           _overlayAssignedMatches(assigned);
           _resolveEliminationPlaceholdersFromTournamentDetails();
           _applyQueuedSnapshotsToGames();
@@ -447,6 +463,7 @@ class AppState extends ChangeNotifier {
       );
       try {
         final assigned = await _api.getAssignedMatches();
+        _lastAssignedMatchesAt = DateTime.now();
         _overlayAssignedMatches(assigned);
       } catch (_) {}
       _resolveEliminationPlaceholdersFromTournamentDetails();
@@ -940,6 +957,34 @@ class AppState extends ChangeNotifier {
   }
 
   Future<void> refreshSelectedTournament({bool showLoading = true}) async {
+    // One download at a time. Extra callers (socket echoes) share the in-flight
+    // future and at most one follow-up run — no parallel 1MB storms.
+    if (_refreshInFlight != null) {
+      _refreshAgainAfterInFlight = true;
+      if (kDebugMode) {
+        debugPrint('[refresh] coalesce — already in flight');
+      }
+      return _refreshInFlight!;
+    }
+    final run = _refreshSelectedTournamentBody(showLoading: showLoading);
+    _refreshInFlight = run;
+    try {
+      await run;
+    } finally {
+      _refreshInFlight = null;
+      if (_refreshAgainAfterInFlight &&
+          !_disposed &&
+          selectedTournament != null &&
+          !_isActivelyScoringSelectedGame) {
+        _refreshAgainAfterInFlight = false;
+        unawaited(refreshSelectedTournament(showLoading: false));
+      } else {
+        _refreshAgainAfterInFlight = false;
+      }
+    }
+  }
+
+  Future<void> _refreshSelectedTournamentBody({bool showLoading = true}) async {
     final t = selectedTournament;
     if (t == null) return;
     // Pull-to-refresh must NOT flip global loading — that rebuilds the list and
@@ -967,10 +1012,18 @@ class AppState extends ChangeNotifier {
       games = _mergeRefreshedMatchesWithLocalState(
         _normalizeServerClearedMatches(fullTournament.matches),
       );
-      try {
-        final assigned = await _api.getAssignedMatches();
-        _overlayAssignedMatches(assigned);
-      } catch (_) {}
+      // assigned-matches is heavy — only on manual refresh, or if stale.
+      final needAssigned = showLoading ||
+          _lastAssignedMatchesAt == null ||
+          DateTime.now().difference(_lastAssignedMatchesAt!) >=
+              _assignedMatchesMinInterval;
+      if (needAssigned) {
+        try {
+          final assigned = await _api.getAssignedMatches();
+          _lastAssignedMatchesAt = DateTime.now();
+          _overlayAssignedMatches(assigned);
+        } catch (_) {}
+      }
       _resolveEliminationPlaceholdersFromTournamentDetails();
       _applyQueuedSnapshotsToGames();
       if (selectedGame != null) {
@@ -3673,7 +3726,10 @@ class AppState extends ChangeNotifier {
     // Flush local queues after rooms are rejoined.
     unawaited(scoreQueue.flush());
     unawaited(matchUpdateQueue.requeueAllForReconnect());
-    if (refetch && selectedTournament != null) {
+    // Mid-game: only replay this match via queue/socket — no full bracket GET.
+    if (refetch &&
+        selectedTournament != null &&
+        !_isActivelyScoringSelectedGame) {
       unawaited(refreshSelectedTournament(showLoading: false));
     }
   }
@@ -3968,6 +4024,9 @@ class AppState extends ChangeNotifier {
     if (kDebugMode) debugPrint('[socket] schedule-updated');
     // Prefer applying fields; full refresh only when payload is thin.
     if (_tryApplyLiveSchedulePayload(payload)) return;
+    // Our own Start Game / score taps often echo as thin schedule events —
+    // don't re-download the whole tournament while we still own that match.
+    if (_liveEchoIsLocallyOwned(payload)) return;
     _queueQuietTournamentRefresh();
   }
 
@@ -3980,7 +4039,18 @@ class AppState extends ChangeNotifier {
     if (payload == null || !_livePayloadForSelectedTournament(payload)) return;
     if (kDebugMode) debugPrint('[socket] bracket-updated');
     if (_tryApplyLiveSchedulePayload(payload)) return;
+    if (_liveEchoIsLocallyOwned(payload)) return;
     _queueQuietTournamentRefresh();
+  }
+
+  /// True when this socket echo is for a match we are actively syncing locally.
+  bool _liveEchoIsLocallyOwned(Map<String, dynamic> payload) {
+    if (_isActivelyScoringSelectedGame) return true;
+    final matchIdentity = _identityFromLivePayload(payload);
+    if (matchIdentity != null && scoreQueue.hasPendingForMatch(matchIdentity)) {
+      return true;
+    }
+    return false;
   }
 
   /// Returns true when a schedule/bracket payload mutated local match state.
@@ -4031,15 +4101,33 @@ class AppState extends ChangeNotifier {
     return true;
   }
 
+  /// True while the open Ref Panel match is live — per-game socket only, never
+  /// a full tournament download for score/status echoes.
+  bool get _isActivelyScoringSelectedGame {
+    final live = selectedGame;
+    if (live == null) return false;
+    if (normalizeGameStatusKey(live.status) == 'ongoing') return true;
+    final mid = _matchIdentityKey(live);
+    return mid.isNotEmpty && scoreQueue.hasPendingForMatch(mid);
+  }
+
   /// Refresh the open tournament in the background. The court list stays
   /// usable; this must not flip the global loading flag.
   void _queueQuietTournamentRefresh() {
     if (selectedTournament == null || tutorialSimulationMode) return;
-    _scheduleRefreshDebounce?.cancel();
-    _scheduleRefreshDebounce = Timer(const Duration(milliseconds: 400), () {
-      if (selectedTournament != null && !_disposed) {
-        unawaited(refreshSelectedTournament(showLoading: false));
+    // Live/web already receive this match via live:point / live:score-set.
+    // Never re-fetch the whole bracket while scoring that game.
+    if (_isActivelyScoringSelectedGame) {
+      if (kDebugMode) {
+        debugPrint('[refresh] skip quiet — actively scoring selected game');
       }
+      return;
+    }
+    _scheduleRefreshDebounce?.cancel();
+    _scheduleRefreshDebounce = Timer(const Duration(milliseconds: 800), () {
+      if (selectedTournament == null || _disposed) return;
+      if (_isActivelyScoringSelectedGame) return;
+      unawaited(refreshSelectedTournament(showLoading: false));
     });
   }
 
@@ -4049,17 +4137,37 @@ class AppState extends ChangeNotifier {
     final payload = Map<String, dynamic>.from(data);
     if (!_livePayloadForSelectedTournament(payload)) return;
 
-    final matchIdentity = _identityFromLivePayload(payload);
-    // Local queue is source of truth until acked — ignore peer/server absolute
-    // overwrites for matches we still have pending delta events for.
-    if (matchIdentity != null && scoreQueue.hasPendingForMatch(matchIdentity)) {
+    // Our own taps already updated local UI. Server echoes often lag (0-1 while
+    // the ref is at 0-5) — never apply them over an actively scored match.
+    if (_isActivelyScoringSelectedGame) {
       if (kDebugMode) {
-        debugPrint('[socket] $source ignored — local pending for $matchIdentity');
+        debugPrint('[socket] $source ignored — actively scoring');
       }
       return;
     }
-    if (matchIdentity != null &&
-        _inFlightSubmitSeqByMatch.keys.any((k) => k.startsWith('$matchIdentity:'))) {
+
+    final matchIdentity = _identityFromLivePayload(payload);
+    TournamentMatch? target;
+    if (matchIdentity != null) {
+      target = _findMatchByIdentity(matchIdentity);
+    }
+    target ??= _findMatchFromLivePayload(payload);
+    final resolvedId = matchIdentity ??
+        (target != null ? _matchIdentityKey(target) : null);
+
+    // Local queue is source of truth until acked — ignore peer/server absolute
+    // overwrites for matches we still have pending delta events for.
+    if (resolvedId != null &&
+        resolvedId.isNotEmpty &&
+        scoreQueue.hasPendingForMatch(resolvedId)) {
+      if (kDebugMode) {
+        debugPrint('[socket] $source ignored — local pending for $resolvedId');
+      }
+      return;
+    }
+    if (resolvedId != null &&
+        resolvedId.isNotEmpty &&
+        _inFlightSubmitSeqByMatch.keys.any((k) => k.startsWith('$resolvedId:'))) {
       return;
     }
 
@@ -4073,16 +4181,17 @@ class AppState extends ChangeNotifier {
     }
 
     if (fields.isEmpty) {
+      if (_liveEchoIsLocallyOwned(payload)) {
+        if (kDebugMode) {
+          debugPrint('[socket] $source thin payload ignored — local pending');
+        }
+        return;
+      }
       if (kDebugMode) debugPrint('[socket] $source thin payload → refresh');
       _queueQuietTournamentRefresh();
       return;
     }
 
-    TournamentMatch? target;
-    if (matchIdentity != null) {
-      target = _findMatchByIdentity(matchIdentity);
-    }
-    target ??= _findMatchFromLivePayload(payload);
     if (target == null) {
       if (kDebugMode) debugPrint('[socket] $source no local match match');
       return;

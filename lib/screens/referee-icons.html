@@ -1,0 +1,111 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>PPL Referee App Icons</title>
+<style>
+  :root {
+    --ppl-teal:#3BB89B; --ppl-teal-light:#6AD6BC; --ppl-teal-dark:#1E7E6A; --ppl-slate:#3A4B5B;
+    --bg:#eef2f4; --card:#fff; --text:#1b2630; --muted:#66757f;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg:#141b22; --card:#1e2832; --text:#f1f5f7; --muted:#9db0bd; }
+  }
+  * { box-sizing:border-box; }
+  body { margin:0; padding:24px; font-family:system-ui,sans-serif; background:var(--bg); color:var(--text); }
+  header { background:var(--ppl-slate); color:#fff; padding:14px 18px; border-radius:14px;
+           border-bottom:4px solid var(--ppl-teal); margin-bottom:16px; }
+  header h1 { margin:0; font-size:18px; letter-spacing:.5px; }
+  header small { color:var(--ppl-teal-light); }
+  .card { background:var(--card); border-radius:14px; padding:20px; margin-bottom:16px; border-top:3px solid var(--ppl-teal); }
+  .row { display:flex; gap:28px; align-items:center; flex-wrap:wrap; }
+  .icon-box { text-align:center; font-size:13px; color:var(--muted); }
+  .icon-box svg { display:block; margin:0 auto 6px; }
+  .player { display:flex; align-items:center; gap:12px; padding:10px 16px; border-radius:12px;
+            background:var(--bg); min-width:250px; border-left:4px solid var(--ppl-teal); }
+  .player .name { font-weight:600; flex:1; }
+  .balls { display:flex; gap:2px; }
+  button { font:inherit; padding:8px 14px; border-radius:10px; border:1px solid var(--ppl-teal);
+           background:transparent; color:var(--text); cursor:pointer; }
+  button.active { background:var(--ppl-teal); color:#fff; }
+</style>
+</head>
+<body>
+
+<header><h1>PPL Referee App <small>• Icons</small></h1></header>
+
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <defs>
+    <!-- BAND (base) — teal PPL wristband, positioned diagonally -->
+    <symbol id="icon-band" viewBox="0 0 200 200">
+      <g transform="translate(100 100) rotate(-35) scale(.92) translate(-100 -66)">
+        <ellipse cx="100" cy="50" rx="90" ry="30" fill="var(--ppl-teal-dark)"/>
+        <path d="M10 50 A90 30 0 0 0 190 50 L190 82 A90 30 0 0 1 10 82 Z" fill="var(--ppl-teal)"/>
+        <ellipse cx="100" cy="50" rx="90" ry="30" fill="none" stroke="var(--ppl-teal-light)" stroke-width="3"/>
+        <path d="M52 94 h16 M47 100 h16" stroke="#fff" stroke-opacity=".85" stroke-width="3" stroke-linecap="round"/>
+        <text x="108" y="102" text-anchor="middle" font-size="24" font-weight="800" font-style="italic"
+              font-family="system-ui,Arial,sans-serif" fill="#fff" fill-opacity=".92" letter-spacing="2">PPL</text>
+      </g>
+    </symbol>
+
+    <!-- PICKLEBALL (server) — color unchanged -->
+    <symbol id="icon-ball" viewBox="0 0 100 100">
+      <circle cx="50" cy="50" r="46" fill="#a4d62a"/>
+      <circle cx="50" cy="50" r="46" fill="none" stroke="#8fbf1f" stroke-width="2"/>
+      <path d="M20 28 A40 40 0 0 1 62 10" stroke="#fff" stroke-opacity=".35" stroke-width="4" fill="none" stroke-linecap="round"/>
+      <g fill="#fff">
+        <ellipse cx="50" cy="32" rx="8" ry="8.5"/>
+        <ellipse cx="72" cy="48" rx="9" ry="9"/>
+        <ellipse cx="32" cy="50" rx="9" ry="9"/>
+        <ellipse cx="50" cy="68" rx="8" ry="8.5"/>
+        <ellipse cx="30" cy="22" rx="5" ry="6" transform="rotate(-30 30 22)"/>
+        <ellipse cx="76" cy="26" rx="5" ry="6" transform="rotate(35 76 26)"/>
+        <ellipse cx="18" cy="68" rx="5" ry="6" transform="rotate(-40 18 68)"/>
+        <ellipse cx="82" cy="70" rx="5" ry="6" transform="rotate(40 82 70)"/>
+        <ellipse cx="48" cy="86" rx="6" ry="4"/>
+      </g>
+    </symbol>
+  </defs>
+</svg>
+
+<div class="card">
+  <div class="row">
+    <div class="icon-box"><svg width="120" height="120"><use href="#icon-band"/></svg>Base (band)</div>
+    <div class="icon-box"><svg width="84" height="84"><use href="#icon-ball"/></svg>Server (ball)</div>
+  </div>
+</div>
+
+<div class="card">
+  <p style="margin-top:0;color:var(--muted);font-size:14px">1st serve = 1 ball, 2nd serve (double) = 2 balls.</p>
+  <div class="row" style="margin-bottom:16px">
+    <button id="btn1" class="active" onclick="setServe(1)">1st Serve</button>
+    <button id="btn2" onclick="setServe(2)">2nd Serve</button>
+  </div>
+  <div class="player">
+    <svg width="44" height="44"><use href="#icon-band"/></svg>
+    <span class="name">Team A (Base)</span>
+  </div>
+  <br>
+  <div class="player">
+    <div class="balls" id="serverBalls"></div>
+    <span class="name">Team B (Server)</span>
+  </div>
+</div>
+
+<script>
+  /** serveNumber 1 -> one ball, 2 -> two balls */
+  function renderServer(el, serveNumber, size = 28) {
+    const count = serveNumber === 2 ? 2 : 1;
+    el.innerHTML = Array.from({ length: count }, () =>
+      `<svg width="${size}" height="${size}"><use href="#icon-ball"/></svg>`).join('');
+  }
+  function setServe(n) {
+    renderServer(document.getElementById('serverBalls'), n);
+    document.getElementById('btn1').classList.toggle('active', n === 1);
+    document.getElementById('btn2').classList.toggle('active', n === 2);
+  }
+  setServe(1);
+</script>
+</body>
+</html>
