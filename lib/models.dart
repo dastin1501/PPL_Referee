@@ -921,10 +921,19 @@ class Tournament {
     final hasRootCourtAssignments = j['courtAssignments'] is Map<String, dynamic>;
     final hasCourtAssignmentsByDate = j['courtAssignmentsByDate'] is Map<String, dynamic>;
     final hasAuthoritativeSchedule = hasRootCourtAssignments || hasCourtAssignmentsByDate;
+    final tournamentYmds = _tournamentYmdsFromJson(j['tournamentDates']);
+    final byDateRaw = hasCourtAssignmentsByDate
+        ? Map<String, dynamic>.from(j['courtAssignmentsByDate'] as Map)
+        : <String, dynamic>{};
+    final scheduleDateAlias = _buildScheduleDateAliasMap(tournamentYmds, byDateRaw);
+    String aliasDate(String? raw) =>
+        _aliasScheduleYmd(raw, scheduleDateAlias, tournamentYmds);
+    final preferredRaw = (j['courtAssignments'] is Map<String, dynamic>)
+        ? (j['courtAssignments']['scheduleDate']?.toString())
+        : null;
+    final preferredAliased = aliasDate(preferredRaw);
     final preferredScheduleDate =
-        (j['courtAssignments'] is Map<String, dynamic>)
-            ? (j['courtAssignments']['scheduleDate']?.toString())
-            : null;
+        preferredAliased.isEmpty ? null : preferredAliased;
     final globalCourtNames = <String>[];
     var maxCourtCount = 0;
     var maxAssignmentColumns = 0;
@@ -1099,7 +1108,9 @@ class Tournament {
     }
 
     void parseCA(Map<String, dynamic> ca, String? dateOverride) {
-      final resolvedDate = dateOverride ?? ca['scheduleDate']?.toString() ?? '';
+      final resolvedDate = aliasDate(
+        dateOverride ?? ca['scheduleDate']?.toString() ?? '',
+      );
       final venues = ca['venues'] as List?;
       if (venues != null && venues.isNotEmpty) {
         for (final venue in venues) {
@@ -1123,9 +1134,9 @@ class Tournament {
     if (j['courtAssignments'] is Map<String, dynamic>) {
       parseCA(j['courtAssignments'], null);
     }
-    if (j['courtAssignmentsByDate'] is Map<String, dynamic>) {
-      j['courtAssignmentsByDate'].forEach((k, v) {
-        if (v is Map<String, dynamic>) parseCA(v, k);
+    if (byDateRaw.isNotEmpty) {
+      byDateRaw.forEach((k, v) {
+        if (v is Map<String, dynamic>) parseCA(v, k.toString());
       });
     }
 
@@ -1588,7 +1599,7 @@ class Tournament {
     void applyScheduleInfo(Map<String, dynamic> m, Map<String, dynamic> info) {
       m['court'] = info['court'] ?? '';
       m['time'] = info['time'] ?? '';
-      m['date'] = info['date'] ?? '';
+      m['date'] = aliasDate((info['date'] ?? '').toString());
       m['venue'] = info['venue'] ?? m['venue'];
       m['mdTime2'] = info['mdTime2'] ?? m['mdTime2'];
       m['mdEnd2'] = info['mdEnd2'] ?? m['mdEnd2'];
@@ -1653,6 +1664,15 @@ class Tournament {
             final courtRaw = m['court']?.toString() ?? '';
             if (courtRaw.isNotEmpty) {
               m['court'] = _resolveCourtFromIndexOrName(courtRaw, globalCourtNames);
+            }
+          }
+
+          final stampedDate = m['date']?.toString() ?? m['mdDate']?.toString() ?? '';
+          if (stampedDate.trim().isNotEmpty) {
+            final aliased = aliasDate(stampedDate);
+            if (aliased.isNotEmpty) {
+              m['date'] = aliased;
+              if (m.containsKey('mdDate')) m['mdDate'] = aliased;
             }
           }
 
@@ -1977,4 +1997,119 @@ class Court {
       label: j['label']?.toString() ?? j['name']?.toString() ?? '',
     );
   }
+}
+
+/// YYYY-MM-DD helpers — map leftover schedule stamps (e.g. Nov 25) onto
+/// current tournamentDates (e.g. Nov 27+) after a date change on the website.
+String? _toCanonYmd(dynamic raw) {
+  final s = (raw ?? '').toString().trim();
+  if (s.isEmpty) return null;
+  final iso = RegExp(r'^(\d{4})-(\d{2})-(\d{2})').firstMatch(s);
+  if (iso != null) {
+    return '${iso.group(1)}-${iso.group(2)}-${iso.group(3)}';
+  }
+  final parsed = DateTime.tryParse(s);
+  if (parsed != null) {
+    final y = parsed.year.toString().padLeft(4, '0');
+    final m = parsed.month.toString().padLeft(2, '0');
+    final d = parsed.day.toString().padLeft(2, '0');
+    return '$y-$m-$d';
+  }
+  final slash = RegExp(r'^(\d{1,2})/(\d{1,2})/(\d{2,4})$').firstMatch(s);
+  if (slash != null) {
+    var month = int.tryParse(slash.group(1) ?? '') ?? 1;
+    var day = int.tryParse(slash.group(2) ?? '') ?? 1;
+    var year = int.tryParse(slash.group(3) ?? '') ?? DateTime.now().year;
+    if (year < 100) year += 2000;
+    month = month.clamp(1, 12);
+    day = day.clamp(1, 31);
+    final y = year.toString().padLeft(4, '0');
+    final m = month.toString().padLeft(2, '0');
+    final d = day.toString().padLeft(2, '0');
+    return '$y-$m-$d';
+  }
+  return null;
+}
+
+List<String> _tournamentYmdsFromJson(dynamic raw) {
+  if (raw is! List) return const [];
+  final out = <String>{};
+  for (final item in raw) {
+    final ymd = _toCanonYmd(item);
+    if (ymd != null) out.add(ymd);
+  }
+  final list = out.toList()..sort();
+  return list;
+}
+
+bool _dayHasScheduleContent(dynamic day) {
+  if (day is! Map) return false;
+  final map = Map<String, dynamic>.from(day);
+  final venues = map['venues'];
+  final bundles = <Map<String, dynamic>>[];
+  if (venues is List && venues.isNotEmpty) {
+    for (final v in venues) {
+      if (v is Map) bundles.add(Map<String, dynamic>.from(v));
+    }
+  } else {
+    bundles.add(map);
+  }
+  for (final v in bundles) {
+    final slots = v['timeSlots'];
+    if (slots is List && slots.isNotEmpty) return true;
+    final rows = v['assignments'];
+    if (rows is! List) continue;
+    for (final row in rows) {
+      if (row is! List) continue;
+      for (final cell in row) {
+        if (cell is Map &&
+            (cell['type']?.toString().toLowerCase() != 'hidden')) {
+          return true;
+        }
+      }
+    }
+  }
+  return false;
+}
+
+Map<String, String> _buildScheduleDateAliasMap(
+  List<String> tournamentYmds,
+  Map<String, dynamic> byDate,
+) {
+  final map = <String, String>{};
+  for (final d in tournamentYmds) {
+    map[d] = d;
+  }
+  final orphans = <String>[];
+  byDate.forEach((k, v) {
+    final canon = _toCanonYmd(k);
+    if (canon == null) return;
+    if (tournamentYmds.contains(canon)) return;
+    if (_dayHasScheduleContent(v)) orphans.add(canon);
+  });
+  orphans.sort();
+  if (orphans.length == 1 && tournamentYmds.isNotEmpty) {
+    map[orphans.first] = tournamentYmds.first;
+  } else {
+    for (var i = 0; i < orphans.length; i++) {
+      if (i < tournamentYmds.length) {
+        map[orphans[i]] = tournamentYmds[i];
+      }
+    }
+  }
+  return map;
+}
+
+String _aliasScheduleYmd(
+  String? raw,
+  Map<String, String> aliasMap,
+  List<String> tournamentYmds,
+) {
+  final ymd = _toCanonYmd(raw);
+  if (ymd == null) return '';
+  if (aliasMap.containsKey(ymd)) return aliasMap[ymd]!;
+  if (tournamentYmds.isEmpty || tournamentYmds.contains(ymd)) return ymd;
+  // Leftover stamp from before tournamentDates shifted later (e.g. Nov 25 → 27).
+  if (ymd.compareTo(tournamentYmds.first) < 0) return tournamentYmds.first;
+  return ymd;
 }
